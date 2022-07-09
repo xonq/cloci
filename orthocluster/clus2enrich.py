@@ -232,7 +232,7 @@ def main(
         taxonGenes, taxonClusGenes = 0, 0
         countres = pool.starmap(
             countGenes, 
-            [[ome, formatPath('$MYCOFAA/' + ome + '.aa.fa')] for ome in omes]
+            [[ome, db[ome]['faa']] for ome in omes]
             )
         for ome, tot in countres:
             taxonGenes += tot

@@ -108,11 +108,11 @@ def compileOGs(og_file, wrk_dir, useableOmes = set()):
 
 
 def compileLoci(
-    ome2i, gene2og, plusminus, cpus = 1
+    db, ome2i, gene2og, plusminus, cpus = 1
     ):
 
     loci_hash_cmds = [
-        [os.environ['MYCOGFF3'] + '/' + x, ome2i[x.replace('.gff3','')], 
+        [x, ome2i[x.replace('.gff3','')], 
         gene2og, plusminus]
         for x in list(db['gff3']) if x.replace('.gff3','') in ome2i
         ]
@@ -624,7 +624,7 @@ def rm_subsets(ogx2omes, ogx2loc, cpus = 1):
 def ogPair2ogX(db, ogPair_dict, gene2og, ome2i, cpus, clusplusminus = 10):
 
     hash_protoclus_cmds = []
-    gffs = ['$MYCOGFF3/' + x for x in list(db['gff3']) if x.replace('.gff3','') in ome2i]
+    gffs = [x for x in list(db['gff3']) if x.replace('.gff3','') in ome2i]
     print('\t\tForming protocluster hashes', flush = True)
     for gff in gffs: # prepare for protocluster hashing by organism
         hash_protoclus_cmds.append((formatPath(gff), ogPair_dict, gene2og, clusplusminus))
@@ -717,7 +717,7 @@ def genOGxNulls(
 
     print('\t\tParsing for random samples', flush = True)
     hash_null_cmds = [
-        (formatPath('$MYCOGFF3/' + x), gene2og, max_clus_size, plusminus) \
+        (x, gene2og, max_clus_size, plusminus,) \
         for x in gffs
         ]
     with mp.Pool(processes = cpus) as pool:
@@ -1045,18 +1045,12 @@ def FamMNGR(
 
 def WriteAdjMatrix(Q, out_file):
     with open(out_file, 'w') as out: # might be nice to compress this/write to MCL binary matrix
-        x, count = True, 0
+        x = True
         while x:
             x = Q.get()
             if x:
-                try:
-                    if float(x[2]) > 0.0: # if it isn't 0
-                        out.write(x)
-                        if not count % 10: # flush every 100 lines
-                            out.flush() # shouldn't be a bottleneck
-                        count += 1
-                except TypeError:
-                    print(x)
+                out.write(x)
+                out.flush() # shouldn't be a bottleneck
     
 def BLASTclanOG(db, og, fileBase, genes, minid, diamond = 'diamond'):
     blast_ids = defaultdict(dict)
@@ -1128,7 +1122,8 @@ def AcquireClusFamSim(
     maxScores = [max(i) for i in scores]
     try:
         total = (sum(maxScores)/len(maxScores)) * overlap_coef # * jaccard
-        Q.put(str(i0 + index) + '\t' + str(i1 + index) + '\t' + str(total) + '\n')
+        if total > 0.0:
+            Q.put(str(i0 + index) + '\t' + str(i1 + index) + '\t' + str(total) + '\n')
     except ZeroDivisionError: # no overlapping OGs
 #        print(set0,set1, flush = True)
         return
@@ -1307,8 +1302,6 @@ def groupOGx(
     inflation = 1.5, minimum = 2, cpus = 1
     ):
 
-    db = db.set_index('internal_ome')
-
     groupI = wrk_dir + 'group.I.pickle'
     groupII = wrk_dir + 'group.II.pickle'
     if not os.path.isfile(groupI):
@@ -1329,7 +1322,7 @@ def groupOGx(
         start = datetime.now()
         for ome in ogX_genes:
             hashOgx_cmds.append([
-                formatPath('$MYCOGFF3/' + db[ome]['gff3']),
+                db[ome]['gff3'],
                 ome, ogX_genes[ome], gene2og, clusplusminus
                 ])
         with mp.Pool(processes = cpus) as pool:
@@ -1435,7 +1428,7 @@ def groupOGx(
         for ome, clus2extract in ome2clus2extract.items():
             # prepare commands for locus extraction
             cmds.append([
-                ome, formatPath('$MYCOGFF3/' + ome + '.gff3'),
+                ome, db[ome]['gff3'],
                 clus2extract, gene2og, clusplusminus 
                 ])
         with mp.Pool(processes = cpus) as pool:
@@ -1486,16 +1479,16 @@ def groupOGx(
             ogxXloci[index] = clanOGx4fams[clanI][i]
             index += 1
 
-#    del cmds[0] # remove the first one because it is huge enough to mp on its own
+    del cmds[0] # remove the first one because it is huge enough to mp on its own
     with mp.Pool(processes = cpus - 1) as pool:
         pool.starmap(
             Clan2FamLoci, cmds
             )
-#    mpClan2FamLoci(
- #       db, 0, clanLoci[0], clanOGloci[0], 
-  #      clanOGx4fams[0], fam_dir, Q, 0,
-   #     diamond = 'diamond', minid = 30, cpus = cpus - 1
-    #    )
+    mpClan2FamLoci(
+        db, 0, clanLoci[0], clanOGloci[0], 
+        clanOGx4fams[0], fam_dir, Q, 0,
+        diamond = 'diamond', minid = 30, cpus = cpus - 1
+        )
     W.join()
     m.close()
 
@@ -1852,7 +1845,7 @@ def rbhMngr2(
             ome_locs[ome][seq].append(ogX)
 
     for ome in ome_locs:
-        gff = formatPath('$MYCOGFF3/' + db['gff3'][ome])
+        gff = db['gff3'][ome]
         ogxGene_cmds.append([gff, ome_locs[ome], gene2og, clusplusminus])
 
     print('\tAssimilating loci with significant OGxs', flush = True)
@@ -1905,7 +1898,7 @@ def rbhMngr3(
                         ome_locs[ome][seq].append(modOGx)
             
         for ome in ome_locs:
-            gff = formatPath('$MYCOGFF3/' + ome + '.gff3')
+            gff = db[ome]['gff3']
             ogxGene_cmds.append([gff, ome_locs[ome], gene2og, clusplusminus])
     
         print('\tAssimilating loci with significant OGxs', flush = True)
@@ -1996,14 +1989,14 @@ def dndsGeneGrab(
     return clus_out
 
 
-def dnds_preparation(omes4ogs, ogx2omes, gene2og, plusminus, ogx_dir, i2ome):
+def dnds_preparation(db, omes4ogs, ogx2omes, gene2og, plusminus, ogx_dir, i2ome):
 
     gene_checks, ogX_check = {}, {}
     
     for ome in omes4ogs:
-        gff_path = formatPath('$MYCOGFF3/' + i2ome[ome] + '.gff3') 
-        proteome_path = formatPath('$MYCOFAA/' + i2ome[ome] + '.aa.fa')
-        assembly_path = formatPath('$MYCOFNA/' + i2ome[ome] + '.fa')
+        gff_path = db[i2ome[ome]]['gff3'] 
+        proteome_path = db[i2ome[ome]]['faa']
+        assembly_path = db[i2ome[ome]['fna']
         res = dndsGeneGrab(
             gff_path, assembly_path, proteome_path,
             omes4ogs[ome], gene2og, plusminus
@@ -2709,12 +2702,12 @@ def RBHmain(
         if not modules: # for ogxs
             ogx2rbh = rbhMngr2(
                 list(ogs), list(ome2i.keys()), og_dir, ogx_dir, diamond, ogx2loc,
-                db.set_index('internal_ome'), gene2og, plusminus, og2gene, cpus = cpus
+                db, gene2og, plusminus, og2gene, cpus = cpus
                 )
         else: # run the kernel detection version
             ogx2rbh = rbhMngr3(
                 list(ogs), list(ome2i.keys()), og_dir, ogx_dir, diamond, ogx2loc, 
-                db.set_index('internal_ome'), gene2og, plusminus, og2gene, modules,
+                db, gene2og, plusminus, og2gene, modules,
                 moduleOGxs, ome2i, cpus = cpus
                 )
         with open(wrk_dir + old_path, 'wb') as pickout:
@@ -2765,7 +2758,7 @@ def main(
         tree_path = out_dir + 'microsynt.newick'
 
     # obtain useable omes
-    useableOmes, dbOmes = set(), set(db['internal_ome'])
+    useableOmes, dbOmes = set(), set(db['ome'])
     print('\nI. Inputting data', flush = True)
     if n50thresh: # optional n50 threshold via mycotoolsDB
         assemblyPath = formatPath('$MYCODB/../data/assemblyStats.tsv')
@@ -2790,7 +2783,7 @@ def main(
         # compile cooccuring pairs of orthogroups in each genome
         print('\tCompiling all loci', flush = True)
         pairs = compileLoci(
-            ome2i, gene2og, plusminus, 
+            db, ome2i, gene2og, plusminus, 
             cpus = cpus
             )
     
@@ -2811,6 +2804,8 @@ def main(
     else:
         cooccur_array = np.load(cc_arr_path + '.npy')
         # do I even need this considering the above is with respect to seed score filtering
+
+    db = db.set_index('ome')
  
     if not os.path.isfile(wrk_dir + '2.null.txt'):
         print('\tGenerating null distributions', flush = True)
@@ -3100,7 +3095,7 @@ def main(
         maffts = [file + '.mafft' for file in ogx_files]
         if not all(os.path.isfile(x + '.aa.fa') for x in ogx_files):
             print("\tCompiling OGx kernels' genes", flush = True)
-            dnds_preparation(omes4ogs, ogx2omes, gene2og, plusminus, ogx_dir, i2ome)
+            dnds_preparation(db, omes4ogs, ogx2omes, gene2og, plusminus, ogx_dir, i2ome)
         if not all(os.path.isfile(x) for x in maffts):
             print('\tAligning proteins', flush = True)
             maffts = [x for x in maffts if not os.path.isfile(x)]
@@ -3216,14 +3211,14 @@ def main(
     sig_clus = exSigClus(
         ogx2dist, ogx2loc, top_ogxs, ome2i
         )
-    write_clus_cmds, db = [], db.set_index('internal_ome')
+    write_clus_cmds = []
     ome_dir = out_dir + 'ome/'
     if not os.path.isdir(ome_dir):
         os.mkdir(ome_dir)
     for ome in sig_clus:
         if not os.path.isdir(ome_dir + ome):
             os.mkdir(ome_dir + ome)
-        gff = formatPath('$MYCOGFF3/' + db[ome]['gff3'])
+        gff = db[ome]['gff3']
         out_file = ome_dir + ome + '/info.out'
         write_clus_cmds.append([sig_clus[ome], ome, out_file, gff, gene2og, plusminus])
     with mp.Pool(processes = cpus) as pool:
@@ -3236,7 +3231,7 @@ def main(
     print('\tApplying Pfam annotations', flush = True)
     prot_paths = {}
     for ome in genes:
-        prot_paths[ome] = formatPath('$MYCOFAA/' + db[ome]['faa'])
+        prot_paths[ome] = db[ome]['faa']
     pfamRes, failedOmes = pfamMngr(
         genes, prot_paths, wrk_dir, pfam, evalue = 0.01, threshold = 0.5, cpus = cpus
         )
@@ -3248,8 +3243,8 @@ def main(
     for ome in genes:
         if ome in failedOmes:
             continue
-        gff_path = formatPath('$MYCOGFF3/' + db[ome]['gff3'])
-        pro_path = formatPath('$MYCOFAA/' + db[ome]['faa'])
+        gff_path = db[ome]['gff3']
+        pro_path = db[ome]['faa']
         try:
             grabClus_cmds.append([genes[ome], gff_path, pro_path, ome, ome_dir, gene2og, pfamRes[ome]])
         except KeyError:
