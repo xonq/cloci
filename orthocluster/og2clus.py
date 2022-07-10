@@ -5,7 +5,7 @@
 #NEED to change border percentile entries to clus percentile
 #NEED to allow hard threshold for microsynteny distance
 #NEED corrected alpha threshold for hypergeometric
-#NEED locus-based family hypergeometric average
+#NEED locus-based OCG hypergeometric average
 #NEED to post filter clusters after grouping
 #NEED to accept an alternative OG input
 #NEED an intelligent resume for patch and coevo percentiles
@@ -1135,13 +1135,15 @@ def mpClan2FamLoci(
     diamond = 'diamond', minid = 30, cpus = 1
     ):
 
+    print(clanI)
     blast_hash = defaultdict(list)
     for i, locus in enumerate(loci):
         ogs = ogLoci[i]
         for i1, og in enumerate(ogs):
             if og is not None:
                 blast_hash[og].append(locus[i1])
-    
+
+    print(True)    
     blast_ids = defaultdict(dict)
     cmds = []
     for og, genes in blast_hash.items():
@@ -1150,9 +1152,12 @@ def mpClan2FamLoci(
             cmds.append([
                 db, og, fileBase, genes, minid, diamond
                 ])
+
+    print(True,True)
     with mp.Pool(processes = cpus) as pool:
         tblast_res = pool.starmap(BLASTclanOG, cmds)
 
+    print(True,True,True)
     for tblast_ids in tblast_res:
         for og, qdict in tblast_ids.items():
             for q, sdict in qdict.items():
@@ -1161,6 +1166,7 @@ def mpClan2FamLoci(
                 else:
                     blast_ids[og][q] = sdict
 
+    print(True,True,True,True)
     blast_ids = dict(blast_ids)    
     if blast_ids:
         with mp.Pool(processes = cpus) as pool:
@@ -1479,16 +1485,17 @@ def groupOGx(
             ogxXloci[index] = clanOGx4fams[clanI][i]
             index += 1
 
+    bigClan = cmds[0][1]
     del cmds[0] # remove the first one because it is huge enough to mp on its own
     with mp.Pool(processes = cpus - 1) as pool:
         pool.starmap(
             Clan2FamLoci, cmds
             )
     mpClan2FamLoci(
-        db, 0, clanLoci[0], clanOGloci[0], 
-        clanOGx4fams[0], fam_dir, Q, 0,
+        db, bigClan, clanLoci[bigClan], clanOGloci[bigClan], 
+        clanOGx4fams[bigClan], fam_dir, Q, bigClan,
         diamond = 'diamond', minid = 30, cpus = cpus - 1
-        )
+        ) # now do the biggest OCG
     W.join()
     m.close()
 
@@ -1911,22 +1918,22 @@ def rbhMngr3(
         with open(ogx_dir + 'clusOgs.pickle', 'rb') as raw:
             clusOGs_prep = pickle.load(raw)
 
-    clusOgs = {modOGx: defaultdict(list) for modOGx in moduleOGxs}
+    clusOgs = {modOGx: [i, defaultdict(list)] for i, modOGx in enumerate(moduleOGxs)}
     for res in clusOgs_prep:
         # clus_ogs = {ogx: [{og: []}]} list is per locus
         for ogX in res:
             for locus in res[ogX]:
                 for og in locus:
-                    clusOgs[ogX][og].extend(locus[og])
+                    clusOgs[ogX][1][og].extend(locus[og])
     clusOgs = {
-        ogX: {og: set(v) for og, v in ogs.items()} for ogX, ogs in clusOgs.items()
+        ogX: [d[0], {og: set(v) for og, v in d[1].items()}] for ogX, d in clusOgs.items()
         } # make sets from it
     # {ogX: {og: set(seqs)}}
 
     print('\tCalculating RBH scores', flush = True)
     with mp.Pool(processes = cpus) as pool:
         rbhRes = pool.starmap(
-            rbhCalc, [[ogX, clusOgs[ogX], ogx_dir] for ogX in clusOgs]
+            rbhCalc, [[moduleOmes[d[0]], d[1], ogx_dir] for ogX, d in clusOgs.items()]
             )
 
     rbhScores = dict(rbhRes)
@@ -1996,7 +2003,7 @@ def dnds_preparation(db, omes4ogs, ogx2omes, gene2og, plusminus, ogx_dir, i2ome)
     for ome in omes4ogs:
         gff_path = db[i2ome[ome]]['gff3'] 
         proteome_path = db[i2ome[ome]]['faa']
-        assembly_path = db[i2ome[ome]['fna']
+        assembly_path = db[i2ome[ome]]['fna']
         res = dndsGeneGrab(
             gff_path, assembly_path, proteome_path,
             omes4ogs[ome], gene2og, plusminus
@@ -2700,26 +2707,26 @@ def RBHmain(
     ogs = set(ogs_list)
     if not os.path.isfile(wrk_dir + old_path):
         if not modules: # for ogxs
-            ogx2rbh = rbhMngr2(
+            d2rbh = rbhMngr2(
                 list(ogs), list(ome2i.keys()), og_dir, ogx_dir, diamond, ogx2loc,
                 db, gene2og, plusminus, og2gene, cpus = cpus
                 )
         else: # run the kernel detection version
-            ogx2rbh = rbhMngr3(
+            d2rbh = rbhMngr3(
                 list(ogs), list(ome2i.keys()), og_dir, ogx_dir, diamond, ogx2loc, 
                 db, gene2og, plusminus, og2gene, modules,
                 moduleOGxs, ome2i, cpus = cpus
                 )
         with open(wrk_dir + old_path, 'wb') as pickout:
-            pickle.dump(ogx2rbh, pickout)
+            pickle.dump(d2rbh, pickout)
         ogx_dirTar = mp.Process(target=tardir, args=(ogx_dir, True))
         ogx_dirTar.start() # when to join ...
     else:
         print('\tLoading previous coevolution results', flush = True)
         with open(wrk_dir + old_path, 'rb') as pickin:
-            ogx2rbh = pickle.load(pickin)
+            d2rbh = pickle.load(pickin)
 
-    return ogx2rbh
+    return d2rbh
 
 
 def main(
@@ -2983,12 +2990,13 @@ def main(
         flush = True
         )
     ogx2dist = togx2dist
-
-    print('\nIV. Quantifying OGx patchiness', flush = True)
-    omes2patch = PatchMain(
-        phylo, ogx2omes, ogx2dist, wrk_dir,
-        old_path = 'patchiness.scores.pickle', cpus = cpus
-        )
+    
+    ogx2rbh, omes2patch = {}, {}
+#    print('\nIV. Quantifying OGx patchiness', flush = True)
+ #   omes2patch = PatchMain(
+  #      phylo, ogx2omes, ogx2dist, wrk_dir,
+   #     old_path = 'patchiness.scores.pickle', cpus = cpus
+    #    )
 
     ogx_dir = wrk_dir + 'ogx/'
     if not checkdir(ogx_dir, unzip = True, rm = True):
@@ -2999,7 +3007,7 @@ def main(
         ogx2loc, wrk_dir, ome2i, og_dir, ogx_dir,
         diamond, db, gene2og, plusminus, og2gene, 
         old_path = 'ogx2rbh.pickle', cpus = cpus
-        )
+        ) # should be able to skip this
 
 
     # Group ogxs
@@ -3031,7 +3039,7 @@ def main(
         if famOmes[i] not in omes2patch
         ]
    
-    print('\nVI. Quantifying cluster family patchiness', flush = True)
+    print('\nVI. Quantifying OCG patchiness', flush = True)
     omes2patch = {**PatchMain(
         phylo, runOGxs, runOmes, wrk_dir,
         old_path = 'patchiness.full.pickle', cpus = cpus
@@ -3041,14 +3049,14 @@ def main(
     if not checkdir(ogx_dir, unzip = True, rm = True):
         os.mkdir(ogx_dir)
 
-    print('\nVII. Quantifying cluster family gene evolution congruence', flush = True)
-    ogx2rbh = {**ogx2rbh, **RBHmain(
+    print('\nVII. Quantifying OCG gene evolution congruence', flush = True)
+    omes2rbh = RBHmain(
         ogx2loc, wrk_dir, ome2i, og_dir, ogx_dir,
         diamond, db, gene2og, plusminus, og2gene, 
-        old_path = 'ogx2rbh.full.pickle',
+        old_path = 'omes2rbh.full.pickle',
         fams = fams, famOGxs = famOGxs,
         cpus = cpus
-        )}
+        )
 
     if coevo_thresh > 0 or patch_thresh > 0 or microsyn_thresh > 0:
         print('\tApplying thresholds', flush = True)
@@ -3061,7 +3069,7 @@ def main(
             ogc = famOGxs[i0]
             omesc = famOmes[i0]
             for x, omes in fam.items():
-                if ogx2rbh[ogc] >= coevo_thresh \
+                if omes2rbh[ogc] >= coevo_thresh \
                     and omes2patch[omesc] >= patch_thresh:
                     if check:
                         newFams[-1][x] = omes
@@ -3076,7 +3084,7 @@ def main(
         print('\t\t' + str(len(fams)) + ' families after', flush = True)
 
     if run_dnds: # need to bring file naming to speed
-        print('\nIIX. Quantifying cluster family dn/ds', flush = True)
+        print('\nIIX. Quantifying OCG dn/ds', flush = True)
         omes4ogs, ogx_files = {x: defaultdict(list) for x in range(len(ome2i))}, []
         for i, fam in enumerate(fams):
             for ogx in fam:
@@ -3146,10 +3154,10 @@ def main(
                 dnds_dict[ogX] = ['na' for x in range(3)]
         except NameError:
             dnds_dict = {ogX: ['na' for x in range(3)]}
-        if ogX in ogx2rbh:
+        if ogX in omes2rbh:
             kern_output.append([
                 ','.join([str(x) for x in ogX]), i, 
-                omes2dist[omesc]/maxval, ogx2rbh[ogX], omes2patch[omesc], 
+                omes2dist[omesc]/maxval, omes2rbh[omesc], omes2patch[omesc], 
                 ','.join([str(i2ome[x]) for x in omesc])
 #                dnds_dict[ogX][0], dnds_dict[ogX][1], str(dnds_dict[ogX][2]),
 #                omes2dist[omesc]
@@ -3157,7 +3165,7 @@ def main(
         else:
             kern_output.append([
                 ','.join([str(x) for x in ogX]), i,
-                omes2dist[omesc]/maxval, ogx2rbh[ogX], omes2patch[omesc], 
+                omes2dist[omesc]/maxval, omes2rbh[omesc], omes2patch[omesc], 
                 ','.join([str(i2ome[x]) for x in omesc]) 
 #                dnds_dict[ogX][0], dnds_dict[ogX][1], str(dnds_dict[ogX][2]),
                # omes2dist[omesc]
