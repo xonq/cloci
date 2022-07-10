@@ -15,9 +15,6 @@
 #NEED to implement gff2svg
 #NEED to delete excess when checkpoints are reached
 
-
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import gzip, os, shutil, random, argparse, sys, subprocess, time, re, pickle, copy
 import multiprocessing as mp, numpy as np
 from itertools import combinations
@@ -34,18 +31,8 @@ from mycotools.acc2gff import grabGffAcc
 from mycotools.gff2svg import main as gff2svg
 from mycotools.acc2fa import dbmain as acc2fa
 from datetime import datetime
-from cogent3.phylo import nj
-from cogent3 import PhyloNode, load_tree
-from io import StringIO
-from Bio import BiopythonWarning
-import networkx as nx
-from scipy.sparse import lil_matrix
-from scipy.stats import hypergeom
-import warnings
-warnings.simplefilter('ignore', BiopythonWarning)
-from Bio import SeqIO, AlignIO, codonalign
-from dna_features_viewer import GraphicFeature, GraphicRecord
 from collections import defaultdict
+
 
 def calcBranchLen(phylo, omes):
     '''calculate descending branch length from cogent3 tree'''
@@ -116,7 +103,7 @@ def compileLoci(
         gene2og, plusminus]
         for x in list(db['gff3']) if x.replace('.gff3','') in ome2i
         ]
-    with mp.Pool(processes = cpus) as pool:
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
         loci_hashes = pool.starmap(parseLoci, loci_hash_cmds)
     pool.join()
     pairs = {x[0]: x[1] for x in loci_hashes}
@@ -365,7 +352,7 @@ def HypergeoMNGR(
                 ])
 
     # run og-by-og, then accumulate via ogx at the end
-    with mp.Pool(processes = cpus) as pool:
+    with mp.get_context('fork').Pool(processes = cpus) as pool: # will fail on Windows
         hypergeoRes = pool.starmap(CalcHypergeo, cmds)
 
     comparisons = len(ogx2omes) # for Bonferroni correction
@@ -412,7 +399,7 @@ def gen_null_dict(combo_dict, sample = 10000):
 
 def calcDists(phylo, cooccur_dict, cpus = 1, omes2dist = {}):
     # multiprocessing calculating only new distances for omes2dist
-    with mp.Pool(processes = cpus) as pool:
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
         results = pool.starmap(
             calcBranchLen, 
             [(phylo, x) for x in list(set(cooccur_dict.values())) \
@@ -560,7 +547,7 @@ def gen_clusters(loc0, loc1, ogPair_set):
 
 def FormulateClusDicts(gen_clus_cmds, ogx2omes, ogx2loc, ome2i, cpus):
 
-    with mp.Pool(processes = cpus) as pool:
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
         clus_res = pool.starmap(gen_clusters, gen_clus_cmds)
     for i, res in enumerate(clus_res):
         if res:
@@ -608,7 +595,7 @@ def rm_subsets(ogx2omes, ogx2loc, cpus = 1):
     for ogX_len in reversed(range(4, max_len + 1)):
         i2ogx = list(ogx2omes.keys())
         rm_cmds = [[ogX, ogx2omes] for ogX in i2ogx if len(ogX) == ogX_len]
-        with mp.Pool(processes = cpus) as pool:
+        with mp.get_context('fork').Pool(processes = cpus) as pool:
             todels = pool.starmap(par_rm, rm_cmds)
         for todel in todels:
             for ogX in todel:
@@ -628,7 +615,7 @@ def ogPair2ogX(db, ogPair_dict, gene2og, ome2i, cpus, clusplusminus = 10):
     print('\t\tForming protocluster hashes', flush = True)
     for gff in gffs: # prepare for protocluster hashing by organism
         hash_protoclus_cmds.append((formatPath(gff), ogPair_dict, gene2og, clusplusminus))
-    with mp.Pool(processes = cpus) as pool:
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
         protoclus_res = pool.starmap(hash_protoclusters, hash_protoclus_cmds)
     pool.join()
 
@@ -720,7 +707,7 @@ def genOGxNulls(
         (x, gene2og, max_clus_size, plusminus,) \
         for x in gffs
         ]
-    with mp.Pool(processes = cpus) as pool:
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
         hashRes = pool.starmap(Hash4nulls, hash_null_cmds)
         # hashRes = [({size: [OGx]})...] by ome
 
@@ -1050,7 +1037,7 @@ def WriteAdjMatrix(Q, out_file):
             x = Q.get()
             if x:
                 out.write(x)
-                out.flush() # shouldn't be a bottleneck
+#                out.flush() # shouldn't be a bottleneck
     
 def BLASTclanOG(db, og, fileBase, genes, minid, diamond = 'diamond'):
     blast_ids = defaultdict(dict)
@@ -1078,6 +1065,52 @@ def BLASTclanOG(db, og, fileBase, genes, minid, diamond = 'diamond'):
             blast_ids[og][q][s] = float(pident)/100 # adjust diamond to decimal
 
     return dict(blast_ids)
+
+def mpAcquireClusFamSim(
+    i0, i1, index, loc0, loc1, ogL0, ogL1, set0, set1, blast_ids, Q
+    ):
+    ogDict = {}
+    for i, og in enumerate(ogL0):
+        if og not in ogDict:
+            ogDict[og] = [[], []]
+        ogDict[og][0].append(loc0[i])
+    for i, og in enumerate(ogL1):
+        if og not in ogDict:
+            ogDict[og] = [[], []]
+        ogDict[og][1].append(loc1[i])
+
+    intersection = set0.intersection(set1)
+    #jaccard = len(intersection)/len(set0.union(set1))
+    # currently this is biased against contig edges and will also
+    # force fragments with a much smaller subset OG # then the
+    # primary OGx into separate families
+
+    # could alternatively weight just by incorporating 0 values
+    # for OGs that don't overlap
+
+    overlap_coef = len(intersection)/min([len(set0), len(set1)])
+    scores = []
+    for og in list(intersection):
+        if ogDict[og][0] and ogDict[og][1]:
+            scores.append([])
+            for gene0 in ogDict[og][0]:
+                for gene1 in ogDict[og][1]:
+                    try:
+                        scores[-1].append(blast_ids[og][gene0][gene1])
+                    except KeyError: # missing gene
+                        scores[-1].append(0)
+        else:
+            scores[-1].append(0)
+    maxScores = [max(i) for i in scores]
+    try:
+        total = (sum(maxScores)/len(maxScores)) * overlap_coef # * jaccard
+        if total > 0.0:
+            Q.put(str(i0 + index) + '\t' + str(i1 + index) + '\t' + str(total) + '\n')
+    except ZeroDivisionError: # no overlapping OGs
+#        print(set0,set1, flush = True)
+        return
+
+
 
 def AcquireClusFamSim(
     i0, i1, index, loc0, loc1, ogL0, ogL1, blast_ids, Q
@@ -1135,7 +1168,6 @@ def mpClan2FamLoci(
     diamond = 'diamond', minid = 30, cpus = 1
     ):
 
-    print(clanI)
     blast_hash = defaultdict(list)
     for i, locus in enumerate(loci):
         ogs = ogLoci[i]
@@ -1143,7 +1175,6 @@ def mpClan2FamLoci(
             if og is not None:
                 blast_hash[og].append(locus[i1])
 
-    print(True)    
     blast_ids = defaultdict(dict)
     cmds = []
     for og, genes in blast_hash.items():
@@ -1153,11 +1184,9 @@ def mpClan2FamLoci(
                 db, og, fileBase, genes, minid, diamond
                 ])
 
-    print(True,True)
-    with mp.Pool(processes = cpus) as pool:
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
         tblast_res = pool.starmap(BLASTclanOG, cmds)
 
-    print(True,True,True)
     for tblast_ids in tblast_res:
         for og, qdict in tblast_ids.items():
             for q, sdict in qdict.items():
@@ -1166,15 +1195,55 @@ def mpClan2FamLoci(
                 else:
                     blast_ids[og][q] = sdict
 
-    print(True,True,True,True)
-    blast_ids = dict(blast_ids)    
+    blast_ids = dict(blast_ids)
+    setOGloci = [set(v) for v in ogLoci] # prestage set making
+    [v.remove(None) for v in setOGloci if None in v] # prestage removal
     if blast_ids:
-        with mp.Pool(processes = cpus) as pool:
-            pool.starmap(
-                AcquireClusFamSim,
-                ([i0, i1, index, loci[i0], loci[i1], ogLoci[i0], ogLoci[i1], blast_ids, Q] \
-                for i0, i1 in combinations(range(len(loci)), 2))
-                )
+        procs = []
+        for i0, ogLoc0 in enumerate(ogLoci):
+            for i1, ogLoc1 in enumerate(ogLoci[i0+1:]):
+                SogLoc0, SogLoc1 = setOGloci[i0], setOGloci[i1]
+                if not SogLoc0.isdisjoint(SogLoc1):
+                    print('\t',i0,i1)
+                    while len(procs) >= cpus:
+                        todel = None
+                        for i2, proc in enumerate(procs):
+                            if not proc.is_alive():
+                                todel = i2
+                                proc.join()
+                                break
+                        if todel is not None:
+                            del procs[i2]
+                    Togs = copy.copy(ogLoc0)
+                    Togs.extend(ogLoc1)
+                    Tids = {
+                        og: blast_ids[og] for og in Togs if og in blast_ids
+                        }
+                    procs.append(mp.Process(
+                        target = mpAcquireClusFamSim, 
+                        args = (
+                            i0, i1, index, loci[i0], loci[i1], 
+                            ogLoci[i0], ogLoci[i1], SogLoci0, SogLoci1,
+                            Tids, Q
+                            )
+                        ))
+                    procs[-1].start()
+        while procs:
+            todel = None
+            for i, proc in enumerate(procs):
+                if not proc.is_alive():
+                    todel = i
+                    proc.join()
+                    break
+            if todel is not None:
+                del procs[i2]
+                
+#        with mp.get_context('fork').Pool(processes = cpus) as pool:
+ #           pool.starmap(
+  #              AcquireClusFamSim,
+   #             ([i0, i1, index, loci[i0], loci[i1], ogLoci[i0], ogLoci[i1], blast_ids, Q] \
+    #            for i0, i1 in combinations(range(len(loci)), 2))
+     #           )
 
 def Clan2FamLoci(
     db, clanI, loci, ogLoci, ogxXloci, fam_dir, Q, index, 
@@ -1331,7 +1400,7 @@ def groupOGx(
                 db[ome]['gff3'],
                 ome, ogX_genes[ome], gene2og, clusplusminus
                 ])
-        with mp.Pool(processes = cpus) as pool:
+        with mp.get_context('fork').Pool(processes = cpus) as pool:
             gene_tups = pool.starmap(hash_ogx, hashOgx_cmds)
     
         gene2ogx, ogx2genes = {}, {}
@@ -1437,7 +1506,7 @@ def groupOGx(
                 ome, db[ome]['gff3'],
                 clus2extract, gene2og, clusplusminus 
                 ])
-        with mp.Pool(processes = cpus) as pool:
+        with mp.get_context('fork').Pool(processes = cpus) as pool:
             hash_res = pool.starmap(HashClanLoci, cmds)
     
         clanLoci, clanOGx4fams, clanOGloci = defaultdict(list), defaultdict(list), defaultdict(list)
@@ -1487,13 +1556,13 @@ def groupOGx(
 
     bigClan = cmds[0][1]
     del cmds[0] # remove the first one because it is huge enough to mp on its own
-    with mp.Pool(processes = cpus - 1) as pool:
+    with mp.get_context('fork').Pool(processes = cpus - 1) as pool:
         pool.starmap(
             Clan2FamLoci, cmds
             )
     mpClan2FamLoci(
         db, bigClan, clanLoci[bigClan], clanOGloci[bigClan], 
-        clanOGx4fams[bigClan], fam_dir, Q, bigClan,
+        clanOGx4fams[bigClan], fam_dir, Q, 0,
         diamond = 'diamond', minid = 30, cpus = cpus - 1
         ) # now do the biggest OCG
     W.join()
@@ -1717,7 +1786,7 @@ def ogBlast(db, ogs, og_dir, ogx_dir, diamond, og2gene, cpus = 1, printexit = Fa
                 ])
 
     print('\tMaking ' + str(len(cmds1)) + ' OG diamond databases', flush = True)
-    with mp.Pool(processes = cpus) as pool:
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
         pool.starmap(runMakeDMNDdb, cmds1)
 
     if printexit:
@@ -1856,7 +1925,7 @@ def rbhMngr2(
         ogxGene_cmds.append([gff, ome_locs[ome], gene2og, clusplusminus])
 
     print('\tAssimilating loci with significant OGxs', flush = True)
-    with mp.Pool(processes = cpus) as pool:
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
         clusOgs_prep = pool.starmap(retroOGxGeneGrab, ogxGene_cmds)
 #    {ogx:[{og:[seq]}]}
 
@@ -1874,7 +1943,7 @@ def rbhMngr2(
     # {ogX: {og: set(seqs)}}
 
     print('\tCalculating RBH scores', flush = True)
-    with mp.Pool(processes = cpus) as pool:
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
         rbhRes = pool.starmap(
             rbhCalc, [[ogX, clusOgs[ogX], ogx_dir] for ogX in clusOgs]
             )
@@ -1909,7 +1978,7 @@ def rbhMngr3(
             ogxGene_cmds.append([gff, ome_locs[ome], gene2og, clusplusminus])
     
         print('\tAssimilating loci with significant OGxs', flush = True)
-        with mp.Pool(processes = cpus) as pool:
+        with mp.get_context('fork').Pool(processes = cpus) as pool:
             clusOgs_prep = pool.starmap(retroOGxGeneGrab, ogxGene_cmds)
 
         with open(ogx_dir + 'clusOgs.pickle', 'wb') as out:
@@ -1931,7 +2000,7 @@ def rbhMngr3(
     # {ogX: {og: set(seqs)}}
 
     print('\tCalculating RBH scores', flush = True)
-    with mp.Pool(processes = cpus) as pool:
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
         rbhRes = pool.starmap(
             rbhCalc, [[moduleOmes[d[0]], d[1], ogx_dir] for ogX, d in clusOgs.items()]
             )
@@ -2677,7 +2746,7 @@ def PatchMain(
                 ])
 #        more = set([tuple(omes) for omes in moduleOmes])
 #        allOGxs = list(clusOgxs.union(more))    
-        with mp.Pool(processes = cpus) as pool:
+        with mp.get_context('fork').Pool(processes = cpus) as pool:
             patch_res = pool.starmap(
                 calcPatchiness, [(phylo, x) for x in clusOmes]
                 )
@@ -3116,7 +3185,7 @@ def main(
             maffts = [x['output'] for x in mafft_res]
 
         print('\tCalculating dn/ds', flush = True)
-        with mp.Pool(processes = cpus) as pool:
+        with mp.get_context('fork').Pool(processes = cpus) as pool:
             dnds_res = pool.map(calc_dnds, maffts)
         pool.join()
     
@@ -3229,7 +3298,7 @@ def main(
         gff = db[ome]['gff3']
         out_file = ome_dir + ome + '/info.out'
         write_clus_cmds.append([sig_clus[ome], ome, out_file, gff, gene2og, plusminus])
-    with mp.Pool(processes = cpus) as pool:
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
         out_genes = pool.starmap(write_clusters, write_clus_cmds)
     pool.join()
     genes = {x[0]: x[1] for x in out_genes if x[1]}
@@ -3259,7 +3328,7 @@ def main(
             grabClus_cmds.append([genes[ome], gff_path, pro_path, ome, ome_dir, gene2og])
 
 
-    with mp.Pool(processes = cpus) as pool:
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
         clus_info = pool.starmap(grabClus, grabClus_cmds)
     pool.join()
 
@@ -3268,11 +3337,27 @@ def main(
   #  svg_width = 10
    # for ome in clus_info:
     #    ome_svg_cmds.append([ome_dir + ome + '/'])
-#    with mp.Pool(processes = cpus) as pool:
+#    with mp.get_context('fork').Pool(processes = cpus) as pool:
  #       pool.starmap(runGFF2SVG, ome_svg_cmds)
 
 
 if __name__ == '__main__':
+    # need these here because spawn mp context forces reimport
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    from cogent3.phylo import nj
+    from cogent3 import PhyloNode, load_tree
+    from io import StringIO
+    from Bio import BiopythonWarning
+    import networkx as nx
+    from scipy.sparse import lil_matrix
+    from scipy.stats import hypergeom
+    import warnings
+    warnings.simplefilter('ignore', BiopythonWarning)
+    from Bio import SeqIO, AlignIO, codonalign
+    from dna_features_viewer import GraphicFeature, GraphicRecord
+    
+
     description = \
     '''Pharmaceuticals are primarily derived from biologically-produced compounds, their
     derivatives, and synthetic compounds inspired by natural pharmacophores.
