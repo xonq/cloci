@@ -1223,7 +1223,7 @@ def mpClan2FamLoci(
                         target = mpAcquireClusFamSim, 
                         args = (
                             i0, i1, index, loci[i0], loci[i1], 
-                            ogLoci[i0], ogLoci[i1], SogLoci0, SogLoci1,
+                            ogLoci[i0], ogLoci[i1], SogLoc0, SogLoc1,
                             Tids, Q
                             )
                         ))
