@@ -34,7 +34,7 @@ from datetime import datetime
 from collections import defaultdict
 
 
-def calcBranchLen(phylo, omes):
+def calc_branch_len(phylo, omes):
     '''calculate descending branch length from cogent3 tree'''
     # need to verify wtf descending branch length v total of supplied nodes is
     omes = [str(x) for x in omes]
@@ -49,9 +49,9 @@ def calcBranchLen(phylo, omes):
     except AttributeError:
         print(omes, '\n', phylo)
 
-def updateScores(phylo, cooccur_dict, cpus = 1, omes2dist = {}):
+def update_dists(phylo, cooccur_dict, cpus = 1, omes2dist = {}):
     '''update the omes2dist with a new set of data'''
-    results = calcDists(phylo, cooccur_dict, cpus, omes2dist = omes2dist)
+    results = calc_dists(phylo, cooccur_dict, cpus, omes2dist = omes2dist)
     omes2dist = {**omes2dist, **{x[1]: x[0] for x in results}} 
     return omes2dist
 
@@ -397,12 +397,12 @@ def gen_null_dict(combo_dict, sample = 10000):
     return ogx2i, i2ogx, cooccur_dict
 
 
-def calcDists(phylo, cooccur_dict, cpus = 1, omes2dist = {}):
+def calc_dists(phylo, cooccur_dict, cpus = 1, omes2dist = {}):
     # multiprocessing calculating only new distances for omes2dist
     with mp.get_context('fork').Pool(processes = cpus) as pool:
         results = pool.starmap(
-            calcBranchLen, 
-            [(phylo, x) for x in list(set(cooccur_dict.values())) \
+            calc_branch_len, 
+            [(phylo, x,) for x in list(set(cooccur_dict.values())) \
             if x not in omes2dist]
             )
 
@@ -415,7 +415,7 @@ def gen_nulls(pairs, phylo, samples = 10000, cpus = 1):
     ogpairs, revogpairs, null_dict = gen_null_dict(pairs, samples)
     oldLen = len(null_dict)
     null_dict = {k: v for k, v in null_dict.items() if len(v) > 1}
-    results = calcDists(phylo, null_dict, cpus = cpus)
+    results = calc_dists(phylo, null_dict, cpus = cpus)
     omes2dist, pair_scores = {x[1]: x[0] for x in results}, []
     for ogpair in null_dict:
         pair_scores.append(omes2dist[null_dict[ogpair]])
@@ -720,7 +720,7 @@ def genOGxNulls(
         ogx2i, i2ogx, null_dict = gen_null_dict(size_dict, samples)
         oldLen = len(null_dict)
         null_dict = {k: v for k, v in null_dict.items() if len(v) > 1} # 0 will n t compute
-        distRes = calcDists(phylo, null_dict, omes2dist = omes2dist, cpus = cpus)
+        distRes = calc_dists(phylo, null_dict, omes2dist = omes2dist, cpus = cpus)
         omes2dist, scores = {
             **omes2dist, **{x[1]: x[0] for x in distRes}
             }, []
@@ -948,14 +948,11 @@ def OGxClan2cluster_families(
 
 
 
-def MCL(adj_path, clusFile, inflation = 1.5, cpus = 1):
-
-    if cpus > 5:
-        cpus = 5
+def MCL(adj_path, clusFile, inflation = 1.5, threads = 1):
 
     subprocess.call([
         'mcl', adj_path, '--abc', '-I', str(inflation),
-        '-o', clusFile
+        '-o', clusFile, '-te', str(threads)
         ], stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL
         )
 #    mclFile = prep_mcl(adj_path + '.tmp', sym = True, output = None) 
@@ -1066,7 +1063,7 @@ def BLASTclanOG(db, og, fileBase, genes, minid, diamond = 'diamond'):
 
     return dict(blast_ids)
 
-def mpAcquireClusFamSim(
+def mpacquire_clus_fam_sim(
     i0, i1, index, loc0, loc1, ogL0, ogL1, set0, set1, blast_ids, Q
     ):
     ogDict = {}
@@ -1112,14 +1109,9 @@ def mpAcquireClusFamSim(
 
 
 
-def AcquireClusFamSim(
-    i0, i1, index, loc0, loc1, ogL0, ogL1, blast_ids, Q
+def acquire_clus_fam_sim(
+    i0, i1, index, loc0, loc1, ogL0, ogL1, set0, set1, blast_ids, Q
     ):
-    set0, set1 = set(ogL0), set(ogL1)
-    if None in set0:
-        set0.remove(None)
-    if None in set1:
-        set1.remove(None)
     ogDict = {}
     for i, og in enumerate(ogL0):
         if og not in ogDict:
@@ -1163,7 +1155,7 @@ def AcquireClusFamSim(
 
 
 
-def mpClan2FamLoci(
+def mpclan_to_fam_loci(
     db, clanI, loci, ogLoci, ogxXloci, fam_dir, Q, index, 
     diamond = 'diamond', minid = 30, cpus = 1
     ):
@@ -1220,7 +1212,7 @@ def mpClan2FamLoci(
                         og: blast_ids[og] for og in Togs if og in blast_ids
                         }
                     procs.append(mp.Process(
-                        target = mpAcquireClusFamSim, 
+                        target = mpacquire_clus_fam_sim, 
                         args = (
                             i0, i1, index, loci[i0], loci[i1], 
                             ogLoci[i0], ogLoci[i1], SogLoc0, SogLoc1,
@@ -1240,12 +1232,12 @@ def mpClan2FamLoci(
                 
 #        with mp.get_context('fork').Pool(processes = cpus) as pool:
  #           pool.starmap(
-  #              AcquireClusFamSim,
+  #              acquire_clus_fam_sim,
    #             ([i0, i1, index, loci[i0], loci[i1], ogLoci[i0], ogLoci[i1], blast_ids, Q] \
     #            for i0, i1 in combinations(range(len(loci)), 2))
      #           )
 
-def Clan2FamLoci(
+def clan_to_fam_loci(
     db, clanI, loci, ogLoci, ogxXloci, fam_dir, Q, index, 
     diamond = 'diamond', minid = 30
     ):
@@ -1289,8 +1281,13 @@ def Clan2FamLoci(
         for i0, i1 in combinations(range(len(loci)), 2):
             loc0, loc1 = loci[i0], loci[i1]
             ogL0, ogL1 = ogLoci[i0], ogLoci[i1]
-            AcquireClusFamSim(i0, i1, index, loc0, loc1, ogL0, ogL1, blast_ids, Q)
-
+            sOGl0 = set([x for x in ogL0 if x is not None])
+            sOGl1 = set([x for x in ogL1 if x is not None])
+            if not sOGl0.isdisjoint(sOGl1): # if there is an intersection 
+                print('\t', i0, i1, flush = True)
+                acquire_clus_fam_sim(i0, i1, index, loc0, loc1, ogL0, ogL1, sOGl0,
+	                             sOGl1, blast_ids, Q)
+    
 
 def HashClanLoci(ome, gff_path, ome_sig_clus, gene2og, clusplusminus):
     '''sliding window of size clusplusminus, identify sequences that may have
@@ -1438,9 +1435,9 @@ def groupOGx(
                 pairDict[id_] = tuple(sorted(omes_set)) 
 
 
-        omes2dist = updateScores(phylo, pairDict, cpus = cpus, omes2dist = omes2dist)
+        omes2dist = update_dists(phylo, pairDict, cpus = cpus, omes2dist = omes2dist)
 
-        print('\tClassifying OGx clans', flush = True)
+        print('\tClassifying OGx clans and Orthologous Cluster Groups (OCGs)', flush = True)
         # populate a lil_matrix here, then use that network to identify modules
         print('\t\tBuilding binary OGx-OGx network', flush = True)
         matrix = lil_matrix((len(i2ogx), len(i2ogx)), dtype=bool)
@@ -1470,7 +1467,7 @@ def groupOGx(
             clanOmes[-1] = tuple(sorted(set(clanOmes[-1])))
             clanOGxs[-1] = tuple(sorted(set(clanOGxs[-1])))
 
-        omes2dist = updateScores(
+        omes2dist = update_dists(
             phylo, {clanOGxs[i]: omes for i, omes in enumerate(clanOmes)},
             cpus = cpus, omes2dist = omes2dist
             )
@@ -1483,7 +1480,7 @@ def groupOGx(
    
     print('\t\t' + str(len(clans)) + ' clans', flush = True)
 
-    print('\tClassifying OGx clans into cluster families', flush = True)
+    print('\tClassifying OGx clans into OCGs', flush = True)
     clanFile = wrk_dir + 'clan2loci.'
     if not os.path.isfile(clanFile + 'og.json.gz'):
         print('\t\tPreparing loci extraction', flush = True)
@@ -1531,10 +1528,11 @@ def groupOGx(
     if not os.path.isdir(fam_dir):
         os.mkdir(fam_dir)
    
-    print('\t\tCalling cluster families', flush = True)
-    print('\t\t\t' + str(sum([len(v) for v in list(clanLoci.values())])) + ' loci', flush = True)
-    m, adj_mtr = mp.Manager(), fam_dir + 'loci.adj.tmp'
+    print('\t\tCalling OCGs', flush = True)
+    print('\t\t\t' + str(sum([len(v) for v in list(clanLoci.values())])) \
+        + ' loci considered', flush = True)
 
+    m, adj_mtr = mp.Manager(), fam_dir + 'loci.adj.tmp'
     Q = m.Queue()
     W = mp.Process(target=WriteAdjMatrix, args=(Q, adj_mtr))
     W.start()
@@ -1554,26 +1552,35 @@ def groupOGx(
             ogxXloci[index] = clanOGx4fams[clanI][i]
             index += 1
 
-    bigClan = cmds[0][1]
-    del cmds[0] # remove the first one because it is huge enough to mp on its own
-    with mp.get_context('fork').Pool(processes = cpus - 1) as pool:
-        pool.starmap(
-            Clan2FamLoci, cmds
-            )
-    mpClan2FamLoci(
-        db, bigClan, clanLoci[bigClan], clanOGloci[bigClan], 
-        clanOGx4fams[bigClan], fam_dir, Q, 0,
-        diamond = 'diamond', minid = 30, cpus = cpus - 1
-        ) # now do the biggest OCG
-    W.join()
-    m.close()
+ #   bigClan = cmds[0][1]
+  #  del cmds[0] # remove the first one because it is huge enough to mp on its own
+    if not os.path.isfile(fam_dir + 'loci.adj'):
+        with mp.get_context('fork').Pool(processes = cpus - 1) as pool:
+            pool.starmap(
+                clan_to_fam_loci, cmds
+                )
+    #    mpclan_to_fam_loci(
+     #       db, bigClan, clanLoci[bigClan], clanOGloci[bigClan], 
+      #      clanOGx4fams[bigClan], fam_dir, Q, 0,
+       #     diamond = 'diamond', minid = 30, cpus = cpus - 1
+        #    ) # now do the biggest OCG
+   
+        os.rename(adj_mtr, fam_dir + 'loci.adj')
 
-    os.rename(adj_mtr, fam_dir + 'loci.adj')
-    MCL(
-        fam_dir + 'loci.adj', fam_dir + 'loci.clus', 
-        inflation = 1.5, cpus = cpus*2
-        )
-    fams = []
+    Q.put(None)
+    W.join()
+
+    if not os.path.isfile(fam_dir + 'loci.clus'):
+        print('\t\t\tRunning MCL', flush = True)
+        if cpus > 5:
+            mcl_threads = 10 # cap at 5 processors, ten threads
+        else:
+            mcl_threads = (cpus * 2) - 1
+        MCL(fam_dir + 'loci.adj', fam_dir + 'loci.clus', 
+            inflation = 1.5, threads = mcl_threads)
+        # could add iterative subsample MCL option here
+    
+    t_fams = []
     with open(fam_dir + 'loci.clus', 'r') as raw:
         for line in raw:
             d = line.rstrip().split('\t')
@@ -1581,10 +1588,10 @@ def groupOGx(
                 indices = [int(x) for x in d]
             else: # singletons won't pass thresholds, disregard them
                 continue
-            fams.append(indices)
+            t_fams.append(indices)
 
     fams, famOGxs, famOmes = [], [], []
-    for fam, locIs in enumerate(fams):
+    for fam, locIs in enumerate(t_fams):
         fams.append(defaultdict(list))
         famOGx, famOme_list = [], []
         for locI in locIs:
@@ -1595,11 +1602,12 @@ def groupOGx(
             famOme_list.append(omeI)
             famOGx.extend(ogxs)
         famOGxs.append(tuple(sorted(set(famOGx))))
-        famOmes.append(sorted(set(famOme_list)))
+        famOmes.append(tuple(sorted(set(famOme_list))))
 
-    print('\t\t\t' + str(len(fams)) + ' fams', flush = True)
+    print('\t\t\t' + str(len(fams)) + ' OCGs w/' \
+        + str(sum([len(x) for x in fams])) + ' loci', flush = True)
 
-    omes2dist = updateScores(
+    omes2dist = update_dists(
         phylo, {famOGxs[i]: omes for i, omes in enumerate(famOmes)},
         cpus = cpus, omes2dist = omes2dist
         )
@@ -1881,7 +1889,7 @@ def rbhCalc(
                 continue
             try:
                 while geneInfo[gene][0][0][:geneInfo[gene][0][0].find('_')] == ome:
-                    del geneInfo[gene][0]
+                    geneInfo[gene].pop(0)
             except IndexError:
                 continue
             except KeyError: # the gene is not in the blast results (too short?)
@@ -1921,7 +1929,7 @@ def rbhMngr2(
             ome_locs[ome][seq].append(ogX)
 
     for ome in ome_locs:
-        gff = db['gff3'][ome]
+        gff = db[ome]['gff3']
         ogxGene_cmds.append([gff, ome_locs[ome], gene2og, clusplusminus])
 
     print('\tAssimilating loci with significant OGxs', flush = True)
@@ -2008,9 +2016,6 @@ def rbhMngr3(
     rbhScores = dict(rbhRes)
      
     return rbhScores        
-
-
-
 
 
 def dndsGeneGrab(
@@ -2921,7 +2926,7 @@ def main(
         print('\tCalculating seed OG-pair scores', flush = True)
         seed_score_start = datetime.now()
 
-        results = calcDists(phylo, cooccur_dict, cpus)
+        results = calc_dists(phylo, cooccur_dict, cpus)
         omes2dist, top_ogs = {x[1]: x[0] for x in results}, []
         with open(wrk_dir + 'ome_scores.pickle', 'wb') as out:
             pickle.dump(omes2dist, out)
@@ -2984,7 +2989,7 @@ def main(
         print('\t\t' + str(clus_obs) + ' observed OGx', flush = True)
 
         # calculate OGx microsynteny distances
-        results = calcDists(phylo, ogx_cooccur_dict, cpus, omes2dist = omes2dist)
+        results = calc_dists(phylo, ogx_cooccur_dict, cpus, omes2dist = omes2dist)
         ogx2dist = {}
         omes2dist, top_ogs = {**omes2dist, **{x[1]: x[0] for x in results}}, []
         with open(wrk_dir + 'ome_scores.pickle', 'wb') as out:
@@ -3097,8 +3102,6 @@ def main(
         with open(wrk_dir + 'fams.pickle', 'rb') as raw:
             fams, famOmes, famOGxs = pickle.load(raw)
 
-
-
     runOmes = [
         omes for omes in famOmes \
         if omes not in omes2patch
@@ -3123,7 +3126,7 @@ def main(
         ogx2loc, wrk_dir, ome2i, og_dir, ogx_dir,
         diamond, db, gene2og, plusminus, og2gene, 
         old_path = 'omes2rbh.full.pickle',
-        fams = fams, famOGxs = famOGxs,
+        modules = fams, moduleOGxs = famOGxs,
         cpus = cpus
         )
 
