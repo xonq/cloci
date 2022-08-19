@@ -1,7 +1,9 @@
 #! /usr/bin/env python3
 
+#NEED to switch the diamond to blast again because building diamond dbs is 
+    # a massive waste of time
 #NEED to implement a proteome start option that runs through linclust
-#NEED to make gbcMngr3 split different families with the same OCG
+#NEED to make gbc_mngr_3 split different families with the same OCG
 #NEED to model rearrangement for lineages instead of unexpected microsynteny
 #NEED to change border percentile entries to clus percentile
 #NEED to allow hard threshold for microsynteny distance
@@ -15,6 +17,7 @@
 #NEED TO ADD PERCENTILE TO OUTPUT
 #NEED to implement gff2svg
 #NEED to delete excess when checkpoints are reached
+    # implement tarring effectively
 
 import os
 import re
@@ -476,7 +479,7 @@ def gen_null_dict(combo_dict, sample = 10000):
     try: # sample
         null_list = random.sample(null_set_list, sample)
     except ValueError:
-        print('\t\tWARNING: requested null sample greater than pairs/triads', flush = True)
+        print('\t\t\t\tWARNING: requested null sample greater than OGx size', flush = True)
         null_list = null_set_list
 
     cooccur_dict = {}
@@ -1156,7 +1159,7 @@ def clan_to_ocg_loci(
     db, clanI, loci, ogLoci, ocg_dir, Q, index, 
     diamond = 'diamond', minid = 30
     ):
-    print(clanI, flush = True)
+#    print(clanI, flush = True)
     blast_hash = defaultdict(list)
     for i, locus in enumerate(loci):
         ogs = ogLoci[i]
@@ -1199,7 +1202,7 @@ def clan_to_ocg_loci(
             sOGl0 = set([x for x in ogL0 if x is not None])
             sOGl1 = set([x for x in ogL1 if x is not None])
             if not sOGl0.isdisjoint(sOGl1): # if there is an intersection 
-                print('\t', i0, i1, flush = True)
+#                print('\t', i0, i1, flush = True)
                 acquire_clus_ocg_sim(i0, i1, index, loc0, loc1, ogL0, ogL1, sOGl0,
 	                             sOGl1, blast_ids, Q)
     
@@ -1518,6 +1521,7 @@ def classify_ocgs(
             loc = loci[locI]
             ogxs = ogxXloci[locI]
             omeI = ome2i[loc[0][:loc[0].find('_')]]
+            print(ogxs, omeI, ocgs[-1])
             [ocgs[-1][i2ogx[ogx]].append(omeI) for ogx in ogxs]
             ocgOme_list.append(omeI)
             ocgOGx.extend(ogxs)
@@ -1686,10 +1690,10 @@ def calcGBCcorr(ogx_res, ogx):
     return total, ogx
 
 
-def runMakeDMNDdb(db, diamond, ogx_dir, og, genes):
+def run_make_dmnddb(db, diamond, ogx_dir, og, genes):
     fa_dict = acc2fa(db, genes)
     makeDBcmd = subprocess.Popen([
-        diamond, 'makedb', '--in', '-', '--db',
+        diamond, 'makedb', '--db',
         ogx_dir + str(og) + '.dmnd'
         ], stdin = subprocess.PIPE, stdout = subprocess.DEVNULL,
         stderr = subprocess.DEVNULL
@@ -1720,7 +1724,7 @@ def blast_homolog(db, ogs, og_dir, ogx_dir, diamond, og2gene, cpus = 1, printexi
 
     print('\tMaking ' + str(len(cmds1)) + ' OG diamond databases', flush = True)
     with mp.get_context('fork').Pool(processes = cpus) as pool:
-        pool.starmap(runMakeDMNDdb, cmds1)
+        pool.starmap(run_make_dmnddb, cmds1)
 
     if printexit:
         with open(ogx_dir + '../../gbc.sh', 'w') as out:
@@ -1732,7 +1736,7 @@ def blast_homolog(db, ogs, og_dir, ogx_dir, diamond, og2gene, cpus = 1, printexi
     multisub(cmds2, processes = cpus)
 
 
-def retroOGxGeneGrab(
+def retroactive_grab_ogx_genes(
     gff_path, ome_loc, gene2og, clusplusminus
     ):
 
@@ -1783,7 +1787,7 @@ def retroOGxGeneGrab(
     return clus_ogs
     # clus_ogs = {ogx: [{og: []}]} list is per locus
 
-def gbcCalc(
+def calc_gbc(
     ogX, ogxDict, ogx_dir
     ):
     # ogxDict = {og: set(gene1, gene2)}
@@ -1912,7 +1916,7 @@ def ogx2omes2gbc_calc(
 
 
 
-def gbcMngr2(
+def gbc_mngr_2(
     ogs, omes, og_dir, ogx_dir, diamond, ogx2loc, 
     db, gene2og, clusplusminus, og2gene, cpus = 1
     ):
@@ -1933,7 +1937,7 @@ def gbcMngr2(
 
     print('\tAssimilating loci with significant OGxs', flush = True)
     with mp.get_context('fork').Pool(processes = cpus) as pool:
-        clus_ogs_prep = pool.starmap(retroOGxGeneGrab, ogxGene_cmds)
+        clus_ogs_prep = pool.starmap(retroactive_grab_ogx_genes, ogxGene_cmds)
 #    {ogx:[{og:[seq]}]}
 
     clus_ogs = {}
@@ -1951,15 +1955,15 @@ def gbcMngr2(
 
     print('\tCalculating gene blast congruence (GBC) scores', flush = True)
     with mp.get_context('fork').Pool(processes = cpus) as pool:
-        gbcRes = pool.starmap(
-            gbcCalc, [[ogX, clus_ogs[ogX], ogx_dir] for ogX in clus_ogs]
+        gbc_res = pool.starmap(
+            calc_gbc, [[ogX, clus_ogs[ogX], ogx_dir] for ogX in clus_ogs]
             )
 
-    gbcScores = dict(gbcRes)
+    gcb_scores = dict(gbc_res)
      
-    return gbcScores        
+    return gcb_scores        
 
-def gbcMngr3(
+def gbc_mngr_3(
     ogs, omes, ogx_dir, diamond, ogx2loc, 
     db, gene2og, clusplusminus, og2gene, modules,
     moduleOmes, moduleOGxs, ome2i, cpus = 1
@@ -1986,7 +1990,7 @@ def gbcMngr3(
     
         print('\tAssimilating OCG loci', flush = True)
         with mp.get_context('fork').Pool(processes = cpus) as pool:
-            clus_ogs_prep = pool.starmap(retroOGxGeneGrab, ogxGene_cmds)
+            clus_ogs_prep = pool.starmap(retroactive_grab_ogx_genes, ogxGene_cmds)
 
         with open(ogx_dir + 'clusOGs.pickle', 'wb') as out:
             pickle.dump(clus_ogs_prep, out)
@@ -2008,12 +2012,12 @@ def gbcMngr3(
 
     print('\tCalculating gene blast congruence (GBC) scores', flush = True)
     with mp.get_context('fork').Pool(processes = cpus) as pool:
-        gbcRes = pool.starmap(
+        gbc_res = pool.starmap(
             ogx2omes2gbc_calc, [[moduleOGxs[d[0]], moduleOmes[d[0]], d[1], ogx_dir] for ogX, d in clus_ogs.items()]
             )
 
     ogx2omes2gbc = defaultdict(dict)
-    for ogx, omes, score in gbcRes:
+    for ogx, omes, score in gbc_res:
         ogx2omes2gbc[ogx][omes] = score
      
     return ogx2omes2gbc    
@@ -2782,12 +2786,12 @@ def gbc_main(
     ogs = set(ogs_list)
     if not os.path.isfile(wrk_dir + old_path):
         if not modules: # for ogxs
-            d2gbc = gbcMngr2(
+            d2gbc = gbc_mngr_2(
                 list(ogs), list(ome2i.keys()), og_dir, ogx_dir, diamond, ogx2loc,
                 db, gene2og, plusminus, og2gene, cpus = cpus
                 )
         else: # run the kernel detection version
-            d2gbc = gbcMngr3(
+            d2gbc = gbc_mngr_3(
                 list(ogs), list(ome2i.keys()), ogx_dir, diamond, ogx2loc, 
                 db, gene2og, plusminus, og2gene, modules,
                 moduleOmes, moduleOGxs, ome2i, cpus = cpus
@@ -2839,7 +2843,6 @@ def main(
     # if not using an external tree
     if not tree_path:
         tree_path = out_dir + 'microsynt.newick'
-
 
     # obtain useable omes
     useableOmes, dbOmes = set(), set(db['ome'])
@@ -3089,7 +3092,7 @@ def main(
     if not checkdir(ogx_dir, unzip = True, rm = True):
         os.mkdir(ogx_dir)
 
-    print('\nV. Quantifying OGx coevolution', flush = True)
+    print('\nIV. Quantifying OGx coevolution', flush = True)
     if not og_dir:
         og_dir = wrk_dir + 'og/'
         if not os.path.isdir(og_dir):
@@ -3097,8 +3100,9 @@ def main(
         for og, genes in og2gene.items():
             og_file = og_dir + str(og) + '.faa'
             if not os.path.isfile(og_file):
+                fa_str = dict2fa(acc2fa(db, genes))
                 with open(og_file, 'w') as out:
-                    out.write(dict2fa(acc2fa(db, genes)))
+                    out.write(fa_str)
 
     ogx2gbc = gbc_main(
         ogx2loc, wrk_dir, ome2i, og_dir, ogx_dir,
@@ -3107,7 +3111,7 @@ def main(
         ) # should be able to skip this
 
     # Group ogxs
-    print('\nVI. Inferring OGx clans', flush = True)
+    print('\nV. Inferring OGx clans', flush = True)
     if not os.path.isfile(wrk_dir + 'ocgs.pickle'): # need to add this to
     # log parsing
         ocgs, ocg_omes, ocg_ogxs, omes2dist = classify_ocgs(
@@ -3497,7 +3501,7 @@ if __name__ == '__main__':
     date = datetime.strftime(start_time, '%Y%m%d')
 
     if not args.output:
-        out_dir = os.getcwd() + '/' + date + '_og2clus/'
+        out_dir = os.getcwd() + '/og2clus_' + date + '/'
         if not os.path.isdir(out_dir):
             os.mkdir(out_dir)
     else:
