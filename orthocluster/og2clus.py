@@ -3108,27 +3108,29 @@ def main(
         with open(wrk_dir + 'ogx_scores.pickle', 'rb') as pickin:
             ogx2dist = pickle.load(pickin) 
 
+    calc_ogx_p = False
     if not os.path.isfile(wrk_dir + 'ogx2pval.pickle'):
-        print('\tEstimating OGx probability', flush = True)
-        omes2og2genes, omes2genes = {}, defaultdict(list)
-        for gene, og in gene2og.items():
-            ome = gene[:gene.find('_')]
-            omeI = ome2i[ome]
-            if omeI not in omes2og2genes:
-                omes2og2genes[omeI] = defaultdict(list)
-            omes2og2genes[omeI][og].append(gene)
-            omes2genes[omeI].append(gene)
-        unadjOGx2pval = combo_prob_mngr(
-            ogx2omes, omes2og2genes, omes2genes, (plusminus*2)-1, 
-            cooccur_array, cpus = cpus
-            )
+        if calc_ogx_p:
+            print('\tEstimating OGx probability', flush = True)
+            omes2og2genes, omes2genes = {}, defaultdict(list)
+            for gene, og in gene2og.items():
+                ome = gene[:gene.find('_')]
+                omeI = ome2i[ome]
+                if omeI not in omes2og2genes:
+                    omes2og2genes[omeI] = defaultdict(list)
+                omes2og2genes[omeI][og].append(gene)
+                omes2genes[omeI].append(gene)
+            unadjOGx2pval = combo_prob_mngr(
+                ogx2omes, omes2og2genes, omes2genes, (plusminus*2)-1, 
+                cooccur_array, cpus = cpus
+                )
    #     comparisons = len(ogx2omes)
   #      ogx2pval = {
  #           k: v * comparisons for k, v in unadjOGx2pval.items()
 #            } # apply bonferroni correction
-        ogx2pval = unadjOGx2pval
-        with open(wrk_dir + 'ogx2pval.pickle', 'wb') as out:
-            pickle.dump(unadjOGx2pval, out)
+            ogx2pval = unadjOGx2pval
+            with open(wrk_dir + 'ogx2pval.pickle', 'wb') as out:
+                pickle.dump(unadjOGx2pval, out)
     else:
         with open(wrk_dir + 'ogx2pval.pickle', 'rb') as raw:
             ogx2pval = pickle.load(raw)
@@ -3188,7 +3190,9 @@ def main(
         for og, genes in og2gene.items():
             og_file = og_dir + str(og) + '.faa'
             if not os.path.isfile(og_file):
-                fa_str = dict2fa(acc2fa(db, genes))
+                fa_str = dict2fa(acc2fa(
+                            db, genes, error = False, spacer = '\t\t'
+                            ))
                 with open(og_file, 'w') as out:
                     out.write(fa_str)
 
