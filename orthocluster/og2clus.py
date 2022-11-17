@@ -1,13 +1,9 @@
 #! /usr/bin/env python3
 
-#NEED to switch the diamond to blast again because building diamond dbs is 
-    # a massive waste of time
-#NEED to implement a proteome start option that runs through linclust
 #NEED to make gbc_mngr_3 split different families with the same OCG
 #NEED to model rearrangement for lineages instead of unexpected microsynteny
 #NEED to change border percentile entries to clus percentile
 #NEED to allow hard threshold for microsynteny distance
-#NEED corrected alpha threshold for hypergeometric
 #NEED locus-based OCG hypergeometric average
 #NEED to post filter clusters after grouping
 #NEED to accept an alternative OG input
@@ -34,7 +30,7 @@ import numpy as np
 import multiprocessing as mp
 from datetime import datetime
 from itertools import combinations
-from collections import defaultdict
+from collections import defaultdict, Counter
 from mycotools.lib.kontools import \
     intro, outro, format_path, collect_files, \
     dictSplit, file2list, fmt_float, findExecs, \
@@ -71,54 +67,54 @@ def update_dists(phylo, cooccur_dict, cpus = 1, omes2dist = {}):
     omes2dist = {**omes2dist, **{x[1]: x[0] for x in results}} 
     return omes2dist
 
-def parse_1to1(og_file, useableOmes = set()):
+def parse_1to1(hg_file, useableOmes = set()):
     derivations = defaultdict(list)
-    with open(og_file, 'r') as raw:
+    with open(hg_file, 'r') as raw:
         for line in raw:
             k, v = line.rstrip().split() # all white space
             derivations[k].append(v)
 
-    ogs_list = []
+    hgs_list = []
     for k, v in derivations.items():
         v.append(k)
-        ogs_list.append(sorted(set(v)))
+        hgs_list.append(sorted(set(v)))
 
-    og2gene = {i: v for i, v in enumerate(
-                    sorted(ogs_list, key = lambda x: len(x), 
+    hg2gene = {i: v for i, v in enumerate(
+                    sorted(hgs_list, key = lambda x: len(x), 
                     reverse = True)
                     )}
 
     todel = []
-    for og, genes in og2gene.items():
+    for og, genes in hg2gene.items():
         genes = [x for x in genes if x[:x.find('_')] in useableOmes]
         omes = set([x[:x.find('_')] for x in genes])
         if len(omes) < 2: # skip singleton omes
             todel.append(og)
     for og in todel:
-        del og2gene[og]
-    og2gene = {k: v for k, v in sorted(og2gene.items(), key = lambda x:
+        del hg2gene[og]
+    hg2gene = {k: v for k, v in sorted(hg2gene.items(), key = lambda x:
                                        len(x[1]), reverse = True)}
 
-    gene2og = {}
-    for i, og_list in og2gene.items():
+    gene2hg = {}
+    for i, og_list in hg2gene.items():
         for gene in og_list:
-            gene2og[gene] = i
+            gene2hg[gene] = i
        
-    i2ome = sorted(set([x[:x.find('_')] for x in list(gene2og.keys())]))
+    i2ome = sorted(set([x[:x.find('_')] for x in list(gene2hg.keys())]))
     ome_num = {v: i for i, v in enumerate(i2ome)}
 
-    return ome_num, gene2og, i2ome, og2gene
+    return ome_num, gene2hg, i2ome, hg2gene
 
 
-def parse_orthofinder(og_file, useableOmes = set()):
+def parse_orthofinder(hg_file, useableOmes = set()):
     """
-    imports orthofinder Orthogroups.txt "og_file". outputs several data structures:
-    ome_num = {ome: number}, gene2og = {gene: og}, i2ome = [ome0, ome1, ome2]
+    imports orthofinder Orthogroups.txt "hg_file". outputs several data structures:
+    ome_num = {ome: number}, gene2hg = {gene: og}, i2ome = [ome0, ome1, ome2]
     """
 
-    gene2og, ome_num, i2ome, og2gene = \
+    gene2hg, ome_num, i2ome, hg2gene = \
         {}, {}, [], {}
-    with open(og_file, 'r') as raw:
+    with open(hg_file, 'r') as raw:
         for line in raw:
             data = line.rstrip().split(' ') # OrthoFinder input
             og = int(data[0].replace(':','').replace('OG',''))
@@ -126,60 +122,65 @@ def parse_orthofinder(og_file, useableOmes = set()):
             omes = [x[:x.find('_')] for x in hits]
             if len(set(omes)) < 2: # skip singleton organisms
                 continue
-            og2gene[og] = hits
+            hg2gene[og] = hits
             for i, gene in enumerate(hits):
                 ome = omes[i]
 #                ome = gene[:gene.find('_')] # wtf, parsing omes raises and index error
                 if ome not in ome_num:
                     i2ome.append(ome)
                     ome_num[ome] = len(i2ome) - 1
-                gene2og[gene] = og
+                gene2hg[gene] = og
 
-    return ome_num, gene2og, i2ome, og2gene
+    return ome_num, gene2hg, i2ome, hg2gene
 
-def run_linclust(db, wrk_dir, mmseqs = 'mmseqs', 
+def run_mmseqs(db, wrk_dir, algorithm = 'mmseqs easy-cluster',
                  min_id = 0.3, min_cov = 0.5, cpus = 1):
     symlink_files(['faa'], db, wrk_dir, verbose = False) # symlink proteomes
-    linclust_res_file = wrk_dir + 'homolog_groups.tsv'
-    if not os.path.isfile(linclust_res_file): # NEED to add to log removal
+    cluster_res_file = wrk_dir + 'homolog_groups.tsv'
+    if not os.path.isfile(cluster_res_file): # NEED to add to log removal
         # be extra cautious about shell injection because we need to glob
         int(cpus)
         float(min_id)
         float(min_cov)
         if not os.path.isdir(wrk_dir):
             raise OSError('invalid working directory')
-        elif not len(mmseqs.split()) == 1:
+        elif not algorithm in {'mmseqs easy-linclust', 'mmseqs easy-cluster'}:
             raise OSError('invalid mmseqs binary')
-        mmseqs_cmd = subprocess.call(' '.join([mmseqs, 'easy-linclust', 
-                                      wrk_dir + 'faa/*faa',
-                                      wrk_dir + 'linclust', wrk_dir + 'tmp/',
+        mmseqs_cmd = subprocess.call(algorithm + ' ' + ' '.join([wrk_dir + 'faa/*faa',
+                                      wrk_dir + 'cluster', wrk_dir + 'tmp/',
                                       '--min-seq-id', str(min_id), '--threads',
                                       str(cpus), '--compressed', '1',
                                       '--cov-mode', '0', '-c', str(min_cov)]),
-                                      shell = True,
-                                      stdout = subprocess.DEVNULL,
-                                      stderr = subprocess.DEVNULL)
-        shutil.move(wrk_dir + 'linclust_cluster.tsv', linclust_res_file)
-    elif os.path.getsize(linclust_res_file):
+                                      shell = True)
+ #                                     stdout = subprocess.DEVNULL,
+#                                      stderr = subprocess.DEVNULL)
+        shutil.move(wrk_dir + 'cluster_cluster.tsv', cluster_res_file)
+    elif os.path.getsize(cluster_res_file):
         mmseqs_cmd = 0
     else:
         mmseqs_cmd = 1
     if mmseqs_cmd:
-        eprint('\tERROR: linclust failed')
+        eprint('\tERROR: cluster failed')
         sys.exit(1)
-    if os.path.isfile(wrk_dir + 'linclust_all_seqs.fasta'):
-        os.remove(wrk_dir + 'linclust_all_seqs.fasta')
-    if os.path.isfile(wrk_dir + 'linclust_rep_seq.fasta'):
-        os.remove(wrk_dir + 'linclust_rep_seq.fasta')
+    if os.path.isfile(wrk_dir + 'cluster_all_seqs.fasta'):
+        os.remove(wrk_dir + 'cluster_all_seqs.fasta')
+    if os.path.isfile(wrk_dir + 'cluster_rep_seq.fasta'):
+        os.remove(wrk_dir + 'cluster_rep_seq.fasta')
     if os.path.isdir(wrk_dir + 'tmp/'):
         shutil.rmtree(wrk_dir + 'tmp/')
-    return linclust_res_file
+    return cluster_res_file
 
-def compile_homolog_groups(og_file, wrk_dir, method = 'linclust', useableOmes = set()):
-    if method == 'linclust':
-        ogInfo = parse_1to1(og_file, useableOmes)
+def compile_homolog_groups(hg_file, wrk_dir, 
+                           method = 'mmseqs easy-cluster', 
+                           useableOmes = set()):
+    if method in {'mmseqs easy-cluster', 'mmseqs easy-linclust'}:
+        ogInfo = parse_1to1(hg_file, useableOmes)
+        hg2genes = ogInfo[-1]
+        with open(wrk_dir + 'homolog_groups.txt', 'w') as out:
+            for hg, genes in hg2genes.items():
+                out.write(str(hg) + '\t' + ' '.join(genes) + '\n')
     elif method == 'orthofinder':
-        ogInfo = parse_orthofinder(og_file, useableOmes)
+        ogInfo = parse_orthofinder(hg_file, useableOmes)
 
     with open(wrk_dir + 'ome2i.tsv', 'w') as out:
         out.write(
@@ -190,12 +191,12 @@ def compile_homolog_groups(og_file, wrk_dir, method = 'linclust', useableOmes = 
 
 
 def compile_loci(
-    db, ome2i, gene2og, plusminus, cpus = 1
+    db, ome2i, gene2hg, plusminus, cpus = 1
     ):
 
     loci_hash_cmds = [
         [x, ome2i[db['ome'][i]], 
-        gene2og, plusminus]
+        gene2hg, plusminus]
         for i, x in enumerate(db['gff3']) \
         if db['ome'][i] in ome2i
         ]
@@ -218,21 +219,21 @@ def genDistArr(phylo):
             dist_arr[ome1, ome0] = float(t_dist_arr[i1, i0])
     return dist_arr
 
-def compileTree(microsynt_dict, i2ome, tree_path, root = []):
-    if microsynt_dict: # implies the tree needs to be made from scratch
-        pre_phylo = nj.nj(microsynt_dict, show_progress = False)
-        # change to ome code for exporting phylogeny
-        pre_phylo.reassign_names({str(i): v for i, v in enumerate(i2ome)})
+def compileTree(i2ome, tree_path, root = []):
+#    if microsynt_dict: # implies the tree needs to be made from scratch
+ #       pre_phylo = nj.nj(microsynt_dict, show_progress = False)
+  #      # change to ome code for exporting phylogeny
+   #     pre_phylo.reassign_names({str(i): v for i, v in enumerate(i2ome)})
 
-        if not root or root == 'midpoint':
-            root_pre = pre_phylo.root_at_midpoint()
-        elif len(root) == 1:
-            root_pre = pre_phylo.rooted_with_tip(root[0])
-        else:
-            root_pre = pre_phylo.rooted_at(
-                pre_phylo.get_edge_names(root[0], root[1])[0]
-                )
-        root_pre.write(tree_path, with_distances = True)
+    #    if not root or root == 'midpoint':
+     #       root_pre = pre_phylo.root_at_midpoint()
+      #  elif len(root) == 1:
+       #     root_pre = pre_phylo.rooted_with_tip(root[0])
+        #else:
+         #   root_pre = pre_phylo.rooted_at(
+          #      pre_phylo.get_edge_names(root[0], root[1])[0]
+           #     )
+       # root_pre.write(tree_path, with_distances = True)
 
     phylo = load_tree(tree_path) 
     if root:
@@ -345,9 +346,9 @@ def compileCDS2(gff_list, ome):
 
 
 def parseLoci(
-    gff_path, ome_num, gene2og, plusminus = 6
+    gff_path, ome_num, gene2hg, plusminus = 6
     ):
-    """obtain a set of tuples of OG pairs {(OG0, OG1)...}"""
+    """obtain a set of tuples of HG pairs {(OG0, OG1)...}"""
 
     gff_list = gff2list(gff_path) # open here to improve pickling
     cds_dict = compileCDS(gff_list, os.path.basename(gff_path).replace('.gff3',''))
@@ -361,7 +362,7 @@ def parseLoci(
             loc_og = []
             for gene in locus:
                 try: # failure should be relatively rare, so faster than `if`
-                    loc_og.append(gene2og[gene])
+                    loc_og.append(gene2hg[gene])
                 except KeyError: # it's either a singleton or not in an OG
                     pass
             pairs.extend([tuple(sorted(x)) for x in combinations(set(loc_og), 2)]) # don't deal with
@@ -376,29 +377,29 @@ def form_cooccur_dict(cooccur_dict):
     # sort the values by the length of the combination
     cooccur_dict = {k: tuple(sorted(v)) for k, v in sorted(cooccur_dict.items(), key = lambda x: len(x[0]))}
 
-    ogx2i, i2ogx = {}, {}
-    for i, ogX in enumerate(list(cooccur_dict.keys())):
-        i2ogx[i] = ogX
-        ogx2i[ogX] = i
+    hgx2i, i2hgx = {}, {}
+    for i, hgx in enumerate(list(cooccur_dict.keys())):
+        i2hgx[i] = hgx
+        hgx2i[hgx] = i
 
-    return i2ogx, ogx2i, cooccur_dict
+    return i2hgx, hgx2i, cooccur_dict
 
 
 def form_cooccur_array(cooccur_dict, ome_len):
 
-    count, ogx2i, size_dict, cooccur_arrays, i2ogx = 0, {}, {}, {}, {}
+    count, hgx2i, size_dict, cooccur_arrays, i2hgx = 0, {}, {}, {}, {}
     cooccur_dict = {k: tuple(sorted(v)) for k, v in sorted(cooccur_dict.items(), key = lambda x: len(x[0]))}
     cooccur_arrays = np.zeros([ome_len, len(cooccur_dict)], dtype = np.int32)
 
     old_len = len(list(cooccur_dict.keys())[0])
-    for i, ogX in enumerate(list(cooccur_dict.keys())):
-        i2ogx[i] = ogX
-        ogx2i[ogX] = i
-        for ome in cooccur_dict[ogX]:
-#            cooccur_arrays[ome, i] = ogX_dict[ome][ogX]
+    for i, hgx in enumerate(list(cooccur_dict.keys())):
+        i2hgx[i] = hgx
+        hgx2i[hgx] = i
+        for ome in cooccur_dict[hgx]:
+#            cooccur_arrays[ome, i] = hgx_dict[ome][hgx]
             cooccur_arrays[ome, i] = 1
 
-    return i2ogx, ogx2i, cooccur_dict, cooccur_arrays
+    return i2hgx, hgx2i, cooccur_dict, cooccur_arrays
 
 
 def prep_microsynt_dict(cooccur_arr):
@@ -427,7 +428,7 @@ try:
     @njit
     def est_conds(ome_arr, cooccur_array):
         p = 1
-        for i in range(len(ome_arr) - 1): # for all but the last organisms ogx
+        for i in range(len(ome_arr) - 1): # for all but the last organisms hgx
             others, ome0 = ome_arr[i + 1:], cooccur_array[ome_arr[i]] #all others and i's hits
             other_m = cooccur_array[others, :] #grab others hits
             other_sum = np.sum(other_m, axis = 0) #sum the others' hits
@@ -455,17 +456,17 @@ except ModuleNotFoundError:
             p *= sucs/tot
         return p
 
-def est_combo_probs(ogx, omes, genesInOGinOme, genesInOme, window,
+def est_combo_probs(hgx, omes, genesInOGinOme, genesInOme, window,
                     cooccur_arr):
 #    win_size = [win_size[x] for x in win_size]
 #    p_coeff = calc_coeff(og0, og1, tot_genes, win_size)
     p_conds = est_conds(np.array(omes), cooccur_arr)
     p_coef = 1
-    for og in ogx:
+    for og in hgx:
         p_coef *= est_hypergeo(omes, genesInOGinOme[og],
                                genesInOme, window)
     p = p_conds * p_coef
-    return ogx, p
+    return hgx, p
 
 
 def est_hypergeo(
@@ -479,29 +480,29 @@ def est_hypergeo(
 
 
 def combo_prob_mngr(
-    ogx2omes, omes2og2genes, omes2genes, window, cooccur_array, cpus = 1
+    hgx2omes, omes2hg2genes, omes2genes, window, cooccur_array, cpus = 1
     ):
 
     cmds = []
-    for ogx, omes in ogx2omes.items(): # take each ogx
+    for hgx, omes in hgx2omes.items(): # take each hgx
         ome = omes[-1] # coefficient ome
-        genesInOGinOme = {og: len(omes2og2genes[ome][og]) for og in ogx}
+        genesInOGinOme = {og: len(omes2hg2genes[ome][og]) for og in hgx}
         genesInOme = len(omes2genes[ome])
         cmds.append([
-            ogx, omes, genesInOGinOme, genesInOme, window,
+            hgx, omes, genesInOGinOme, genesInOme, window,
             cooccur_array
             ])
 
-    # run og-by-og, then accumulate via ogx at the end
+    # run og-by-og, then accumulate via hgx at the end
     with mp.get_context('fork').Pool(processes = cpus) as pool: # will fail on Windows
         hypergeoRes = pool.starmap(est_combo_probs, cmds)
 
-    comparisons = len(ogx2omes) # for Bonferroni correction
-    ogx2pval = {}
-    for ogx, pval in hypergeoRes:
-        ogx2pval[ogx] = comparisons * pval
+    comparisons = len(hgx2omes) # for Bonferroni correction
+    hgx2pval = {}
+    for hgx, pval in hypergeoRes:
+        hgx2pval[hgx] = comparisons * pval
 
-    return ogx2pval
+    return hgx2pval
 
 
 def gen_null_dict(combo_dict, sample = 10000):
@@ -519,7 +520,7 @@ def gen_null_dict(combo_dict, sample = 10000):
     try: # sample
         null_list = random.sample(null_set_list, sample)
     except ValueError:
-        print('\t\t\t\tWARNING: requested null sample greater than OGx size', flush = True)
+        print('\t\t\t\tWARNING: requested null sample greater than HGx size', flush = True)
         null_list = null_set_list
 
     cooccur_dict = {}
@@ -532,8 +533,8 @@ def gen_null_dict(combo_dict, sample = 10000):
     cooccur_dict = {x: cooccur_dict[x] for x in cooccur_dict}
     # {(OG0,OGn): [omei0...]}
 
-    ogx2i, i2ogx, cooccur_dict = form_cooccur_dict(cooccur_dict)
-    return ogx2i, i2ogx, cooccur_dict
+    hgx2i, i2hgx, cooccur_dict = form_cooccur_dict(cooccur_dict)
+    return hgx2i, i2hgx, cooccur_dict
 
 
 def calc_dists(phylo, cooccur_dict, cpus = 1, omes2dist = {}):
@@ -551,13 +552,13 @@ def calc_dists(phylo, cooccur_dict, cpus = 1, omes2dist = {}):
 def gen_nulls(pairs, phylo, samples = 10000, cpus = 1):
     """pairs = {ome: [(OG0,OG1)...]}"""
 
-    ogpairs, revogpairs, null_dict = gen_null_dict(pairs, samples)
+    hgpair2i, i2hgpair, null_dict = gen_null_dict(pairs, samples)
     oldLen = len(null_dict)
     null_dict = {k: v for k, v in null_dict.items() if len(v) > 1}
     results = calc_dists(phylo, null_dict, cpus = cpus)
     omes2dist, pair_scores = {x[1]: x[0] for x in results}, []
-    for ogpair in null_dict:
-        pair_scores.append(omes2dist[null_dict[ogpair]])
+    for k in null_dict:
+        pair_scores.append(omes2dist[null_dict[k]])
     for i in range(oldLen - len(null_dict)):
         pair_scores.append(0)
 
@@ -567,7 +568,7 @@ def gen_nulls(pairs, phylo, samples = 10000, cpus = 1):
 def form_cooccur_structures(pairs, min_omes, ome_len, cc_arr_path = None):
     """
     Imports the out_dicts from parseLoci and creates index vectors that bear
-    the ome_num's with a given ogpair cooccurence. e.g. cooccur_dict[(og1, og2)] = [1, 2, 3]
+    the ome_num's with a given  cooccurence. e.g. cooccur_dict[(og1, og2)] = [1, 2, 3]
     """
 
     cooccur_dict = defaultdict(list)
@@ -581,12 +582,100 @@ def form_cooccur_structures(pairs, min_omes, ome_len, cc_arr_path = None):
         if len(cooccur_dict[x]) > min_omes
         }
 
-    ogpairs, revogpairs, cooccur_dict, cooccur_array = form_cooccur_array(
+    i2hgpair, hgpair2i, cooccur_dict, cooccur_array = form_cooccur_array(
         cooccur_dict, ome_len
         )
 
-    return cooccur_array, dict(cooccur_dict), ogpairs, revogpairs
+    return cooccur_array, dict(cooccur_dict), hgpair2i, i2hgpair
 
+
+def id_near_schgs(hg2gene, omes, max_hgs = 10000, max_median = 2, max_mean = 2):
+    """Identify near single copy homology groups. Criteria:
+       1) has all omes; 2) minimal overall size of homology group;
+       3) lowest median"""
+    near_schgs = []
+    min_hg2gene = {k: v for k, v in sorted(hg2gene.items(), 
+                    key = lambda x: len(x[1])) \
+                   if len(v) >= len(omes)}
+
+    max_len = max_mean * len(omes) # dont need to compute means iteratively
+    median_i = round((len(omes) / 2) - 0.5)
+
+    for hg, genes in min_hg2gene.items():
+        hg_omes = [x[:x.find('_')] for x in genes]
+        if not omes.difference(hg_omes): # all omes are present
+            count_omes = list(Counter(hg_omes).values()) # prepare for median calculation
+            count_omes.sort()
+            median = count_omes[median_i]
+            print(median, max_median, len(genes), max_len)
+            if median <= max_median and len(genes) <= max_len:
+                print('\t', median, len(genes))
+                near_schgs.append(hg)
+            elif len(genes) >= max_len: # everything else will be higher
+                break
+            if len(near_schgs) == max_hgs:
+                break
+
+    return near_schgs
+
+
+def extract_nschg_pairs(nschgs, hgpair2i, m_arr):
+    nschg_set = set(nschgs)
+    nschg_pairs = [i for hgpair, i in hgpair2i.items() \
+                   if any(x in nschg_set for x in hgpair)]
+    nschgs_arr = np.array(nschg_pairs)
+    valid_arr = m_arr[:, nschgs_arr]
+    return valid_arr
+    
+
+def trim_microsynt_arr(m_arr):#, perc = 0):
+    ome_num, cols = m_arr.shape
+    sum_arr = m_arr.sum(axis = 0) #/ ome_num # for percentage
+#    tru_arr = np.where(sum_arr <= perc) # trim via percentage
+    tru_arr = np.where(sum_arr <= 1)
+    trm_arr = np.delete(m_arr, tru_arr, axis = 1)
+    return trm_arr
+
+def align_microsynt_np(m_arr, i2ome, hg2gene, hgpair2i, wrk_dir):
+#    trm_arr = trim_microsynt_arr(m_arr)
+    nschgs = id_near_schgs(hg2gene, set(i2ome), max_hgs = 100, 
+                           max_median = 4, max_mean = 3)
+    trm_arr = extract_nschg_pairs(nschgs, hgpair2i, m_arr)
+    with open(wrk_dir + 'microsynt.align.phy', 'w') as out:
+        out.write(f'{trm_arr.shape[0]} {trm_arr.shape[1]}\n')
+        [out.write(f'{i2ome[i]} {"".join([str(x) for x in trm_arr[i]])}\n') \
+                   for i in range(trm_arr.shape[0])]
+    return wrk_dir + 'microsynt.align.phy'
+
+
+def run_tree(alignment, wrk_dir, constraint = False, iqtree = 'iqtree',
+             model = 'GTR2+FO+ASC+R5', verbose = False, cpus = 1):
+
+    tree_dir = wrk_dir + 'tree/'
+    if not os.path.isdir(tree_dir):
+        os.mkdir(tree_dir)
+
+    prefix = tree_dir + 'microsynt'
+    tree_cmd = [iqtree, '-s', alignment, '-m', model,
+                '-p', prefix]
+    if constraint:
+        tree_cmd.extend(['-te', constraint])
+        comp_file = prefix + '.treefile'
+    else: # use bootstrap
+        tree_cmd.extend(['-B', '1000'])
+        comp_file = prefix + '.contree'
+    
+    if verbose:
+        v = None
+    else:
+        v = subprocess.DEVNULL
+    tree_res = subprocess.call(tree_cmd, stdout = v, stderr = v)
+    shutil.copy(comp_file, wrk_dir + '../microsynt.newick')
+
+    return tree_res
+
+
+            
 
 def remove_nulls(cc_arr):
     sum_arr = np.sum(cc_arr, axis = 1) # sum all ome rows
@@ -599,34 +688,34 @@ def remove_nulls(cc_arr):
 
 def load_seedScores(file_, seed_thresh):#, seed_thresh):
 
-    out_ogs = []
+    out_hgs = []
     with gzip.open(file_, 'rt') as raw:
         for line in raw:
             if not line.startswith('#'):
                 data = [x.rstrip() for x in line.split('\t')]
                 if float(data[3]) > seed_thresh:
-                    out_ogs.append(line.split('\t'))
+                    out_hgs.append(line.split('\t'))
 
-    return out_ogs
+    return out_hgs
 
 
-def form_ogPairDict(out_ogs):
+def form_hgpairDict(out_hgs):
 
-    ogs = set([int(x[0]) for x in out_ogs]) # make a set of the first og in an
+    hgs = set([int(x[0]) for x in out_hgs]) # make a set of the first og in an
     # og-pair
-    ogs = ogs.union(set([int(x[1]) for x in out_ogs])) # add in the second og
-    ogPair_dict = {x: set() for x in ogs} # prepare the keys to bypass `if`'s
-    for i in out_ogs:
-        ogPair_dict[int(i[0])].add(int(i[1])) # {og0: set(og1, ..., ogn), } or 
+    hgs = hgs.union(set([int(x[1]) for x in out_hgs])) # add in the second og
+    hgpair_dict = {x: set() for x in hgs} # prepare the keys to bypass `if`'s
+    for i in out_hgs:
+        hgpair_dict[int(i[0])].add(int(i[1])) # {og0: set(og1, ..., ogn), } or 
         # {og0: set(og0, og1, ..., ogn)}
-        ogPair_dict[int(i[1])].add(int(i[0]))
+        hgpair_dict[int(i[1])].add(int(i[0]))
 
-    return ogPair_dict
+    return hgpair_dict
 
 
-def hash_protoclusters(gff_path, ogPair_dict, gene2og, clusplusminus = 10):
+def hash_protoclusters(gff_path, hgpair_dict, gene2hg, clusplusminus = 10):
     """parse a gff and compile its organized CDS_dict. identify where og-pairs
-    co-occur and retrieve the set of ogs for the locus with the locus seed
+    co-occur and retrieve the set of hgs for the locus with the locus seed
     protein"""
 
     gff_list, protoclus = gff2list(gff_path), defaultdict(list)
@@ -635,10 +724,10 @@ def hash_protoclusters(gff_path, ogPair_dict, gene2og, clusplusminus = 10):
     for scaf in cds_dict:
         for i0, seq0 in enumerate(cds_dict[scaf]): # for each index and protein
             try:
-                og0 = gene2og[seq0] 
+                og0 = gene2hg[seq0] 
             except KeyError: # gene not in OG / is a singleton
                 continue
-            if og0 in ogPair_dict: # if this og is part of a significant seed
+            if og0 in hgpair_dict: # if this og is part of a significant seed
                 if i0 < clusplusminus: # check if index - clusplusminus < 0
                     locus = cds_dict[scaf][:i0+clusplusminus+1] # obtain locus
                     # as all the sequences from the beginning of the contig to
@@ -649,22 +738,22 @@ def hash_protoclusters(gff_path, ogPair_dict, gene2og, clusplusminus = 10):
                 for seq1 in locus:
                     if seq1 != seq0: # if the protein isn't the first queried
                         try:
-                            og1 = gene2og[seq1]
+                            og1 = gene2hg[seq1]
                         except KeyError:
                             continue
-                        if og1 in ogPair_dict[og0]: # if it is in the set of
-                        # ogs for the first queried og
+                        if og1 in hgpair_dict[og0]: # if it is in the set of
+                        # hgs for the first queried og
                             og_loc_list = []
                             for gene in locus:
                                 try:
-                                    og_loc_list.append(gene2og[gene])
+                                    og_loc_list.append(gene2hg[gene])
                                 except KeyError: # singleton or missing
                                     pass
                             og_loc = set(og_loc_list)
-                            # the set of ogs in this locus
-                            ogPair = tuple(sorted([og0, og1])) # sort the ogs
-                            protoclus[ogPair].append([og_loc, seq0, seq1])
-                            # {(og0, og1}: [[set(ogx, .. ogy), seq0, seq1], ...]} 
+                            # the set of hgs in this locus
+                            hgpair = tuple(sorted([og0, og1])) # sort the hgs
+                            protoclus[hgpair].append([og_loc, seq0, seq1])
+                            # {(og0, og1}: [[set(hgx, .. ogy), seq0, seq1], ...]} 
                             
     return dict(protoclus)
 
@@ -672,56 +761,56 @@ def hash_protoclusters(gff_path, ogPair_dict, gene2og, clusplusminus = 10):
 def merge_protos(protoclus_res):
     """combine protoclus results from each organism"""
 
-    protoogx2omes = defaultdict(list)
+    protohgx2omes = defaultdict(list)
     for ome_protoclus in protoclus_res: # for each protoclus from the mp
     # results
-        for ogPair in ome_protoclus: 
-            protoogx2omes[ogPair].extend(ome_protoclus[ogPair])
-            # {(og0, og1)}: [[set(ogx, ogy), seq], ...]
+        for hgpair in ome_protoclus: 
+            protohgx2omes[hgpair].extend(ome_protoclus[hgpair])
+            # {(og0, og1)}: [[set(hgx, ogy), seq], ...]
 
-    return dict(protoogx2omes)
+    return dict(protohgx2omes)
 
 
-def gen_clusters(loc0, loc1, ogPair_set):
+def gen_clusters(loc0, loc1, hgpair_set):
 
     ome0 = loc0[1][:loc0[1].find('_')] # extract ome from gene acc
     ome1 = loc1[1][:loc1[1].find('_')]
     if ome0 != ome1:
         loc0vloc1 = loc0[0].intersection(loc1[0])
-        if loc0vloc1 != ogPair_set: #if there are more overlapping ogs
-            ogX = tuple(sorted(list(loc0vloc1))) # sort the loci (not by
-            return ogX, ome0, ome1, loc0[1], loc1[1]
+        if loc0vloc1 != hgpair_set: #if there are more overlapping hgs
+            hgx = tuple(sorted(list(loc0vloc1))) # sort the loci (not by
+            return hgx, ome0, ome1, loc0[1], loc1[1]
 
 
-def FormulateClusDicts(gen_clus_cmds, ogx2omes, ogx2loc, ome2i, cpus):
+def FormulateClusDicts(gen_clus_cmds, hgx2omes, hgx2loc, ome2i, cpus):
 
     with mp.get_context('fork').Pool(processes = cpus) as pool:
         clus_res = pool.starmap(gen_clusters, gen_clus_cmds)
     for i, res in enumerate(clus_res):
         if res:
             for comb_len in range(3, len(res[0]) + 1):
-                ogX = res[0]
-                if ogX not in ogx2omes:
-                    ogx2omes[ogX] = set()
-                    ogx2loc[ogX] = set()
-                ogx2omes[ogX] = ogx2omes[ogX].union({
+                hgx = res[0]
+                if hgx not in hgx2omes:
+                    hgx2omes[hgx] = set()
+                    hgx2loc[hgx] = set()
+                hgx2omes[hgx] = hgx2omes[hgx].union({
                      ome2i[res[1]], ome2i[res[2]]
                      })
-                ogx2loc[ogX] = ogx2loc[ogX].union({res[3], res[4]})
+                hgx2loc[hgx] = hgx2loc[hgx].union({res[3], res[4]})
 
-    return ogx2omes, ogx2loc
+    return hgx2omes, hgx2loc
 
 
-def par_rm(ogX, ogx2omes):
+def par_rm(hgx, hgx2omes):
 
-    t_comb_sets, t_combs, todel = [set(ogX)], [ogX], []
-    for comb_len in reversed(range(3, len(ogX))):
-        for comb in combinations(ogX, comb_len):
+    t_comb_sets, t_combs, todel = [set(hgx)], [hgx], []
+    for comb_len in reversed(range(3, len(hgx))):
+        for comb in combinations(hgx, comb_len):
             set_comb = set(comb)
-            for i, set_ogX in enumerate(t_comb_sets):
-                if set_comb < set_ogX:
+            for i, set_hgx in enumerate(t_comb_sets):
+                if set_comb < set_hgx:
                     try:
-                        if ogx2omes[comb] == ogx2omes[t_combs[i]]:
+                        if hgx2omes[comb] == hgx2omes[t_combs[i]]:
                             todel.append(comb)
                             break
                     except KeyError:
@@ -731,85 +820,85 @@ def par_rm(ogX, ogx2omes):
     return todel
 
 
-def rm_subsets(ogx2omes, ogx2loc, cpus = 1):
+def rm_subsets(hgx2omes, hgx2loc, cpus = 1):
 
-    ogx2omes = {
-        k: ogx2omes[k] for k in sorted(
-            list(ogx2omes.keys()), 
+    hgx2omes = {
+        k: hgx2omes[k] for k in sorted(
+            list(hgx2omes.keys()), 
             key = lambda x: len(x), reverse = True
             )
         }
-    max_len = len(list(ogx2omes.keys())[0])
-    for ogX_len in reversed(range(4, max_len + 1)):
-        i2ogx = list(ogx2omes.keys())
-        rm_cmds = [[ogX, ogx2omes] for ogX in i2ogx if len(ogX) == ogX_len]
+    max_len = len(list(hgx2omes.keys())[0])
+    for hgx_len in reversed(range(4, max_len + 1)):
+        i2hgx = list(hgx2omes.keys())
+        rm_cmds = [[hgx, hgx2omes] for hgx in i2hgx if len(hgx) == hgx_len]
         with mp.get_context('fork').Pool(processes = cpus) as pool:
             todels = pool.starmap(par_rm, rm_cmds)
         for todel in todels:
-            for ogX in todel:
+            for hgx in todel:
                 try:
-                    del ogx2omes[ogX]
-                    del ogx2loc[ogX]
+                    del hgx2omes[hgx]
+                    del hgx2loc[hgx]
                 except KeyError:
                     continue
 
-    return ogx2omes, ogx2loc
+    return hgx2omes, hgx2loc
                             
 
-def ogpair2ogX(db, ogPair_dict, gene2og, ome2i, cpus, clusplusminus = 10):
+def hgpair2hgx(db, hgpair_dict, gene2hg, ome2i, cpus, clusplusminus = 10):
 
     hash_protoclus_cmds = []
     gffs = [v['gff3'] for k, v in db.items() if k in ome2i]
     print('\t\tForming protocluster hashes', flush = True)
     for gff in gffs: # prepare for protocluster hashing by organism
-        hash_protoclus_cmds.append((gff, ogPair_dict, gene2og, clusplusminus,))
+        hash_protoclus_cmds.append((gff, hgpair_dict, gene2hg, clusplusminus,))
     with mp.get_context('fork').Pool(processes = cpus) as pool:
         protoclus_res = pool.starmap(hash_protoclusters, hash_protoclus_cmds)
     pool.join()
 
-    print('\t\tForming proto-OGxs', flush = True)
-    protoogx2omes = merge_protos(protoclus_res) # merge mp results
+    print('\t\tForming proto-HGxs', flush = True)
+    protohgx2omes = merge_protos(protoclus_res) # merge mp results
 
-    print('\t\tGenerating high order OGxs', flush = True)
+    print('\t\tGenerating high order HGxs', flush = True)
     print('\t\t\t' + str(sum([
-           len(protoogx2omes[x])**2 - len(protoogx2omes[x]) \
-           for x in protoogx2omes
+           len(protohgx2omes[x])**2 - len(protohgx2omes[x]) \
+           for x in protohgx2omes
         ])) + ' to run', flush = True)
     count = 0
 
-    ogx2omes, ogx2loc, gen_clus_cmds = {}, {}, []
-    for ogPair in protoogx2omes:
-        ogPair_set = set(ogPair)
-        for loci in combinations(protoogx2omes[ogPair], 2):
+    hgx2omes, hgx2loc, gen_clus_cmds = {}, {}, []
+    for hgpair in protohgx2omes:
+        hgpair_set = set(hgpair)
+        for loci in combinations(protohgx2omes[hgpair], 2):
             loc0, loc1 = loci[0], loci[1]
-            gen_clus_cmds.append([loc0, loc1, ogPair_set])
+            gen_clus_cmds.append([loc0, loc1, hgpair_set])
         if len(gen_clus_cmds) > 5000000:
             count += len(gen_clus_cmds)
             print('\t\t\t' + str(count), flush = True)
-            ogx2omes, ogx2loc = FormulateClusDicts(
-                gen_clus_cmds, ogx2omes, ogx2loc, ome2i, cpus
+            hgx2omes, hgx2loc = FormulateClusDicts(
+                gen_clus_cmds, hgx2omes, hgx2loc, ome2i, cpus
                 )
             gen_clus_cmds = []
 
-    ogx2omes, ogx2loc = FormulateClusDicts(
-        gen_clus_cmds, ogx2omes, ogx2loc, ome2i, cpus
+    hgx2omes, hgx2loc = FormulateClusDicts(
+        gen_clus_cmds, hgx2omes, hgx2loc, ome2i, cpus
         )
 
-    print('\t\tRemoving subset OGxs', flush = True)
-    ogx2omes, ogx2loc = rm_subsets(ogx2omes, ogx2loc, cpus)
-    ogx2omes = {x: tuple(sorted(list(ogx2omes[x]))) for x in ogx2omes}
+    print('\t\tRemoving subset HGxs', flush = True)
+    hgx2omes, hgx2loc = rm_subsets(hgx2omes, hgx2loc, cpus)
+    hgx2omes = {x: tuple(sorted(list(hgx2omes[x]))) for x in hgx2omes}
 
-    return ogx2omes, ogx2loc
+    return hgx2omes, hgx2loc
 
 
 def Hash4nulls(
-    gff_path, gene2og, max_size, plusminus
+    gff_path, gene2hg, max_size, plusminus
     ):
 
     gff_list = gff2list(gff_path) # open here for decreased serialization
     cds_dict = compileCDS(gff_list, os.path.basename(gff_path).replace('.gff3',''))
-    sml_sizes = {i: [] for i in range(3, (plusminus * 2) + 2)} # for OGx sizes
-    if max_size > (plusminus*2) + 1: # if biggest OGx is beyond the window size
+    sml_sizes = {i: [] for i in range(3, (plusminus * 2) + 2)} # for HGx sizes
+    if max_size > (plusminus*2) + 1: # if biggest HGx is beyond the window size
         lrg_sizes = {i: [] for i in range((plusminus * 2) + 1, max_size + 1)}
         # create a separate dictionary to handle these
     else:
@@ -821,7 +910,7 @@ def Hash4nulls(
                 locus = seqs[:i+plusminus+1]
             else:
                 locus = seqs[i-plusminus:i+plusminus+1]
-            loc_og = set([gene2og[x] for x in locus if x in gene2og]) # translate to OGs
+            loc_og = set([gene2hg[x] for x in locus if x in gene2hg]) # translate to OGs
             for size, size_list in sml_sizes.items():
                 size_list.extend((
                     [tuple(sorted(x)) for x in combinations(loc_og, size)]
@@ -839,33 +928,33 @@ def Hash4nulls(
     return nulls
 
 
-def genOGxNulls(
-    gffs, gene2og, max_clus_size, plusminus, phylo,
-    ogx_perc, clus_perc, wrk_dir,
+def genHGxNulls(
+    gffs, gene2hg, max_clus_size, plusminus, phylo,
+    hgx_perc, clus_perc, wrk_dir,
     omes2dist = {}, samples = 10000, cpus = 1
     ): # NEED to adjust; this currently uses way too much memory
-    """Generates a null distribution of randomly sampled OGxs for each 
-    # of orthogroups observed in OGxs. Applies the percentile for each
+    """Generates a null distribution of randomly sampled HGxs for each 
+    # of orthogroups observed in HGxs. Applies the percentile for each
     size as the minimum value for significance.
-    Outputs a dictionary of the minimum values for each size OGx
+    Outputs a dictionary of the minimum values for each size HGx
     based on the inputted percentiles. {# of OGs: minimum value}"""
 
     print('\t\tParsing for random samples', flush = True)
     hash_null_cmds = [
-        (x, gene2og, max_clus_size, plusminus,) \
+        (x, gene2hg, max_clus_size, plusminus,) \
         for x in gffs
         ]
     with mp.get_context('fork').Pool(processes = cpus) as pool:
         hashRes = pool.starmap(Hash4nulls, hash_null_cmds)
-        # hashRes = [({size: [OGx]})...] by ome
+        # hashRes = [({size: [HGx]})...] by ome
 
-    print('\t\tCalculating microsyteny distances of random samples\n\t\tOGx size:', flush = True)
-    ogxBordPercs, ogxClusPercs = {}, {}
+    print('\t\tCalculating microsyteny distances of random samples\n\t\tHGx size:', flush = True)
+    hgxBordPercs, hgxClusPercs = {}, {}
     for size in range(3, max_clus_size + 1): # for all observed sizes
         print('\t\t\t' + str(size), flush = True)
         size_dict = {i: v[size] for i, v in enumerate(hashRes)}
         # spoof i keys, size_dict values
-        ogx2i, i2ogx, null_dict = gen_null_dict(size_dict, samples)
+        hgx2i, i2hgx, null_dict = gen_null_dict(size_dict, samples)
         oldLen = len(null_dict)
         null_dict = {k: v for k, v in null_dict.items() if len(v) > 1} # 0 will n t compute
         distRes = calc_dists(phylo, null_dict, omes2dist = omes2dist, cpus = cpus)
@@ -881,42 +970,42 @@ def genOGxNulls(
             out.write('\n'.join([str(0) for x in range(oldLen-len(null_dict))])) 
             # account for missing values
 
-        # sort to apply percentile threshold for each size OGx and for both the
+        # sort to apply percentile threshold for each size HGx and for both the
         # border percentile and cluster percentile
         nullSizes.sort()
-        ogxBordPercs[size] = nullSizes[round(ogx_perc * len(nullSizes) + .5)]
-        ogxClusPercs[size] = nullSizes[round(clus_perc * len(nullSizes) + .5)]
+        hgxBordPercs[size] = nullSizes[round(hgx_perc * len(nullSizes) + .5)]
+        hgxClusPercs[size] = nullSizes[round(clus_perc * len(nullSizes) + .5)]
 
-    return ogxBordPercs, ogxClusPercs
+    return hgxBordPercs, hgxClusPercs
 
 
-def loadNulls(max_clus_size, wrk_dir, ogx_perc, clus_perc):
+def loadNulls(max_clus_size, wrk_dir, hgx_perc, clus_perc):
 
-    ogxBordPercs, ogxClusPercs = {}, {}
+    hgxBordPercs, hgxClusPercs = {}, {}
     for size in range(3, max_clus_size + 1):
         nullSizes = []
         with open(wrk_dir + str(size) + '.null.txt', 'r') as raw:
             for line in raw:
                 nullSizes.append(float(line.rstrip()))
         nullSizes.sort()
-        ogxBordPercs[size] = nullSizes[round(ogx_perc * len(nullSizes) + .5)]
-        ogxClusPercs[size] = nullSizes[round(clus_perc * len(nullSizes) + .5)]
+        hgxBordPercs[size] = nullSizes[round(hgx_perc * len(nullSizes) + .5)]
+        hgxClusPercs[size] = nullSizes[round(clus_perc * len(nullSizes) + .5)]
 
-    return ogxBordPercs, ogxClusPercs
+    return hgxBordPercs, hgxClusPercs
 
 
-def hash_ogx(gff_path, ome, ogX_genes, gene2og, clusplusminus):
+def hash_hgx(gff_path, ome, hgx_genes, gene2hg, clusplusminus):
     """sliding window of size clusplusminus, identify sequences that may have
-    ogs that may be significant, grab their window, and check for a significant
+    hgs that may be significant, grab their window, and check for a significant
     higher order og combo in the locus"""
 
     gff_list, gene_dict = gff2list(gff_path), {}
     cds_dict = compileCDS(gff_list, os.path.basename(gff_path).replace('.gff3',''))
 
-    ogx_dict = {}
+    hgx_dict = {}
     for scaf in cds_dict:
         for i0, seq0 in enumerate(cds_dict[scaf]):
-            if seq0 in ogX_genes: # if the og is part of a significant seed
+            if seq0 in hgx_genes: # if the og is part of a significant seed
             # locus
                 if i0 < clusplusminus: # is i0 - clusplusminus < 0 ?
                     locus = cds_dict[scaf][:i0+clusplusminus+1] # then gather
@@ -924,60 +1013,60 @@ def hash_ogx(gff_path, ome, ogX_genes, gene2og, clusplusminus):
                 else:
                     locus = cds_dict[scaf][i0-clusplusminus:i0+clusplusminus+1]
                     # instead get the +/- and adjust for python
-                og0 = gene2og[seq0]
-                for ogX in ogX_genes[seq0]:
-                    if ogX not in ogx_dict:
-                        ogx_dict[ogX] = {og: [] for og in ogX}
-                    ogx_dict[ogX][og0].append(seq0) # add the sequence to the ogX_dict
+                og0 = gene2hg[seq0]
+                for hgx in hgx_genes[seq0]:
+                    if hgx not in hgx_dict:
+                        hgx_dict[hgx] = {og: [] for og in hgx}
+                    hgx_dict[hgx][og0].append(seq0) # add the sequence to the hgx_dict
                     start, end = None, None
                     for i1, seq1 in enumerate(locus): # for each index and sequence
                     # in the locus
                         try:
-                            og1 = gene2og[seq1]
+                            og1 = gene2hg[seq1]
                         except KeyError: # missing entry
                             continue
-                        if og1 in set(ogX) and start is None: # if the og is
+                        if og1 in set(hgx) and start is None: # if the og is
                         # in the sig clus and we haven't started
                             start = i1 # this is the start index
-                            ogx_dict[ogX][og1].append(seq1)
+                            hgx_dict[hgx][og1].append(seq1)
 
-                        elif og1 in set(ogX): # otherwise if it is in the
+                        elif og1 in set(hgx): # otherwise if it is in the
                         # sig clus label this the other border unless another is 
                         # found
                             end = i1 + 1
-                            ogx_dict[ogX][og1].append(seq1)
+                            hgx_dict[hgx][og1].append(seq1)
                     for gene in locus[start:end]:
                         if gene not in gene_dict:
                             gene_dict[gene] = []
-                        gene_dict[gene].append(ogX)
+                        gene_dict[gene].append(hgx)
 
     gene_tup = tuple([
         tuple([gene, tuple(sorted(vals))]) \
         for gene, vals in gene_dict.items()
         ])
-    # ((gene, {gene: [OGx...]}))
+    # ((gene, {gene: [HGx...]}))
 
-    ogx_tup = tuple([
+    hgx_tup = tuple([
         tuple([
-            ogx, 
+            hgx, 
             tuple([tuple([og, tuple(sorted(set(seqs)))]) \
-                for og, seqs in ogs.items()]) \
+                for og, seqs in hgs.items()]) \
             ])
-            for ogx, ogs in ogx_dict.items()
+            for hgx, hgs in hgx_dict.items()
         ])
 
-    return ome, gene_tup, ogx_tup
+    return ome, gene_tup, hgx_tup
 
-def findOGxPairSingle(gene2ogx, ome, ogx2i, pairsDict, minimum = 2):
+def findHGxPairSingle(gene2hgx, ome, hgx2i, pairsDict, minimum = 2):
     omePairs_dict = defaultdict(list)
-    for gene, ogxs in gene2ogx.items():
-        for pairTup in combinations(ogxs, 2):
+    for gene, hgxs in gene2hgx.items():
+        for pairTup in combinations(hgxs, 2):
             omePairs_dict[pairTup].append(gene) # gene centric 
 
     for pairTup, genes in omePairs_dict.items():
         if len(genes) >= minimum:
-            ogXpair = tuple(sorted([ogx2i[pairTup[0]], ogx2i[pairTup[1]]]))
-            pairsDict[ogXpair].append(ome)
+            hgxpair = tuple(sorted([hgx2i[pairTup[0]], hgx2i[pairTup[1]]]))
+            pairsDict[hgxpair].append(ome)
     return pairsDict
 
 def MCL(adj_path, clusFile, inflation = 1.0, threads = 1):
@@ -1051,7 +1140,7 @@ def mpacquire_clus_ocg_sim(
     #jaccard = len(intersection)/len(set0.union(set1))
     # currently this is biased against contig edges and will also
     # force fragments with a much smaller subset OG # then the
-    # primary OGx into separate ocgs
+    # primary HGx into separate ocgs
 
     # could alternatively weight just by incorporating 0 values
     # for OGs that don't overlap
@@ -1079,7 +1168,6 @@ def mpacquire_clus_ocg_sim(
         return
 
 
-
 def acquire_clus_ocg_sim(
     i0, i1, index, loc0, loc1, ogL0, ogL1, set0, set1, blast_ids, Q
     ):
@@ -1097,7 +1185,7 @@ def acquire_clus_ocg_sim(
     #jaccard = len(intersection)/len(set0.union(set1))
     # currently this is biased against contig edges and will also
     # force fragments with a much smaller subset OG # then the
-    # primary OGx into separate ocgs
+    # primary HGx into separate ocgs
 
     # could alternatively weight just by incorporating 0 values
     # for OGs that don't overlap
@@ -1133,8 +1221,8 @@ def mpclan_to_ocg_loci(
 
     blast_hash = defaultdict(list)
     for i, locus in enumerate(loci):
-        ogs = ogLoci[i]
-        for i1, og in enumerate(ogs):
+        hgs = ogLoci[i]
+        for i1, og in enumerate(hgs):
             if og is not None:
                 blast_hash[og].append(locus[i1])
 
@@ -1177,10 +1265,10 @@ def mpclan_to_ocg_loci(
                                 break
                         if todel is not None:
                             del procs[i2]
-                    Togs = copy.copy(ogLoc0)
-                    Togs.extend(ogLoc1)
+                    Thgs = copy.copy(ogLoc0)
+                    Thgs.extend(ogLoc1)
                     Tids = {
-                        og: blast_ids[og] for og in Togs if og in blast_ids
+                        og: blast_ids[og] for og in Thgs if og in blast_ids
                         }
                     procs.append(mp.Process(
                         target = mpacquire_clus_ocg_sim, 
@@ -1215,8 +1303,8 @@ def clan_to_ocg_loci(
 #    print(clanI, flush = True)
     blast_hash = defaultdict(list)
     for i, locus in enumerate(loci):
-        ogs = ogLoci[i]
-        for i1, og in enumerate(ogs):
+        hgs = ogLoci[i]
+        for i1, og in enumerate(hgs):
             if og is not None:
                 blast_hash[og].append(locus[i1])
     
@@ -1260,9 +1348,9 @@ def clan_to_ocg_loci(
 	                             sOGl1, blast_ids, Q)
     
 
-def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2og, clusplusminus):
+def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus):
     """sliding window of size clusplusminus, identify sequences that may have
-    ogs that may be significant, grab their window, and check for a significant
+    hgs that may be significant, grab their window, and check for a significant
     higher order og combo in the locus"""
 
     gff_list, protoclus, clus_out = gff2list(gff_path), {}, []
@@ -1285,7 +1373,7 @@ def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2og, clusplusminus):
                     for i1, seq1 in enumerate(locus): # for each index and sequence
                     # in the locus
                         try:
-                            og = gene2og[seq1]
+                            og = gene2hg[seq1]
                         except KeyError:
                             continue
                         if og in sig_clus[0] and start is None: # if the og is
@@ -1295,33 +1383,33 @@ def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2og, clusplusminus):
                         # sig clus label this the other border unless another is 
                         # found
                             end = i1 + 1
-                    ogX = tuple(sorted(sig_clus[0]))
+                    hgx = tuple(sorted(sig_clus[0]))
                     preclanLoci[clan].append([
-                         locus[start:end], ogX, [ogX]
+                         locus[start:end], hgx, [hgx]
                          ])
                     # clus_out = [(og0, og1, ... ogn), [prot0, prot1, ... protn])]
 
-    outclanLoci, outclanOGx = defaultdict(list), defaultdict(list)
+    outclanLoci, outclanHGx = defaultdict(list), defaultdict(list)
     for clan, loci in preclanLoci.items():
         while loci: # exhaustively merge overlapping loci
-            loc0, ogxs0, allOGxs = set(loci[0][0]), loci[0][1], loci[0][2]
+            loc0, hgxs0, allHGxs = set(loci[0][0]), loci[0][1], loci[0][2]
             locIntersect = None
             for i1, loc1d in enumerate(loci[1:]):
-                loc1, ogxs1, allOGxs1 = set(loc1d[0]), loc1d[1], loc1d[2]
+                loc1, hgxs1, allHGxs1 = set(loc1d[0]), loc1d[1], loc1d[2]
                 locIntersect = loc0.intersection(loc1)
                 if locIntersect: # check for overlap
-                    newOGx = list(ogxs0)
-                    newOGx.extend(list(ogxs1))
-                    allOGxs.extend(allOGxs1)
-                    loci.append([list(loc1.union(loc0)), newOGx, allOGxs])
+                    newHGx = list(hgxs0)
+                    newHGx.extend(list(hgxs1))
+                    allHGxs.extend(allHGxs1)
+                    loci.append([list(loc1.union(loc0)), newHGx, allHGxs])
                     break
             if locIntersect: # if there was overlap, delete the overlappers
                 del loci[0]
                 del loci[i1 + 1]
             else: # no more overlap for this locus, add to the final output
                 outclanLoci[clan].append(sorted(loc0))
-                outclanOGx[clan].append(tuple(sorted(set(allOGxs))))
-#                outclanOGx[clan].append(tuple(sorted(set(ogxs0))))
+                outclanHGx[clan].append(tuple(sorted(set(allHGxs))))
+#                outclanHGx[clan].append(tuple(sorted(set(hgxs0))))
                 del loci[0]
 
 # blast each locus OG against itself
@@ -1332,15 +1420,15 @@ def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2og, clusplusminus):
             outogLoci[clan].append([])
             for gene in locus:
                 try:
-                    outogLoci[clan][-1].append(gene2og[gene])
+                    outogLoci[clan][-1].append(gene2hg[gene])
                 except KeyError:
                     outogLoci[clan][-1].append(None)
     
-    return ome, outclanLoci, outclanOGx, outogLoci
+    return ome, outclanLoci, outclanHGx, outogLoci
 
 def classify_ocgs(
-    ogx2loc, db, gene2og, i2ogx, ogx2i,
-    phylo, clusScores, bordScores, ome2i, ogx2omes,
+    hgx2loc, db, gene2hg, i2hgx, hgx2i,
+    phylo, clusScores, bordScores, ome2i, hgx2omes,
     wrk_dir, omes2dist = {}, clusplusminus = 3, 
     inflation = 1.5, minimum = 2, min_omes = 2, cpus = 1
     ):
@@ -1348,54 +1436,54 @@ def classify_ocgs(
     groupI = wrk_dir + 'group.I.pickle'
     groupII = wrk_dir + 'group.II.pickle'
     if not os.path.isfile(groupI):
-        print('\tDiscovering OGxs with overlapping loci', flush = True)
+        print('\tDiscovering HGxs with overlapping loci', flush = True)
 
-        ogX_genes = {}
-        for ogX in ogx2loc:
-            if ogX in ogx2i: # if it passed the border threshold
-                for gene in ogx2loc[ogX]:
+        hgx_genes = {}
+        for hgx in hgx2loc:
+            if hgx in hgx2i: # if it passed the border threshold
+                for gene in hgx2loc[hgx]:
                     ome = gene[:gene.find('_')]
-                    if ome not in ogX_genes:
-                        ogX_genes[ome] = {}
-                    if gene not in ogX_genes[ome]:
-                        ogX_genes[ome][gene] = []
-                    ogX_genes[ome][gene].append(ogX)
+                    if ome not in hgx_genes:
+                        hgx_genes[ome] = {}
+                    if gene not in hgx_genes[ome]:
+                        hgx_genes[ome][gene] = []
+                    hgx_genes[ome][gene].append(hgx)
     
         hashOgx_cmds = []
         start = datetime.now()
-        for ome in ogX_genes:
+        for ome in hgx_genes:
             hashOgx_cmds.append([
                 db[ome]['gff3'],
-                ome, ogX_genes[ome], gene2og, clusplusminus
+                ome, hgx_genes[ome], gene2hg, clusplusminus
                 ])
         with mp.get_context('fork').Pool(processes = cpus) as pool:
-            gene_tups = pool.starmap(hash_ogx, hashOgx_cmds)
+            gene_tups = pool.starmap(hash_hgx, hashOgx_cmds)
     
-        gene2ogx, ogx2genes = {}, {}
+        gene2hgx, hgx2genes = {}, {}
         for res in gene_tups:
-            gene2ogx[ome2i[res[0]]] = {x[0]: set(x[1]) for x in res[1]}
-            for ogx, ogs in res[2]:
-                if ogx not in ogx2genes:
-                    ogx2genes[ogx] = {og: [] for og in ogx}
-                for og, seqs in ogs:
-                    ogx2genes[ogx][og].extend(seqs)
-            # ogx2genes = {ogx: og: [gene, gene]}
-            # gene2ogx = {omeI: gene: {OGx}}
+            gene2hgx[ome2i[res[0]]] = {x[0]: set(x[1]) for x in res[1]}
+            for hgx, hgs in res[2]:
+                if hgx not in hgx2genes:
+                    hgx2genes[hgx] = {og: [] for og in hgx}
+                for og, seqs in hgs:
+                    hgx2genes[hgx][og].extend(seqs)
+            # hgx2genes = {hgx: og: [gene, gene]}
+            # gene2hgx = {omeI: gene: {HGx}}
         with open(groupI, 'wb') as out:
-            pickle.dump([gene2ogx, ogx2genes], out)
+            pickle.dump([gene2hgx, hgx2genes], out)
         print('\t\t\t' + str(datetime.now() - start))
     elif not os.path.isfile(groupII):
-        print('\tLoading OGxs with overlapping loci', flush = True)
+        print('\tLoading HGxs with overlapping loci', flush = True)
         with open(groupI, 'rb') as in_:
-            gene2ogx, ogx2genes = pickle.load(in_)
+            gene2hgx, hgx2genes = pickle.load(in_)
 
     groupIII = wrk_dir + 'group.III.pickle'
     if not os.path.isfile(groupIII):
-        print('\tIdentifying significantly overlapping OGxs', flush = True)
+        print('\tIdentifying significantly overlapping HGxs', flush = True)
         tpairDict = defaultdict(list)
-        for ome, gene2ogx_ome in gene2ogx.items():
-            tpairDict = findOGxPairSingle(
-                gene2ogx_ome, ome, ogx2i, tpairDict,
+        for ome, gene2hgx_ome in gene2hgx.items():
+            tpairDict = findHGxPairSingle(
+                gene2hgx_ome, ome, hgx2i, tpairDict,
                 minimum = minimum
                 )
 
@@ -1408,13 +1496,13 @@ def classify_ocgs(
 
         omes2dist = update_dists(phylo, pairDict, cpus = cpus, omes2dist = omes2dist)
 
-        print('\tClassifying OGx clans and Orthologous Cluster Groups (OCGs)', flush = True)
+        print('\tClassifying HGx clans and Orthologous Cluster Groups (OCGs)', flush = True)
         # populate a lil_matrix here, then use that network to identify modules
-        print('\t\tBuilding binary OGx-OGx network', flush = True)
-        matrix = lil_matrix((len(i2ogx), len(i2ogx)), dtype=bool)
+        print('\t\tBuilding binary HGx-HGx network', flush = True)
+        matrix = lil_matrix((len(i2hgx), len(i2hgx)), dtype=bool)
         for idPair, omes in pairDict.items():
             i0, i1 = idPair[0], idPair[1]
-            nullSize = max([len(i2ogx[x]) for x in idPair])
+            nullSize = max([len(i2hgx[x]) for x in idPair])
             if omes2dist[omes] >= bordScores[nullSize]:
                 matrix[i0, i1] = True
                 matrix[i1, i0] = True
@@ -1423,48 +1511,48 @@ def classify_ocgs(
         network = nx.from_scipy_sparse_matrix(matrix)
         subgraphs = [network.subgraph(c) for c in nx.connected_components(network)]
         # use .copy() after iterator to copy
-        clans, clanOmes, clanOGxs = [], [], []
+        clans, clanOmes, clanHGxs = [], [], []
         for sg in subgraphs:
             clans.append({})
             clanOmes.append([])
-            clanOGxs.append([])
+            clanHGxs.append([])
             for id_ in list(sg.nodes):
-                ogX = i2ogx[id_]
-                omes = ogx2omes[ogX]
-                clans[-1][ogX] = omes # storing in a hash to allow future
+                hgx = i2hgx[id_]
+                omes = hgx2omes[hgx]
+                clans[-1][hgx] = omes # storing in a hash to allow future
                 # manipulation
-                clanOGxs[-1].extend(ogX)
+                clanHGxs[-1].extend(hgx)
                 clanOmes[-1].extend(omes)
             clanOmes[-1] = tuple(sorted(set(clanOmes[-1])))
-            clanOGxs[-1] = tuple(sorted(set(clanOGxs[-1])))
+            clanHGxs[-1] = tuple(sorted(set(clanHGxs[-1])))
 
         omes2dist = update_dists(
-            phylo, {clanOGxs[i]: omes for i, omes in enumerate(clanOmes)},
+            phylo, {clanHGxs[i]: omes for i, omes in enumerate(clanOmes)},
             cpus = cpus, omes2dist = omes2dist
             )
         with open(groupIII, 'wb') as out:
-            pickle.dump([clans, clanOmes, clanOGxs], out)
+            pickle.dump([clans, clanOmes, clanHGxs], out)
     else:
-        print('\tLoading OGx clans', flush = True)
+        print('\tLoading HGx clans', flush = True)
         with open(groupIII, 'rb') as in_:
-            clans, clanOmes, clanOGxs = pickle.load(in_)
+            clans, clanOmes, clanHGxs = pickle.load(in_)
    
     print('\t\t' + str(len(clans)) + ' clans', flush = True)
 
-    print('\tClassifying OGx clans into OCGs', flush = True)
+    print('\tClassifying HGx clans into OCGs', flush = True)
     clanFile = wrk_dir + 'clan2loci.'
     if not os.path.isfile(clanFile + 'og.json.gz'):
         print('\t\tPreparing loci extraction', flush = True)
         ome2clus2extract = defaultdict(dict)
         for i, clan in enumerate(clans):
-            for ogx, omes in clan.items():
-                for gene in ogx2loc[ogx]:
+            for hgx, omes in clan.items():
+                for gene in hgx2loc[hgx]:
                     ome = gene[:gene.find('_')]
                     if gene not in ome2clus2extract[ome]:
-                        ome2clus2extract[ome][gene] = [[set(ogx), i]]
+                        ome2clus2extract[ome][gene] = [[set(hgx), i]]
                     else:
-                        ome2clus2extract[ome][gene].append([set(ogx), i])
-                    # {ome: {gene: [[set(ogx), clanI]]}}
+                        ome2clus2extract[ome][gene].append([set(hgx), i])
+                    # {ome: {gene: [[set(hgx), clanI]]}}
 
         print('\t\tExtracting clan loci', flush = True)
         cmds = []
@@ -1472,19 +1560,19 @@ def classify_ocgs(
             # prepare commands for locus extraction
             cmds.append([
                 ome, db[ome]['gff3'],
-                clus2extract, gene2og, clusplusminus 
+                clus2extract, gene2hg, clusplusminus 
                 ])
         with mp.get_context('fork').Pool(processes = cpus) as pool:
             hash_res = pool.starmap(hash_clan_loci, cmds)
     
-        clanLoci, clanOGx4ocgs, clanOGloci = defaultdict(list), defaultdict(list), defaultdict(list)
-        for ome, outclanLoci, outclanOGx, outclanOGloci in hash_res:
+        clanLoci, clanHGx4ocgs, clanOGloci = defaultdict(list), defaultdict(list), defaultdict(list)
+        for ome, outclanLoci, outclanHGx, outclanOGloci in hash_res:
             for clan in outclanLoci:
                 clanLoci[clan].extend(outclanLoci[clan])
-                clanOGx4ocgs[clan].extend(outclanOGx[clan])
+                clanHGx4ocgs[clan].extend(outclanHGx[clan])
                 clanOGloci[clan].extend(outclanOGloci[clan])
         write_json(clanLoci, clanFile + 'json.gz')
-        write_json(clanOGx4ocgs, clanFile + 'ogx.json.gz')
+        write_json(clanHGx4ocgs, clanFile + 'hgx.json.gz')
         write_json(clanOGloci, clanFile + 'og.json.gz')
     else:
         print('\t\tLoading clan loci', flush = True)
@@ -1492,11 +1580,11 @@ def classify_ocgs(
             int(k): tuple(v) for k,v in sorted(
                 read_json(clanFile + 'json.gz').items(), key = lambda x: len(x[1]), reverse = True
             )}
-        clanOGx4ocgs = {int(k): tuple([tuple(i) for i in v]) for k,v in read_json(clanFile + 'ogx.json.gz').items()}
+        clanHGx4ocgs = {int(k): tuple([tuple(i) for i in v]) for k,v in read_json(clanFile + 'hgx.json.gz').items()}
         clanOGloci = {int(k): tuple(v) for k, v in read_json(clanFile + 'og.json.gz').items()}
 
     # dict(clanLoci) = {int(clanI): ((ome0_gene0, ome0_gene1,)...,)}
-    # dict(clanOGx4ocgs) = {int(clanI): ((og0, og1, ogn,)...,)}
+    # dict(clanHGx4ocgs) = {int(clanI): ((og0, og1, ogn,)...,)}
     # dict(clanOGloci) = {int(clanI): ((ome0_gene0_og, ome0_gene1_og,)...,)}
 
     ocg_dir = wrk_dir + 'ocg/'
@@ -1516,7 +1604,7 @@ def classify_ocgs(
         cpus = 2
     index, cmds = 0, []
 
-    loci, ogxXloci = {}, {}
+    loci, hgxXloci = {}, {}
     for clanI in clanLoci:
         cmds.append([
             db, clanI, clanLoci[clanI], clanOGloci[clanI],
@@ -1524,7 +1612,7 @@ def classify_ocgs(
             ])
         for i, locus in enumerate(clanLoci[clanI]):
             loci[index] = clanLoci[clanI][i]
-            ogxXloci[index] = clanOGx4ocgs[clanI][i]
+            hgxXloci[index] = clanHGx4ocgs[clanI][i]
             index += 1
 
  #   bigClan = cmds[0][1]
@@ -1536,7 +1624,7 @@ def classify_ocgs(
                 )
     #    mpclan_to_ocg_loci(
      #       db, bigClan, clanLoci[bigClan], clanOGloci[bigClan], 
-      #      clanOGx4ocgs[bigClan], ocg_dir, Q, 0,
+      #      clanHGx4ocgs[bigClan], ocg_dir, Q, 0,
        #     diamond = 'diamond', minid = 30, cpus = cpus - 1
         #    ) # now do the biggest OCG
    
@@ -1565,22 +1653,22 @@ def classify_ocgs(
                 continue
             t_ocgs.append(indices)
 
-    # list(ocg) = [{ogx: (omes,)}]
-    ocgs, ocg_ogxs, ocg_omes = [], [], []
+    # list(ocg) = [{hgx: (omes,)}]
+    ocgs, ocg_hgxs, ocg_omes = [], [], []
     for ocg, locIs in enumerate(t_ocgs):
         ocgs.append(defaultdict(list))
-        ocgOGx, ocgOme_list = [], []
+        ocgHGx, ocgOme_list = [], []
         for locI in locIs:
             loc = loci[locI]
-            ogxs = tuple([tuple(ogx) for ogx in ogxXloci[locI]])
-            # really should be done above to make ogxs formatted right
+            hgxs = tuple([tuple(hgx) for hgx in hgxXloci[locI]])
+            # really should be done above to make hgxs formatted right
             omeI = ome2i[loc[0][:loc[0].find('_')]]
-            [ocgs[-1][ogx].append(omeI) for ogx in ogxs]
-            [ocgOGx.extend(ogx) for ogx in ogxs]
+            [ocgs[-1][hgx].append(omeI) for hgx in hgxs]
+            [ocgHGx.extend(hgx) for hgx in hgxs]
             ocgOme_list.append(omeI)
         if len(set(ocgOme_list)) > min_omes: # need more than 1
             ocgs[-1] = {k: sorted(set(v)) for k,v in ocgs[-1].items()}
-            ocg_ogxs.append(tuple(sorted(set(ocgOGx))))
+            ocg_hgxs.append(tuple(sorted(set(ocgHGx))))
             ocg_omes.append(tuple(sorted(set(ocgOme_list))))
         else:
             del ocgs[-1]
@@ -1589,29 +1677,29 @@ def classify_ocgs(
         + str(sum([len(x) for x in ocgs])) + ' loci', flush = True)
 
     omes2dist = update_dists(
-        phylo, {ocg_ogxs[i]: omes for i, omes in enumerate(ocg_omes)},
+        phylo, {ocg_hgxs[i]: omes for i, omes in enumerate(ocg_omes)},
         cpus = cpus, omes2dist = omes2dist
         )
 
-    return ocgs, ocg_ogxs, ocg_omes, omes2dist
+    return ocgs, ocg_hgxs, ocg_omes, omes2dist
 
 
 def extrct_sig_clus(
-    clus_scores_dict, ogx2loc, top_ogxs, ome2i
+    clus_scores_dict, hgx2loc, top_hgxs, ome2i
     ):
     """Create a hash to seed retrieving clusters based on
-    their entry in ogx2loc."""
+    their entry in hgx2loc."""
  
     sig_clus = defaultdict(dict)
-    for top in top_ogxs:
-        ogX, clan, omeIs = top[0], top[1], top[2]
-        for gene in ogx2loc[ogX]:
+    for top in top_hgxs:
+        hgx, clan, omeIs = top[0], top[1], top[2]
+        for gene in hgx2loc[hgx]:
             ome = gene[:gene.find('_')]
             if ome2i[ome] in omeIs:
                 if gene not in sig_clus[ome]:            
-                    sig_clus[ome][gene] = [[set(ogX), clan]]
+                    sig_clus[ome][gene] = [[set(hgx), clan]]
                 else:
-                    sig_clus[ome][gene].append([set(ogX), clan])
+                    sig_clus[ome][gene].append([set(hgx), clan])
 
     return dict(sig_clus)
 
@@ -1661,11 +1749,11 @@ def calc_patchiness(phylo, omes):
     return tuple([int(x) for x in omes]), subDist/totalDist
 
 
-def makeBlastDB(og_file, out_file, makeblastdb):
-#    og_int = int(re.sub(r'\.fa$', '', os.path.basename(og_file).replace('OG','')))
+def makeBlastDB(hg_file, out_file, makeblastdb):
+#    og_int = int(re.sub(r'\.fa$', '', os.path.basename(hg_file).replace('OG','')))
  #   out_file = blast_dir + str(og_int) + '.db'
     cmd = [
-        makeblastdb, '-in', og_file, '-dbtype', 'prot',
+        makeblastdb, '-in', hg_file, '-dbtype', 'prot',
         '-parse_contigs', '-out', out_file
         ]
     makeblastExec = subprocess.call(cmd, stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL)
@@ -1700,7 +1788,7 @@ def runBlast(queryfile, blastdb, blastp, outfile, max_seqs = 25):
     #blastExec.wait()
 
 
-def parseRes(res_file, ome_set, ogx, og):
+def parseRes(res_file, ome_set, hgx, og):
 
     hits = defaultdict(list)
     with open(res_file, 'r') as raw:
@@ -1720,37 +1808,37 @@ def parseRes(res_file, ome_set, ogx, og):
                     results[q] = 1
                 break
 
-    return results, ogx, og
+    return results, hgx, og
 
 
-def calcGBCcorr(ogx_res, ogx):
+def calcGBCcorr(hgx_res, hgx):
 
     omes, total = set(), 0
-    for og in ogx_res:
+    for og in hgx_res:
         t_dict = {}
-        for q in ogx_res[og]:
+        for q in hgx_res[og]:
             ome = q[:q.find('_')]
             if ome not in t_dict:
                 t_dict[ome] = 0
-            if ogx_res[og][q] == 1: # if there are any hits for an ome w/multiple queries
+            if hgx_res[og][q] == 1: # if there are any hits for an ome w/multiple queries
                 t_dict[ome] = 1
         try:
             total += sum(t_dict.values()) / len(t_dict)
         except ZeroDivisionError:
             print('\t\t' + str(og) + ' no hits', flush = True)
     try:
-        total /= len(ogx_res)
+        total /= len(hgx_res)
     except ZeroDivisionError:
-        print('\t\t' + str(ogx) + ' no hits', flush = True)
+        print('\t\t' + str(hgx) + ' no hits', flush = True)
 
-    return total, ogx
+    return total, hgx
 
 
-def run_make_dmnddb(db, diamond, ogx_dir, og, genes):
+def run_make_dmnddb(db, diamond, hgx_dir, og, genes):
     fa_dict = acc2fa(db, genes)
     makeDBcmd = subprocess.Popen([
         diamond, 'makedb', '--db',
-        ogx_dir + str(og) + '.dmnd'
+        hgx_dir + str(og) + '.dmnd'
         ], stdin = subprocess.PIPE, stdout = subprocess.DEVNULL,
         stderr = subprocess.DEVNULL
         )
@@ -1758,70 +1846,102 @@ def run_make_dmnddb(db, diamond, ogx_dir, og, genes):
     makeDBcmd.stdin.close()
     makeDBcmd.wait()
 
-def blast_homolog(db, ogs, og_dir, ogx_dir, blastp, og2gene, cpus = 1, printexit = False):
+
+def blast_homolog(db, hgs, hg_dir, hgx_dir, 
+                  diamond, hg2gene, cpus = 1,
+                  printexit = False):
 
     cmds1, cmds2 = [], []
-    for og in ogs:
- #       if not os.path.isfile(ogx_dir + str(og) + '.dmnd'):
-#            cmds1.append([
-  #              db, blastp, ogx_dir, og, og2gene[og]
-   #             ])
-        if not os.path.isfile(ogx_dir + str(og) + '.out'):
-            og_file = og_dir + str(og) + '.faa'
-            if not os.path.isfile(og_file): # try OrthoFinder check
+    for og in hgs:
+        if not os.path.isfile(hgx_dir + str(og) + '.out'):
+            hg_file = hg_dir + str(og) + '.faa'
+            out_file = hgx_dir + str(og) + '.out'
+            if not os.path.isfile(hg_file): # try OrthoFinder check
                 digits = len(str(og))
                 zeros = 7 - digits
-                og_file = og_dir + 'OG' + '0' * zeros + str(og) + '.fa'
-#            cmds2.append([
- #               diamond, 'blastp', '--query', og_file, 
-  #              '--db', ogx_dir + str(og) + '.dmnd', 
-   #             '-o', ogx_dir + str(og) + '.out'
-    #            ])
-            cmds2.append(['blastp', '-query', og_file, '-subject', og_file,
-                          '-out', ogx_dir + str(og) + '.out', '-num_threads',
-                          '2'])
+                hg_file = hg_dir + 'OG' + '0' * zeros + str(og) + '.fa'
+#            if len(hg2gene[og]) > 100: # key here is efficiency
+        if not os.path.isfile(hgx_dir + str(og) + '.dmnd'):
+#            cmds1.append([
+ #               db, blastp, hgx_dir, og, hg2gene[og]
+  #              ])
+            cmds1.append([diamond, 'makedb', '--db',
+                          hgx_dir + str(og) + '.dmnd',
+                          '--in', hg_file])
 
-#    print('\tMaking ' + str(len(cmds1)) + ' OG diamond databases', flush = True)
- #   with mp.get_context('fork').Pool(processes = cpus) as pool:
-  #      pool.starmap(run_make_dmnddb, cmds1)
-
+            cmds2.append([
+                diamond, 'blastp', '--query', hg_file, 
+                '--db', hgx_dir + str(og) + '.dmnd', 
+                '-o', out_file, '-outfmt',
+                '-6', 'qseqid', 'sseqid', 'evalue'
+                ])
+ #               search_cmd = subprocess.call(('mmseqs easy-search ' + hg_file + ' ' \
+  #                          + hg_file + ' ' + out_file + '.tmp ' \
+   #                         + hgx_dir + 'tmp/ --threads ' + str(cpus) + ' ' \
+    #                        + '--format-output query,target,evalue').split(' '),
+     #                       stdout = subprocess.DEVNULL, 
+      #                      stderr = subprocess.DEVNULL)
+       #     else:
+        #        search_cmd = subprocess.call('blastp -query {hg_file} -subject {hg_file} \
+         #                    -out {out_file}.tmp -num_threads {cpus} -outfmt \
+          #                   "6 qseqid sseqid evalue"' %
+           #                  {'hg_file': hg_file, 
+            #                 'out_file': out_file, 
+             #                'cpus': str(cpus)},
+              #               shell = True, stdout = subprocess.DEVNULL, 
+               #              stderr = subprocess.DEVNULL)
+   #         if os.path.isfile(out_file + '.tmp'):
+  #              os.rename(out_file + '.tmp', out_file)
+ #           else:
+#                raise FileNotFoundError('BLASTp failed: ' + str(search_cmd) \
+    #                                  + ' ' + out_file)
+ 
     if printexit:
-        with open(ogx_dir + '../../gbc.sh', 'w') as out:
+        with open(hgx_dir + '../../gbc_makedb.sh', 'w') as out:
+            out.write('\n'.join([' '.join(x) for x in cmds1]))
+        with open(hgx_dir + '../../gbc_srch.sh', 'w') as out:
             out.write('\n'.join([' '.join(x) for x in cmds2]))
-        print('\nGBC commands outputted to `gbc.sh`', flush = True)
+        print('\nGBC commands outputted to `<OUTPUT>/gbc*.sh` \
+               Run makedb first', flush = True)
         sys.exit(0)
 
-    print('\tRunning ' + str(len(cmds2)) + ' OG self v self BLAST', flush = True)
+    print('\tMaking ' + str(len(cmds1)) + ' diamond databases', flush = True)
+#    with mp.get_context('fork').Pool(processes = cpus) as pool:
+ #       pool.starmap(run_make_dmnddb, cmds1)
+    multisub(cmds1, process = cpus)
+
+
+    print('\tRunning ' + str(len(cmds2)) + ' diamonds', flush = True)
     multisub(cmds2, processes = cpus)
 
 
-def retroactive_grab_ogx_genes(
-    gff_path, ome_loc, gene2og, clusplusminus
+def retroactive_grab_hgx_genes(
+    gff_path, ome_loc, gene2hg, clusplusminus
     ):
 
     gff_list = gff2list(gff_path)
-    clus_ogs = defaultdict(list)
+    clus_hgs = defaultdict(list)
     cds_dict, cds_dict2 = compileCDS2(
         gff_list, os.path.basename(gff_path).replace('.gff3','')
         )
 
-    # the goal here is to take each OGx and compile and OG by OG list of each
+    # the goal here is to take each HGx and compile and OG by OG list of each
     # gene that is associated with it - I think I am going to need some sort of
     # while loop to accomodate searches outside of the plusminus range.
     # Essentially this will operate by first checking if the entirety of the
-    # OGx is within the plusminus range. The next step is that, if not, go
+    # HGx is within the plusminus range. The next step is that, if not, go
     # ahead and use a while loop to simultaneously parse up and down beyond the
-    # plusminus to grab the rest of the OGx and stop when acquired. This can be
-    # accomplished by taking the set of OGx and one by one removing the hits
+    # plusminus to grab the rest of the HGx and stop when acquired. This can be
+    # accomplished by taking the set of HGx and one by one removing the hits
     # found. The while loop would then operate on what is contained within the
     # set.
     for scaf in cds_dict:
         for i0, seq0 in enumerate(cds_dict[scaf]):
             if seq0 in ome_loc: # if the og is part of a significant seed
             # locus
-                for ogX, clanI in ome_loc[seq0]:
-                    ogs = set(ogX)
-                    clus_ogs[ogX].append((clanI, defaultdict(list),))
+                for hgx, clanI in ome_loc[seq0]:
+                    hgs = set(hgx)
+                    clus_hgs[hgx].append((clanI, defaultdict(list),))
                     start, end = None, None
                     if i0 < clusplusminus: # is i0 - clusplusminus < 0 ?
                         locus = cds_dict[scaf][:i0+clusplusminus+1] # then gather
@@ -1832,44 +1952,45 @@ def retroactive_grab_ogx_genes(
                     for i1, seq1 in enumerate(locus): # for each index and sequence
                     # in the locus
                         try:
-                            og = gene2og[seq1]
+                            og = gene2hg[seq1]
                         except KeyError:
                             continue
-                        if og in ogs:
-                            clus_ogs[ogX][-1][1][og].append(seq1)
+                        if og in hgs:
+                            clus_hgs[hgx][-1][1][og].append(seq1)
                         # I'm envisioning a scenario where a P450 from outside
                         # the cluster joins in, even though a P450 OG was an
-                        # original part of the OGx; the newly joining P450
+                        # original part of the HGx; the newly joining P450
                         # would not hit another organism with the cluster and
                         # thus impact the score. it is an assumption that
                         # this is minor.
-    return clus_ogs
-    # clus_ogs = {ogx: [{og: []}]} list is per locus
+    return clus_hgs
+    # clus_hgs = {hgx: [{og: []}]} list is per locus
 
 def calc_gbc(
-    ogX, ogxDict, ogx_dir
+    hgx, hgxDict, hgx_dir
     ):
-    # ogxDict = {og: set(gene1, gene2)}
+    # hgxDict = {og: set(gene1, gene2)}
 
     res= {}
-    for og in ogxDict:
+    for og in hgxDict:
         res[og] = {}
-        with open(ogx_dir + str(og) + '.out', 'r') as raw:
+        with open(hgx_dir + str(og) + '.out', 'r') as raw:
             geneInfo = defaultdict(list)
             for line in raw:
+                # query,subject,...,bit
                 d = line.rstrip().split('\t')
                 q = d[0]
                 s = d[1]
-                bit = float(d[-1])
-                if q in ogxDict[og]:
-                    geneInfo[q].append((s, bit))
+                evalue = float(d[-1])
+                if q in hgxDict[og]:
+                    geneInfo[q].append((s, evalue))
         geneInfo = {
-            k: sorted(v, key = lambda x: x[1], reverse = True) for k,v in
+            k: sorted(v, key = lambda x: x[1]) for k,v in
             geneInfo.items()
-            }
+            } # would need to reverse if using bitscore
 
 
-        for gene in list(ogxDict[og]):
+        for gene in list(hgxDict[og]):
             ome = gene[:gene.find('_')]
             if ome not in res[og]:
                 res[og][ome] = False
@@ -1901,36 +2022,36 @@ def calc_gbc(
     except ZeroDivisionError:
         gbcScore = 0
 
-    return ogX, gbcScore
+    return hgx, gbcScore
 
-def ogx2omes2gbc_calc(
-    ogX, omesI, omes, ogxDict, ogx_dir
+def hgx2omes2gbc_calc(
+    hgx, omesI, omes, hgxDict, hgx_dir
     ):
-    # ogxDict = {og: set(gene1, gene2)}
+    # hgxDict = {og: set(gene1, gene2)}
 
-#    if ogX == (1225, 1407, 1753, 2875, 3830, 5417, 6211, 6997, 8298, 8898,
+#    if hgx == (1225, 1407, 1753, 2875, 3830, 5417, 6211, 6997, 8298, 8898,
  #   11992, 12077, 16076, 33272):
   #      print(omesI, omes)
     res = {}
-    for og, qs in ogxDict.items():
+    for og, qs in hgxDict.items():
         res[og] = {}
-        with open(ogx_dir + str(og) + '.out', 'r') as raw:
+        with open(hgx_dir + str(og) + '.out', 'r') as raw:
         # open the blast results
             geneInfo = defaultdict(list) 
             for line in raw:
                 d = line.rstrip().split('\t')
                 q = d[0] # qryid
                 s = d[1] # sbjid
-                bit = float(d[-1])
+                e = float(d[-1])
                 if q in qs:
-                    geneInfo[q].append((s, bit))
-                    # dict(geneInfo) = {query: [(sbj, bitscore)]}
+                    geneInfo[q].append((s, e))
+                    # dict(geneInfo) = {query: [(sbj, evalue)]}
         geneInfo = {
-            k: sorted(v, key = lambda x: x[1], reverse = True) for k,v in
-            geneInfo.items()
-            } # sort each query by bitscore
+            k: sorted(v, key = lambda x: x[1]) for k,v in
+            geneInfo.items() 
+            } # sort each query by evalue (reverse = True for bit)
 
-        for gene in list(ogxDict[og]): # for each gene
+        for gene in list(hgxDict[og]): # for each gene
             ome = gene[:gene.find('_')] # identify the ome
             if ome not in res[og]:
                 res[og][ome] = False
@@ -1954,9 +2075,9 @@ def ogx2omes2gbc_calc(
                 # dict(res) = {og: {ome: highest bit score subject}}
 
     # populate a binary response dictionary for each ome and its genes that are
-    # in the shared OGx; 0 = the OG's best blast hit in this ome is not another 
-    # ome code that shares the OGx, 1 = the OG's best blast hit is another ome 
-    # code that share the OGx
+    # in the shared HGx; 0 = the OG's best blast hit in this ome is not another 
+    # ome code that shares the HGx, 1 = the OG's best blast hit is another ome 
+    # code that share the HGx
     omeScores = defaultdict(dict)
     for og in res:
         for ome, seq in res[og].items():
@@ -1975,49 +2096,51 @@ def ogx2omes2gbc_calc(
     except ZeroDivisionError:
         gbcScore = 0
 
-    return ogX, omesI, gbcScore
+    return hgx, omesI, gbcScore
 
 
 
 def gbc_mngr_2(
-    ogs, omes, og_dir, ogx_dir, blastp, ogx2loc, 
-    db, gene2og, clusplusminus, og2gene, cpus = 1
+    hgs, omes, hg_dir, hgx_dir, diamond, hgx2loc, 
+    db, gene2hg, clusplusminus, hg2gene, cpus = 1,
+    printexit = False
     ):
 
-    blast_homolog(db, ogs, og_dir, ogx_dir, blastp, og2gene, cpus = 1, printexit = False)
-    ogxGene_cmds = []
+    blast_homolog(db, hgs, hg_dir, hgx_dir, diamond, hg2gene, cpus = 1,
+                  printexit = printexit)
+    hgxGene_cmds = []
     ome_locs = {ome: defaultdict(list) for ome in omes}
-    for ogX in ogx2loc:
-        for seq in ogx2loc[ogX]:
+    for hgx in hgx2loc:
+        for seq in hgx2loc[hgx]:
             ome = seq[:seq.find('_')]
-            ome_locs[ome][seq].append((ogX, None,))
+            ome_locs[ome][seq].append((hgx, None,))
 
     for ome in ome_locs:
         gff = db[ome]['gff3']
-        ogxGene_cmds.append([gff, ome_locs[ome], gene2og, clusplusminus])
+        hgxGene_cmds.append([gff, ome_locs[ome], gene2hg, clusplusminus])
 
-    print('\tAssimilating loci with significant OGxs', flush = True)
+    print('\tAssimilating loci with significant HGxs', flush = True)
     with mp.get_context('fork').Pool(processes = cpus) as pool:
-        clus_ogs_prep = pool.starmap(retroactive_grab_ogx_genes, ogxGene_cmds)
-#    {ogx:[{og:[seq]}]}
+        clus_hgs_prep = pool.starmap(retroactive_grab_hgx_genes, hgxGene_cmds)
+#    {hgx:[{og:[seq]}]}
 
-    clus_ogs = {}
-    for res in clus_ogs_prep:
-        for ogX, loci in res.items():
-            if ogX not in clus_ogs:
-                clus_ogs[ogX] = {x: [] for x in ogX}
+    clus_hgs = {}
+    for res in clus_hgs_prep:
+        for hgx, loci in res.items():
+            if hgx not in clus_hgs:
+                clus_hgs[hgx] = {x: [] for x in hgx}
             for null, locus in loci:
                 for og in locus:
-                    clus_ogs[ogX][og].extend(locus[og])
-    clus_ogs = {
-        ogX: {og: set(v) for og, v in ogs.items()} for ogX, ogs in clus_ogs.items()
+                    clus_hgs[hgx][og].extend(locus[og])
+    clus_hgs = {
+        hgx: {og: set(v) for og, v in hgs.items()} for hgx, hgs in clus_hgs.items()
         } # make sets from it
-    # {ogX: {og: set(seqs)}}
+    # {hgx: {og: set(seqs)}}
 
     print('\tCalculating gene blast congruence (GBC) scores', flush = True)
     with mp.get_context('fork').Pool(processes = cpus) as pool:
         gbc_res = pool.starmap(
-            calc_gbc, [[ogX, clus_ogs[ogX], ogx_dir] for ogX in clus_ogs]
+            calc_gbc, [[hgx, clus_hgs[hgx], hgx_dir] for hgx in clus_hgs]
             )
 
     gcb_scores = dict(gbc_res)
@@ -2025,76 +2148,76 @@ def gbc_mngr_2(
     return gcb_scores        
 
 def gbc_mngr_3(
-    ogs, omes, ogx_dir, blastp, ogx2loc, 
-    db, gene2og, clusplusminus, og2gene, modules,
-    moduleOmes, moduleOGxs, ome2i, cpus = 1
+    hgs, omes, hgx_dir, hgx2loc, 
+    db, gene2hg, clusplusminus, hg2gene, modules,
+    moduleOmes, moduleHGxs, ome2i, cpus = 1
     ):
 
     i2ome = {v: k for k, v in ome2i.items()}
-    if not os.path.isfile(ogx_dir + 'clusOGs.pickle'):
-        ogxGene_cmds = []
+    if not os.path.isfile(hgx_dir + 'clusOGs.pickle'):
+        hgxGene_cmds = []
         ome_locs = {ome: defaultdict(list) for ome in omes}
 
-        for i, ogx2omes in enumerate(modules):
-            modOGx = moduleOGxs[i]
-            for ogX, omes in ogx2omes.items():
+        for i, hgx2omes in enumerate(modules):
+            modHGx = moduleHGxs[i]
+            for hgx, omes in hgx2omes.items():
                 omes_set = set(omes)
-                for seq in ogx2loc[ogX]:
+                for seq in hgx2loc[hgx]:
                     ome = seq[:seq.find('_')]
                     if ome2i[ome] in omes_set:
     #                    if seq not in ome_locs[ome]:
      #                       ome_locs[ome][seq] = []
-                        ome_locs[ome][seq].append((modOGx, i,))
+                        ome_locs[ome][seq].append((modHGx, i,))
             
         for ome, ome_loc in ome_locs.items():
             gff = db[ome]['gff3']
-            ogxGene_cmds.append([gff, ome_loc, gene2og, clusplusminus])
+            hgxGene_cmds.append([gff, ome_loc, gene2hg, clusplusminus])
     
         print('\tAssimilating OCG loci', flush = True)
         with mp.get_context('fork').Pool(processes = cpus) as pool:
-            clus_ogs_prep = pool.starmap(retroactive_grab_ogx_genes, ogxGene_cmds)
-        with open(ogx_dir + 'clusOGs.pickle', 'wb') as out:
-            pickle.dump(clus_ogs_prep, out)
+            clus_hgs_prep = pool.starmap(retroactive_grab_hgx_genes, hgxGene_cmds)
+        with open(hgx_dir + 'clusOGs.pickle', 'wb') as out:
+            pickle.dump(clus_hgs_prep, out)
     else:
-        with open(ogx_dir + 'clusOGs.pickle', 'rb') as raw:
-            clus_ogs_prep = pickle.load(raw)
+        with open(hgx_dir + 'clusOGs.pickle', 'rb') as raw:
+            clus_hgs_prep = pickle.load(raw)
 
-    clus_ogs = {i: (modOGx, defaultdict(list),) \
-                for i, modOGx in enumerate(moduleOGxs)}
+    clus_hgs = {i: (modHGx, defaultdict(list),) \
+                for i, modHGx in enumerate(moduleHGxs)}
 
-    for res in clus_ogs_prep:
-        # clus_ogs = {ogx: [{og: []}]} list is per locus
-        for ogX, loci in res.items():
+    for res in clus_hgs_prep:
+        # clus_hgs = {hgx: [{og: []}]} list is per locus
+        for hgx, loci in res.items():
             for clanI, locus in loci:
                 for og in locus:
-                    clus_ogs[clanI][1][og].extend(locus[og])
-    clus_ogs = {
+                    clus_hgs[clanI][1][og].extend(locus[og])
+    clus_hgs = {
         clanI: [d[0], {og: set(v) for og, v in d[1].items()}] \
-        for clanI, d in clus_ogs.items()
+        for clanI, d in clus_hgs.items()
         } # make sets from it
-    # {clanI: [ogX, {og: set(seqs)}}
+    # {clanI: [hgx, {og: set(seqs)}}
 
     print('\tCalculating gene blast congruence (GBC) scores', flush = True)
     with mp.get_context('fork').Pool(processes = cpus) as pool:
         gbc_res = pool.starmap(
-            ogx2omes2gbc_calc, 
-            ([moduleOGxs[clanI], moduleOmes[clanI], 
+            hgx2omes2gbc_calc, 
+            ([moduleHGxs[clanI], moduleOmes[clanI], 
             [i2ome[i] for i in moduleOmes[clanI]], 
-            d[1], ogx_dir] \
-             for clanI, d in clus_ogs.items())
+            d[1], hgx_dir] \
+             for clanI, d in clus_hgs.items())
             )
 
 #    sys.exit()
-    ogx2omes2gbc = defaultdict(dict)
-    for ogx, omes, score in gbc_res:
-        ogx2omes2gbc[ogx][omes] = score
+    hgx2omes2gbc = defaultdict(dict)
+    for hgx, omes, score in gbc_res:
+        hgx2omes2gbc[hgx][omes] = score
 
-    return ogx2omes2gbc    
+    return hgx2omes2gbc    
 
 
 def dndsGeneGrab(
     gff_path, assembly_path, proteome_path,
-    ome_sig_clus, gene2og, clusplusminus
+    ome_sig_clus, gene2hg, clusplusminus
     ):
 
     gff_list, prot_dict = gff2list(gff_path), fa2dict(proteome_path)
@@ -2108,16 +2231,16 @@ def dndsGeneGrab(
             if seq0 in ome_sig_clus: # if the og is part of a significant seed
             # locus
                 try:
-                    og0 = gene2og[seq0]
+                    og0 = gene2hg[seq0]
                 except KeyError:
                     continue
                 for hit in ome_sig_clus[seq0]:
-                    ogX = tuple(sorted(list(hit)))
-                    if ogX not in clus_out:
-                        clus_out[ogX] = [{og: [{}, {}] for og in ogX}]
-                    clus_out[ogX][-1][og0][0][seq0] = prot_dict[seq0]
-                    clus_out[ogX][-1][og0][1] = {
-                        **clus_out[ogX][-1][og0][1], 
+                    hgx = tuple(sorted(list(hit)))
+                    if hgx not in clus_out:
+                        clus_out[hgx] = [{og: [{}, {}] for og in hgx}]
+                    clus_out[hgx][-1][og0][0][seq0] = prot_dict[seq0]
+                    clus_out[hgx][-1][og0][1] = {
+                        **clus_out[hgx][-1][og0][1], 
                         **ntmain(cds_dict2[seq0], assem_dict)
                         }
                     
@@ -2131,72 +2254,72 @@ def dndsGeneGrab(
                     for i1, seq1 in enumerate(locus): # for each index and sequence
                     # in the locus
                         try:
-                            og = gene2og[seq1]
+                            og = gene2hg[seq1]
                         except KeyError:
                             continue
                         if og in hit: # if the og is
                         # in the sig clus
-                            clus_out[ogX][-1][og][0][seq1] = prot_dict[seq1]
-                            clus_out[ogX][-1][og][1] = {
-                                **clus_out[ogX][-1][og][1],
+                            clus_out[hgx][-1][og][0][seq1] = prot_dict[seq1]
+                            clus_out[hgx][-1][og][1] = {
+                                **clus_out[hgx][-1][og][1],
                                 **ntmain(cds_dict2[seq1], assem_dict)
                                 }
     return clus_out
 
 
-def dnds_preparation(db, omes4ogs, ogx2omes, gene2og, plusminus, ogx_dir, i2ome):
+def dnds_preparation(db, omes4hgs, hgx2omes, gene2hg, plusminus, hgx_dir, i2ome):
 
-    gene_checks, ogX_check = {}, {}
+    gene_checks, hgx_check = {}, {}
     
-    for ome in omes4ogs:
+    for ome in omes4hgs:
         gff_path = db[i2ome[ome]]['gff3'] 
         proteome_path = db[i2ome[ome]]['faa']
         assembly_path = db[i2ome[ome]]['fna']
         res = dndsGeneGrab(
             gff_path, assembly_path, proteome_path,
-            omes4ogs[ome], gene2og, plusminus
+            omes4hgs[ome], gene2hg, plusminus
             )
-        for ogX in res:
-            if ogX not in ogX_check:
-                ogX_check[ogX] = set()
-            if ogX not in gene_checks:
-                gene_checks[ogX] = {og: [{}, {}] for og in ogX}
-            for loc in res[ogX]:
+        for hgx in res:
+            if hgx not in hgx_check:
+                hgx_check[hgx] = set()
+            if hgx not in gene_checks:
+                gene_checks[hgx] = {og: [{}, {}] for og in hgx}
+            for loc in res[hgx]:
                 for og in loc:
-                    gene_checks[ogX][og][0] = {
-                        **gene_checks[ogX][og][0], **loc[og][0]
+                    gene_checks[hgx][og][0] = {
+                        **gene_checks[hgx][og][0], **loc[og][0]
                         }
-                    gene_checks[ogX][og][1] = {
-                        **gene_checks[ogX][og][1], **loc[og][1]
+                    gene_checks[hgx][og][1] = {
+                        **gene_checks[hgx][og][1], **loc[og][1]
                         }
-            ogX_check[ogX].add(ome)
-            if ogX_check[ogX] == set(ogx2omes[ogX]):
-                for og in ogX:
-                    out_base = ogx_dir + '-'.join([str(x) for x in ogX]) + \
+            hgx_check[hgx].add(ome)
+            if hgx_check[hgx] == set(hgx2omes[hgx]):
+                for og in hgx:
+                    out_base = hgx_dir + '-'.join([str(x) for x in hgx]) + \
                         '.' + str(og)
                     with open(out_base + '.aa.fa', 'w') as out:
-                        out.write(dict2fa(gene_checks[ogX][og][0]))
+                        out.write(dict2fa(gene_checks[hgx][og][0]))
                     with open(out_base + '.nt.fa', 'w') as out:
-                        out.write(dict2fa(gene_checks[ogX][og][1]))
-                del gene_checks[ogX]
+                        out.write(dict2fa(gene_checks[hgx][og][1]))
+                del gene_checks[hgx]
 
     if gene_checks:
         print('\t\tERROR: discrepancies with previous run', flush = True)
-        for ogX in gene_checks:
-            print('\t\t\t' + str(ogX), flush = True)
-            for og in ogX:
-                out_base = ogx_dir + '-'.join([str(x) for x in ogX]) + \
+        for hgx in gene_checks:
+            print('\t\t\t' + str(hgx), flush = True)
+            for og in hgx:
+                out_base = hgx_dir + '-'.join([str(x) for x in hgx]) + \
                     '.' + str(og)
                 with open(out_base + '.aa.fa', 'w') as out:
-                    out.write(gene_checks[ogX][og][0])
+                    out.write(gene_checks[hgx][og][0])
                 with open(out_base + '.nt.fa', 'w') as out:
-                    out.write(gene_checks[ogX][og][1])
+                    out.write(gene_checks[hgx][og][1])
         
 
 def calc_dnds(mafft):
 
     og_catch = re.search(r'(^[^\.]+)\.(\d+)\.mafft$', os.path.basename(mafft))
-    ogX = tuple([int(x) for x in og_catch[1].split('-')])
+    hgx = tuple([int(x) for x in og_catch[1].split('-')])
     og = int(og_catch[2])
 
     err = os.path.basename(mafft).replace('.mafft','')
@@ -2227,7 +2350,7 @@ def calc_dnds(mafft):
         dnds_matr = np.ma.array(dnds_matrNulls, mask=np.isnan(dnds_matrNulls))
         dnds_matr = np.abs(dnds_matr)
         dnds = np.mean(dnds_matr)
-        return ogX, og, dnds
+        return hgx, og, dnds
     except ZeroDivisionError:
         print('\t\t' + err + ' unknown error')
     except KeyError:
@@ -2237,38 +2360,38 @@ def calc_dnds(mafft):
 
 def parse_dnds(mpRes):
 
-    ogXdNdS_dict = {}
+    hgxdNdS_dict = {}
     for res in mpRes:
         if res:
-            ogx, og, dnds = res[0], res[1], res[2]
+            hgx, og, dnds = res[0], res[1], res[2]
             try:
                 float(dnds)
             except ValueError:
                 continue
-            if ogx not in ogXdNdS_dict:
-                ogXdNdS_dict[ogx] = {
+            if hgx not in hgxdNdS_dict:
+                hgxdNdS_dict[hgx] = {
                     'selection_total': 0,
                     'og_total': 0,
-                    'ogs': {}
+                    'hgs': {}
                     }
 
             if dnds < 1: # if purifying selection
-                ogXdNdS_dict[ogx]['selection_total'] += dnds
+                hgxdNdS_dict[hgx]['selection_total'] += dnds
             else: # if positive selection use reciprocal
-                ogXdNdS_dict[ogx]['selection_total'] += 1/dnds
-            ogXdNdS_dict[ogx]['og_total'] += 1
-            ogXdNdS_dict[ogx]['ogs'][og] = dnds
-    for ogx in ogXdNdS_dict:
-        selection_coefficient = ogXdNdS_dict[ogx]['selection_total']/ogXdNdS_dict[ogx]['og_total']
-        mean_dnds = sum(ogXdNdS_dict[ogx]['ogs'].values())/len(ogXdNdS_dict[ogx]['ogs'])
-        ogXdNdS_dict[ogx] = [selection_coefficient, mean_dnds, ogXdNdS_dict[ogx]['ogs']]
+                hgxdNdS_dict[hgx]['selection_total'] += 1/dnds
+            hgxdNdS_dict[hgx]['og_total'] += 1
+            hgxdNdS_dict[hgx]['hgs'][og] = dnds
+    for hgx in hgxdNdS_dict:
+        selection_coefficient = hgxdNdS_dict[hgx]['selection_total']/hgxdNdS_dict[hgx]['og_total']
+        mean_dnds = sum(hgxdNdS_dict[hgx]['hgs'].values())/len(hgxdNdS_dict[hgx]['hgs'])
+        hgxdNdS_dict[hgx] = [selection_coefficient, mean_dnds, hgxdNdS_dict[hgx]['hgs']]
 
-    return ogXdNdS_dict
+    return hgxdNdS_dict
 
 
-def hash_clusters(ome, gff_path, ome_sig_clus, gene2og, clusplusminus):
+def hash_clusters(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus):
     """sliding window of size clusplusminus, identify sequences that may have
-    ogs that may be significant, grab their window, and check for a significant
+    hgs that may be significant, grab their window, and check for a significant
     higher order og combo in the locus"""
 
     gff_list, protoclus, clus_out = gff2list(gff_path), {}, []
@@ -2289,7 +2412,7 @@ def hash_clusters(ome, gff_path, ome_sig_clus, gene2og, clusplusminus):
                     for i1, seq1 in enumerate(locus): # for each index and sequence
                     # in the locus
                         try:
-                            og = gene2og[seq1]
+                            og = gene2hg[seq1]
                         except KeyError:
                             continue
                         if og in sig_clus[0] and start is None: # if the og is
@@ -2299,9 +2422,9 @@ def hash_clusters(ome, gff_path, ome_sig_clus, gene2og, clusplusminus):
                         # sig clus label this the other border unless another is 
                         # found
                             end = i1 + 1
-                    ogX = tuple(sorted(list(sig_clus[0])))
+                    hgx = tuple(sorted(list(sig_clus[0])))
                     clus_out.append([
-                         ogX, locus[start:end], {sig_clus[1]}, scaf
+                         hgx, locus[start:end], {sig_clus[1]}, scaf
                          ])
                     # clus_out = [(og0, og1, ... ogn), [prot0, prot1, ... protn])]
     
@@ -2310,7 +2433,7 @@ def hash_clusters(ome, gff_path, ome_sig_clus, gene2og, clusplusminus):
 
 def merge_clusters(clus_out):
     """because we have significant clusters with borders, we can merge each
-    cluster and assume that at a certain number of ogs in a combo will never
+    cluster and assume that at a certain number of hgs in a combo will never
     happen via random sampling; therefore, their significance in the
     microsynteny adjustment is sufficient for justification for merging"""
 
@@ -2326,11 +2449,11 @@ def merge_clusters(clus_out):
             if intersect:
                 any_intersect, change = True, True # we found overlap in
                 # clus_out and in this specific cluster comparison
-                ogX = tuple(sorted(list(set(clus0[0]).union(set(clus1[0])))))
+                hgx = tuple(sorted(list(set(clus0[0]).union(set(clus1[0])))))
                 # obtain the higher order og combination as the union of the
                 # two cluster sets, then sort it and store as a tuple
                 comp_clus.append([
-                    ogX, list(loc0.union(loc1)), 
+                    hgx, list(loc0.union(loc1)), 
                     clus0[2].union(clus1[2]), clus0[3] #, merge_x
                     ])
                 # append the og combo and the union of the two loci's proteins
@@ -2349,12 +2472,12 @@ def merge_clusters(clus_out):
     return comp_clus, change
 
 
-def write_clusters(ome_sig_clus, ome, out_file, gff_path, gene2og, clusplusminus = 10):
+def write_clusters(ome_sig_clus, ome, out_file, gff_path, gene2hg, clusplusminus = 10):
     # is multiprocessing this messing something and memory and that's why
     # output is wonky? (sometimes fewer proteins than should be in locus) 
     # or is output consistent fucking up elsewhere
 
-    ome, clus_out, cds_dict = hash_clusters(ome, gff_path, ome_sig_clus, gene2og, clusplusminus)
+    ome, clus_out, cds_dict = hash_clusters(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus)
     change = True
     while change: # so long as there is a single merge
         clus_out, change = merge_clusters(clus_out) # attempt to merge clusters
@@ -2368,7 +2491,7 @@ def write_clusters(ome_sig_clus, ome, out_file, gff_path, gene2og, clusplusminus
         clusOGs = []
         for gene in clus[1]:
             try:
-                clusOGs.append(gene2og[gene])
+                clusOGs.append(gene2hg[gene])
             except KeyError: # gene not in an OG/is a singleton
                 clusOGs.append('')
         clus[0] = clusOGs 
@@ -2385,27 +2508,27 @@ def write_clusters(ome_sig_clus, ome, out_file, gff_path, gene2og, clusplusminus
 
     out_genes = []
     with open(out_file, 'w') as out:
-        out.write('#name\togs\tgenes\tclans\n')
+        out.write('#name\thgs\tgenes\tclans\n')
         for clus in clus_out:
             clus[2] = sorted(clus[2])
-            ogs = ','.join([str(x) for x in clus[0]]) # og1,og2,...ogn
+            hgs = ','.join([str(x) for x in clus[0]]) # og1,og2,...ogn
             genes = ','.join(clus[1]) # prot1,prot2,prot3,...protn
             clans= ';'.join([str(x) for x in list(clus[2])])
-            out.write(clus[4] + '\t' + ogs + '\t' + genes + '\t' + clans + '\n') 
+            out.write(clus[4] + '\t' + hgs + '\t' + genes + '\t' + clans + '\n') 
             out_genes.append(clus[1])
 
     return ome, out_genes
 
 
-def write_cluster_scores(out_dir, clus_probs, i2ome, ogx2omes): #, rand_clus_probs):
+def write_cluster_scores(out_dir, clus_probs, i2ome, hgx2omes): #, rand_clus_probs):
     
     out_list, clus_len_dict = [], {}
-    for ogX in clus_probs:
+    for hgx in clus_probs:
         out_list.append([
-            ogX, clus_probs[ogX], 
-            [i2ome[z] for z in ogx2omes[ogX]] #, rand_clus_probs[ogX]
+            hgx, clus_probs[hgx], 
+            [i2ome[z] for z in hgx2omes[hgx]] #, rand_clus_probs[hgx]
             ])
-#        clus_len_dict[ogX] = len(ogx2omes[ogX])
+#        clus_len_dict[hgx] = len(hgx2omes[hgx])
          
     out_list = sorted(out_list, key = lambda x: len(x[0]))
 
@@ -2501,7 +2624,7 @@ def pfamMngr(genes_list, prot_paths, wrk_dir, pfam, evalue = 0.01, threshold = 0
     return hmm_res, set(failedOmes)
 
 
-def grabClus(genes_list, gff_path, prot_path, ome, ome_dir, gene2og, pfamRes = {}):
+def grabClus(genes_list, gff_path, prot_path, ome, ome_dir, gene2hg, pfamRes = {}):
 
     gff_dir, fa_dir = ome_dir + ome + '/gff/', ome_dir + ome + '/fa/'
     if not os.path.isdir(gff_dir):
@@ -2532,7 +2655,7 @@ def grabClus(genes_list, gff_path, prot_path, ome, ome_dir, gene2og, pfamRes = {
                 pfamStr = ''
             clus_ann += ','
             try:
-                ogStr = ';OG=' + str(gene2og[gene])
+                ogStr = ';OG=' + str(gene2hg[gene])
             except KeyError: # gene not in an OG or is a singleton
                 ogStr = ';OG='
             for entry in geneGff:
@@ -2559,7 +2682,7 @@ def grabClus(genes_list, gff_path, prot_path, ome, ome_dir, gene2og, pfamRes = {
             out.write(dict2fa(clus_fas[-1]))
 
     with open(ome_dir + ome + '/info.out.tmp', 'w') as out:
-        out.write('#name\togs\tgenes\togx_clans\tpfams\n')
+        out.write('#name\thgs\tgenes\thgx_clans\tpfams\n')
         with open(ome_dir + ome + '/info.out', 'r') as raw:
             for line in raw:
                 if not line.startswith('#'):
@@ -2697,10 +2820,10 @@ def initLog(
     ):
     with open(log_file, 'w') as out:
         out.write(
-            'og_file\t' + str(log_dict['og_file']) + '\n' + \
+            'hg_file\t' + str(log_dict['hg_file']) + '\n' + \
             'plusminus\t' + str(log_dict['plusminus']) + '\n' + \
             'pair_percentile\t' + str(log_dict['pair_percentile']) + '\n' + \
-            'ogx_percentile\t' + str(log_dict['ogx_percentile']) + '\n' + \
+            'hgx_percentile\t' + str(log_dict['hgx_percentile']) + '\n' + \
             'border_percentile\t' + str(log_dict['border_percentile']) + '\n' + \
             'null_samples\t' + str(log_dict['null_samples']) + '\n' + \
             'n50\t' + str(log_dict['n50'])
@@ -2728,7 +2851,7 @@ def readLog(
         if not log_res['pair_percentile']:
             log_res['border_percentile'] = False
         if not log_res['border_percentile']:
-            log_res['ogx_percentile'] = False
+            log_res['hgx_percentile'] = False
     except KeyError:
         print('\nERROR: corrupted log.txt.' + \
             '\nIf not rectified, future runs will completely overwrite the current\n')
@@ -2746,18 +2869,18 @@ def rmOldData(
             os.remove(null)
     if not log_res['pair_percentile']:
         seed_file = out_dir + 'seed_scores.tsv.gz'
-        seed_arr = wrk_dir + 'ogpair.arr.npy'
+        seed_arr = wrk_dir + '.arr.npy'
         if os.path.isfile(seed_file):
             os.remove(seed_file)
         if os.path.isfile(seed_arr):
             os.remove(seed_arr)
-        clus_pickle = wrk_dir + 'ogx2loc.pickle'
-        ogx_pickle = wrk_dir + 'ogx_scores.pickle'
-        ome_pickle = wrk_dir + 'ogx_omes.pickle'
+        clus_pickle = wrk_dir + 'hgx2loc.pickle'
+        hgx_pickle = wrk_dir + 'hgx_scores.pickle'
+        ome_pickle = wrk_dir + 'hgx_omes.pickle'
         if os.path.isfile(clus_pickle):
             os.remove(clus_pickle)
-        if os.path.isfile(ogx_pickle):
-            os.remove(ogx_pickle)
+        if os.path.isfile(hgx_pickle):
+            os.remove(hgx_pickle)
         if os.path.isfile(ome_pickle):
             os.remove(ome_pickle)
     if not log_res['border_percentile']:
@@ -2767,12 +2890,12 @@ def rmOldData(
             os.remove(row_file)    
         if os.path.isfile(prep_file):
             os.remove(prep_file)
-    if not log_res['ogx_percentile']:
-        kern_file = out_dir + 'ogx_clans.tsv.gz'
-        clus_file = out_dir + 'ogxs.tsv.gz'
+    if not log_res['hgx_percentile']:
+        kern_file = out_dir + 'hgx_clans.tsv.gz'
+        clus_file = out_dir + 'hgxs.tsv.gz'
         patch_pickle = wrk_dir + 'patchiness.scores.pickle'
         ome_dir = wrk_dir + 'ome/'
-        ogx_dir = wrk_dir + 'ogx/'
+        hgx_dir = wrk_dir + 'hgx/'
         hmm_dir = wrk_dir + 'hmm/'
         if os.path.isfile(kern_file):
             os.remove(kern_file)
@@ -2780,22 +2903,22 @@ def rmOldData(
             os.remove(clus_file)
         if os.path.isdir(ome_dir):
             shutil.rmtree(ome_dir)
-        if os.path.isdir(ogx_dir):
-            shutil.rmtree(ogx_dir)
+        if os.path.isdir(hgx_dir):
+            shutil.rmtree(hgx_dir)
         if os.path.isdir(hmm_dir):
             shutil.rmtree(hmm_dir)
-        if os.path.isfile(wrk_dir + 'ogx.tar.gz'):
-            os.remove(wrk_dir + 'ogx.tar.gz')
+        if os.path.isfile(wrk_dir + 'hgx.tar.gz'):
+            os.remove(wrk_dir + 'hgx.tar.gz')
         if os.path.isfile(patch_pickle):
             os.remove(patch_pickle)
-    if not log_res['og_file']:
+    if not log_res['hg_file']:
         shutil.rmtree(wrk_dir)
         os.mkdir(wrk_dir)
         for key in log_res:
             log_res[key] = False
 
 
-def logCheck(log_dict, log_path, out_dir, wrk_dir):
+def logCheck(log_dict, log_path, out_dir, wrk_dir, flag = True):
 
     if not os.path.isfile(log_path):
         log_res = {x: False for x in log_dict}
@@ -2803,27 +2926,32 @@ def logCheck(log_dict, log_path, out_dir, wrk_dir):
         initLog(log_path, log_dict)
     log_res = readLog(log_path, log_dict)
     if any(not log_res[x] for x in log_res):
-        print('\nInitializing new run', flush = True)
-        rmOldData(log_res, out_dir, wrk_dir)
-        initLog(log_path, log_dict)
+        if not flag:
+            print('\nInitializing new run', flush = True)
+            rmOldData(log_res, out_dir, wrk_dir)
+            initLog(log_path, log_dict)
+        else:
+            eprint('\nERROR: -n not specified and run parameters changed \
+                    \nSee ' + log_path, flush = True)
+            sys.exit(15)
 
     return log_res
 
 
 def patch_main(
-    phylo, ogx2omes, ogxs, wrk_dir, 
+    phylo, hgx2omes, hgxs, wrk_dir, 
     old_path = 'patchiness.scores.pickle', cpus = 1
     ):
 
     if not os.path.isfile(wrk_dir + old_path):
-        if isinstance(ogx2omes, dict): # round 1 patchiness
-            clusOmes = set([tuple([str(x) for x in ogx2omes[y]]) for y in ogxs])
+        if isinstance(hgx2omes, dict): # round 1 patchiness
+            clusOmes = set([tuple([str(x) for x in hgx2omes[y]]) for y in hgxs])
         else: # round 2 is a list
             clusOmes = set([
-                tuple([str(x) for x in y]) for y in ogxs
+                tuple([str(x) for x in y]) for y in hgxs
                 ])
 #        more = set([tuple(omes) for omes in moduleOmes])
-#        allOGxs = list(clusOgxs.union(more))    
+#        allHGxs = list(clusOgxs.union(more))    
         with mp.get_context('fork').Pool(processes = cpus) as pool:
             patch_res = pool.starmap(
                 calc_patchiness, [(phylo, x) for x in clusOmes]
@@ -2841,32 +2969,42 @@ def patch_main(
  
     return omes2patch
 
+def output_og_fas(db, genes, hg_file):
+    fa_str = dict2fa(acc2fa(
+                db, genes, error = False, spacer = '\t\t',
+                coord_check = False
+                ))
+    with open(hg_file, 'w') as out:
+        out.write(fa_str)
+
+
 def gbc_main(
-    ogx2loc, wrk_dir, ome2i, og_dir, ogx_dir,
-    blastp, db, gene2og, plusminus, og2gene, 
-    old_path = 'ogx2gbc.pickle',
-    modules = None, moduleOGxs = None, 
-    moduleOmes = None, cpus = 1
+    hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
+    blastp, db, gene2hg, plusminus, hg2gene, 
+    old_path = 'hgx2gbc.pickle',
+    modules = None, moduleHGxs = None, 
+    moduleOmes = None, cpus = 1, printexit = False
     ):
 
-    ogs_list = []
-    for ogX in ogx2loc:
-        ogs_list.extend(list(ogX))
-    ogs = set(ogs_list)
+    hgs_list = []
+    for hgx in hgx2loc:
+        hgs_list.extend(list(hgx))
+    hgs = set(hgs_list)
     if not os.path.isfile(wrk_dir + old_path):
-        if not modules: # for ogxs
+        if not modules: # for hgxs
             d2gbc = gbc_mngr_2(
-                list(ogs), list(ome2i.keys()), og_dir, ogx_dir, blastp, ogx2loc,
-                db, gene2og, plusminus, og2gene, cpus = cpus
+                list(hgs), list(ome2i.keys()), hg_dir, hgx_dir, blastp, hgx2loc,
+                db, gene2hg, plusminus, hg2gene, cpus = cpus, 
+                printexit = printexit
                 )
         else: # run the kernel detection version
             d2gbc = gbc_mngr_3(
-                list(ogs), list(ome2i.keys()), ogx_dir, blastp, ogx2loc, 
-                db, gene2og, plusminus, og2gene, modules,
-                moduleOmes, moduleOGxs, ome2i, cpus = cpus
+                list(hgs), list(ome2i.keys()), hgx_dir, hgx2loc, 
+                db, gene2hg, plusminus, hg2gene, modules,
+                moduleOmes, moduleHGxs, ome2i, cpus = cpus
                 )
-            ogx_dirTar = mp.Process(target=tardir, args=(ogx_dir, True))
-            ogx_dirTar.start() # when to join ...
+            hgx_dirTar = mp.Process(target=tardir, args=(hgx_dir, True))
+            hgx_dirTar.start() # when to join ...
         with open(wrk_dir + old_path, 'wb') as pickout:
             pickle.dump(d2gbc, pickout)
     else:
@@ -2878,22 +3016,23 @@ def gbc_main(
 
 
 def main(
-    db, og_file, out_dir, plusminus = 1, og_dir = None,
-    seed_perc = 0.2, clus_perc = 0.7, ogx_perc = 0.7,
+    db, hg_file, out_dir, plusminus = 1, hg_dir = None,
+    seed_perc = 0.2, clus_perc = 0.7, hgx_perc = 0.7,
     minimum_omes = 2, samples = 10000, pfam = None,
-    tree_path = None, blastp = 'blastp',
+    constraint_path = None, blastp = 'blastp',
     run_dnds = False, cpus = 1, n50thresh = None, 
     root = None, coevo_thresh = 0, patch_thresh = 0,
-    microsyn_thresh = 0, method = 'linclust'
+    microsyn_thresh = 0, method = 'mmseqs easy-cluster',
+    printexit = False, flag = True
     ):
     """
     The general workflow:
     log management -> input data parsing -> orthogroup pair identification ->
-    microsynteny distance thresholding -> OGx formation ->
-    microsynteny distance border thresholding -> OGx grouping ->
+    microsynteny distance thresholding -> HGx formation ->
+    microsynteny distance border thresholding -> HGx grouping ->
     microsynteny distance cluster thresholding -> patchiness calculation ->
     coevolution calculation -> optional dN/dS calculations ->
-    OGx data output -> cluster retrieving -> data output
+    HGx data output -> cluster retrieving -> data output
     """
 
     # initialize the log and working directory
@@ -2902,16 +3041,16 @@ def main(
         os.mkdir(wrk_dir)
     log_path = out_dir + 'log.txt'
     log_dict = {
-        'og_file': og_file, 'plusminus': plusminus,
-        'pair_percentile': seed_perc, 'ogx_percentile': clus_perc,
-        'border_percentile': ogx_perc,
+        'hg_file': hg_file, 'plusminus': plusminus,
+        'pair_percentile': seed_perc, 'hgx_percentile': clus_perc,
+        'border_percentile': hgx_perc,
         'null_samples': samples, 'n50': n50thresh
         }
-    log_res = logCheck(log_dict, log_path, out_dir, wrk_dir)
+    log_res = logCheck(log_dict, log_path, out_dir, wrk_dir, flag)
 
     # if not using an external tree
-    if not tree_path:
-        tree_path = out_dir + 'microsynt.newick'
+#    if constraint_path:
+    tree_path = out_dir + 'microsynt.newick'
 
     # obtain useable omes
     useableOmes, dbOmes = set(), set(db['ome'])
@@ -2932,25 +3071,25 @@ def main(
 
     # initialize orthogroup data structures            
     if not orthogroups and not os.path.isfile(wrk_dir + 'homology_groups.tsv'):
-        og_file = run_linclust(db, wrk_dir, mmseqs = 'mmseqs',
+        hg_file = run_mmseqs(db, wrk_dir, algorithm = method,
                                min_id = 0.3, cpus = cpus)
     print('\tParsing orthogroups', flush = True)
-    ome2i, gene2og, i2ome, og2gene = compile_homolog_groups(og_file, wrk_dir, 
+    ome2i, gene2hg, i2ome, hg2gene = compile_homolog_groups(hg_file, wrk_dir, 
                                                             method, useableOmes)
     print('\t\tOmes:', len(ome2i), flush = True)
-    print('\t\tHomology groups:', len(og2gene), flush = True)
-    print('\t\tGenes:', len(gene2og), flush = True)
+    print('\t\tHomology groups:', len(hg2gene), flush = True)
+    print('\t\tGenes:', len(gene2hg), flush = True)
 
     with open(wrk_dir + 'og_info.txt', 'w') as out:
         out.write('\n'.join([str(k) + '\t' + ' '.join(v) \
-                  for k, v in og2gene.items()]))
+                  for k, v in hg2gene.items()]))
 
-    cc_arr_path = wrk_dir + 'ogpair'
+    cc_arr_path = wrk_dir + ''
     if not os.path.isfile(out_dir + 'seed_scores.tsv.gz'):
         # compile cooccuring pairs of orthogroups in each genome
         print('\tCompiling all loci', flush = True)
         pairs = compile_loci(
-            db, ome2i, gene2og, plusminus, 
+            db, ome2i, gene2hg, plusminus, 
             cpus = cpus
             )
     
@@ -2959,7 +3098,7 @@ def main(
     
         seed_len = sum([len(pairs[x]) for x in pairs])
         print('\t\t' + str(seed_len) + ' initial OG-pairs', flush = True)
-        cooccur_array, cooccur_dict, ogpairs, revogpairs = \
+        cooccur_array, cooccur_dict, hgpair2i, i2hgpair = \
             form_cooccur_structures(pairs, 2, len(ome2i), cc_arr_path)
         max_ome = max([len(cooccur_dict[x]) for x in cooccur_dict])
         print('\t\t' + str(max_ome) + ' maximum organisms with OG-pair', flush = True)
@@ -2990,15 +3129,22 @@ def main(
     print('\t' + str(len(ome2i)) + ' omes with shared homolog combinations',
           flush = True)
 
+
     db = db.set_index('ome')
     microsynt_dict = {}
     if not os.path.isfile(tree_path):
         # create microsynteny distance matrix and make tree
-        print('\tPreparing microsynteny matrix', flush = True)
-        microsynt_dict = prep_microsynt_dict(cooccur_array)
-    print('\tCompiling microsynteny tree', flush = True)
+        print('\tPreparing microsynteny alignment', flush = True)
+#        microsynt_dict = prep_microsynt_dict(cooccur_array)
+        align_file = align_microsynt_np(cooccur_array, i2ome, hg2gene, 
+                                        hgpair2i, wrk_dir)
+        print('\tBuilding microsynteny tree', flush = True)
+        run_tree(align_file, wrk_dir, constraint = constraint_path, iqtree = 'iqtree',
+                 model = 'GTR2+FO+ASC+R5', verbose = False, cpus = cpus)   
+
+    print('\tReading microsynteny tree', flush = True)
     phylo = compileTree(
-        microsynt_dict, i2ome, tree_path, root = root
+        i2ome, tree_path, root = root
         )
 
     # create null distribution for orthogroup pairs
@@ -3022,245 +3168,249 @@ def main(
 
     # seed clusters by calcuating total microsynteny distance for 
     # orthogroup pairs
-    print('\nII. Seeding OG pairs', flush = True) 
+    print('\nII. Seeding HG pairs', flush = True) 
     if not os.path.isfile(out_dir + 'seed_scores.tsv.gz'):
         print('\tCalculating seed OG-pair scores', flush = True)
         seed_score_start = datetime.now()
 
         results = calc_dists(phylo, cooccur_dict, cpus)
-        omes2dist, top_ogs = {x[1]: x[0] for x in results}, []
+        omes2dist, top_hgs = {x[1]: x[0] for x in results}, []
         with open(wrk_dir + 'ome_scores.pickle', 'wb') as out:
             pickle.dump(omes2dist, out)
-        for ogpair in cooccur_dict:
-            score = omes2dist[cooccur_dict[ogpair]]
+        for hgpair in cooccur_dict:
+            score = omes2dist[cooccur_dict[hgpair]]
             if score > min_score:
-                i = revogpairs[ogpair]
-                top_ogs.append([
-                    ogpair[0], ogpair[1], len(cooccur_dict[ogpair]), score#, score/ome_dist
+                i = revs[hgpair]
+                top_hgs.append([
+                    [0], hgpair[1], len(cooccur_dict[hgpair]), score#, score/ome_dist
                     ])
 
         # write scores            
         print('\t\t' + str(datetime.now() - seed_score_start), flush = True)
-        top_ogs = sorted(top_ogs, key = lambda x: x[3])
+        top_hgs = sorted(top_hgs, key = lambda x: x[3])
         print('\tWriting seed scores', flush = True)
         with gzip.open(out_dir + 'seed_scores.tsv.gz', 'wt') as out:
             out.write('#og0\tog1\tcooccurrences\tscore\tadj_score\n')
-            for line in top_ogs:
+            for line in top_hgs:
                 out.write('\t'.join([str(x) for x in line]) + '\n')
-        print('\t\t' + str(len(top_ogs)) + ' significant seeds', flush = True)
+        print('\t\t' + str(len(top_hgs)) + ' significant seeds', flush = True)
     
-    elif not os.path.isfile(wrk_dir + 'ogx_scores.pickle'): # load previous og pairs
-        print('\tLoading previous seed OG pairs', flush = True)
-        top_ogs = load_seedScores(out_dir + 'seed_scores.tsv.gz', min_score)
-        print('\t\t' + str(len(top_ogs)) + ' significant seeds', flush = True)
+    elif not os.path.isfile(wrk_dir + 'hgx_scores.pickle'): # load previous og pairs
+        print('\tLoading previous seed HG pairs', flush = True)
+        top_hgs = load_seedScores(out_dir + 'seed_scores.tsv.gz', min_score)
+        print('\t\t' + str(len(top_hgs)) + ' significant seeds', flush = True)
 
 
-    # begin sifting for OGxs using pairs as seeds for OGx detection
-    print('\nIII. Sprouting high order OG combinations (OGx)', flush = True)
-    if not os.path.isfile(wrk_dir + 'ogx_omes.pickle'):
-        ogPair_dict = form_ogPairDict(top_ogs)
-        print('\tForming OGxs', flush = True)
+    # begin sifting for HGxs using pairs as seeds for HGx detection
+    print('\nIII. Sprouting high order OG combinations (HGx)', flush = True)
+    if not os.path.isfile(wrk_dir + 'hgx_omes.pickle'):
+        hgpair_dict = form_hgpairDict(top_hgs)
+        print('\tForming HGxs', flush = True)
         form_clus_start = datetime.now()
-        ogx2omes, ogx2loc = ogpair2ogX(
-            db, ogPair_dict, gene2og, 
+        hgx2omes, hgx2loc = hgpair2hgx(
+            db, hgpair_dict, gene2hg, 
             ome2i, cpus, clusplusminus = plusminus
             )
-        with open(wrk_dir + 'ogx2loc.pickle', 'wb') as pickout:
-            pickle.dump(ogx2loc, pickout)
-        with open(wrk_dir + 'ogx_omes.pickle', 'wb') as pickout:
-            pickle.dump(ogx2omes, pickout)
-        formOGxTime = datetime.now() - form_clus_start
-        print('\t\t' + str(formOGxTime), flush = True)
+        with open(wrk_dir + 'hgx2loc.pickle', 'wb') as pickout:
+            pickle.dump(hgx2loc, pickout)
+        with open(wrk_dir + 'hgx_omes.pickle', 'wb') as pickout:
+            pickle.dump(hgx2omes, pickout)
+        formHGxTime = datetime.now() - form_clus_start
+        print('\t\t' + str(formHGxTime), flush = True)
 
     else: # or just load available structures
-        with open(wrk_dir + 'ogx2loc.pickle', 'rb') as pickin:
-            ogx2loc = pickle.load(pickin)
-        with open(wrk_dir + 'ogx_omes.pickle', 'rb') as pickin:
-            ogx2omes = pickle.load(pickin)
+        with open(wrk_dir + 'hgx2loc.pickle', 'rb') as pickin:
+            hgx2loc = pickle.load(pickin)
+        with open(wrk_dir + 'hgx_omes.pickle', 'rb') as pickin:
+            hgx2omes = pickle.load(pickin)
 
-    ome_combos = set([tuple(sorted(list(x))) for x in list(ogx2omes.values())])
-    if not os.path.isfile(wrk_dir + 'ogx_scores.pickle'):
-        ogx2i, i2ogx, ogx_cooccur_dict = form_cooccur_dict(
-            ogx2omes
-            ) # create ogx data structures
+    ome_combos = set([tuple(sorted(list(x))) for x in list(hgx2omes.values())])
+    if not os.path.isfile(wrk_dir + 'hgx_scores.pickle'):
+        hgx2i, i2hgx, hgx_cooccur_dict = form_cooccur_dict(
+            hgx2omes
+            ) # create hgx data structures
 
-        print('\tCalculating OGx microsynteny distances', flush = True)
+        print('\tCalculating HGx microsynteny distances', flush = True)
         clus_score_start = datetime.now()
-        clus_obs = len(ogx2omes)
-        print('\t\t' + str(clus_obs) + ' observed OGx', flush = True)
+        clus_obs = len(hgx2omes)
+        print('\t\t' + str(clus_obs) + ' observed HGx', flush = True)
 
-        # calculate OGx microsynteny distances
-        results = calc_dists(phylo, ogx_cooccur_dict, cpus, omes2dist = omes2dist)
-        ogx2dist = {}
-        omes2dist, top_ogs = {**omes2dist, **{x[1]: x[0] for x in results}}, []
+        # calculate HGx microsynteny distances
+        results = calc_dists(phylo, hgx_cooccur_dict, cpus, omes2dist = omes2dist)
+        hgx2dist = {}
+        omes2dist, top_hgs = {**omes2dist, **{x[1]: x[0] for x in results}}, []
         with open(wrk_dir + 'ome_scores.pickle', 'wb') as out:
             pickle.dump(omes2dist, out)
-        for ogX in ogx_cooccur_dict:
-            score = omes2dist[tuple(ogx_cooccur_dict[ogX])]
-            ogx2dist[ogX] = score
+        for hgx in hgx_cooccur_dict:
+            score = omes2dist[tuple(hgx_cooccur_dict[hgx])]
+            hgx2dist[hgx] = score
     
         print('\t\t' + str(datetime.now() - clus_score_start), flush = True)
-        with open(wrk_dir + 'ogx_scores.pickle', 'wb') as pickout:
-            pickle.dump(ogx2dist, pickout)
+        with open(wrk_dir + 'hgx_scores.pickle', 'wb') as pickout:
+            pickle.dump(hgx2dist, pickout)
 
-    else: # just load previous ogx scores
-        print('\tLoading previous OGxs', flush = True)
-        with open(wrk_dir + 'ogx_scores.pickle', 'rb') as pickin:
-            ogx2dist = pickle.load(pickin) 
+    else: # just load previous hgx scores
+        print('\tLoading previous HGxs', flush = True)
+        with open(wrk_dir + 'hgx_scores.pickle', 'rb') as pickin:
+            hgx2dist = pickle.load(pickin) 
 
-    calc_ogx_p = False
-    if not os.path.isfile(wrk_dir + 'ogx2pval.pickle'):
-        if calc_ogx_p:
-            print('\tEstimating OGx probability', flush = True)
-            omes2og2genes, omes2genes = {}, defaultdict(list)
-            for gene, og in gene2og.items():
+    calc_hgx_p = False
+    if not os.path.isfile(wrk_dir + 'hgx2pval.pickle'):
+        if calc_hgx_p:
+            print('\tEstimating HGx probability', flush = True)
+            omes2hg2genes, omes2genes = {}, defaultdict(list)
+            for gene, og in gene2hg.items():
                 ome = gene[:gene.find('_')]
                 omeI = ome2i[ome]
-                if omeI not in omes2og2genes:
-                    omes2og2genes[omeI] = defaultdict(list)
-                omes2og2genes[omeI][og].append(gene)
+                if omeI not in omes2hg2genes:
+                    omes2hg2genes[omeI] = defaultdict(list)
+                omes2hg2genes[omeI][og].append(gene)
                 omes2genes[omeI].append(gene)
-            unadjOGx2pval = combo_prob_mngr(
-                ogx2omes, omes2og2genes, omes2genes, (plusminus*2)-1, 
+            unadjHGx2pval = combo_prob_mngr(
+                hgx2omes, omes2hg2genes, omes2genes, (plusminus*2)-1, 
                 cooccur_array, cpus = cpus
                 )
-   #     comparisons = len(ogx2omes)
-  #      ogx2pval = {
- #           k: v * comparisons for k, v in unadjOGx2pval.items()
+   #     comparisons = len(hgx2omes)
+  #      hgx2pval = {
+ #           k: v * comparisons for k, v in unadjHGx2pval.items()
 #            } # apply bonferroni correction
-            ogx2pval = unadjOGx2pval
-            with open(wrk_dir + 'ogx2pval.pickle', 'wb') as out:
-                pickle.dump(unadjOGx2pval, out)
+            hgx2pval = unadjHGx2pval
+            with open(wrk_dir + 'hgx2pval.pickle', 'wb') as out:
+                pickle.dump(unadjHGx2pval, out)
     else:
-        with open(wrk_dir + 'ogx2pval.pickle', 'rb') as raw:
-            ogx2pval = pickle.load(raw)
+        with open(wrk_dir + 'hgx2pval.pickle', 'rb') as raw:
+            hgx2pval = pickle.load(raw)
     
 
     # prepare null distributions for each size (# of OGs) observed
-    # in OGxs    
-    max_ogx_size = max([len(x) for x in ogx2omes])
-    if not os.path.isfile(wrk_dir + str(max_ogx_size) + '.null.txt'):
-        print('\tPreparing OGx nulls', flush = True)
-        bordScores, clusScores = genOGxNulls(
+    # in HGxs    
+    max_hgx_size = max([len(x) for x in hgx2omes])
+    if not os.path.isfile(wrk_dir + str(max_hgx_size) + '.null.txt'):
+        print('\tPreparing HGx nulls', flush = True)
+        bordScores, clusScores = genHGxNulls(
             [v['gff3'] for k, v in db.items() if k in ome2i], 
-            gene2og, max_ogx_size, plusminus, phylo,
-            ogx_perc, clus_perc, wrk_dir,
+            gene2hg, max_hgx_size, plusminus, phylo,
+            hgx_perc, clus_perc, wrk_dir,
             omes2dist, samples = samples, cpus = cpus
             )
     else: # or just load the old ones
-        print('\tLoading OGx nulls', flush = True)
-        bordScores, clusScores = loadNulls(max_ogx_size, wrk_dir, ogx_perc, clus_perc)
+        print('\tLoading HGx nulls', flush = True)
+        bordScores, clusScores = loadNulls(max_hgx_size, wrk_dir, hgx_perc, clus_perc)
 
     # collect for normalizing relative to the whole dataset later
     # should I move into absolute space? it may just be better for comparing
     # datasets in the future and some algorithm is going to pick up that gene clusters
     # are in some absolute microsynteny distance, so long as its not normalized. 
-#    max_dist = max(ogx2dist.values())
- #   min_dist = min(ogx2dist.values())
+#    max_dist = max(hgx2dist.values())
+ #   min_dist = min(hgx2dist.values())
 
-    i2ogx, ogx2i, togx2dist, count = {}, {}, {}, 0
-    for ogx in list(ogx2dist.keys()):
-        if ogx2dist[ogx] >= bordScores[len(ogx)]:
-             togx2dist[ogx] = ogx2dist[ogx]
-             i2ogx[count], ogx2i[ogx] = ogx, count
+    i2hgx, hgx2i, thgx2dist, count = {}, {}, {}, 0
+    for hgx in list(hgx2dist.keys()):
+        if hgx2dist[hgx] >= bordScores[len(hgx)]:
+             thgx2dist[hgx] = hgx2dist[hgx]
+             i2hgx[count], hgx2i[hgx] = hgx, count
              count += 1
-             # apply the border threshold for ALL pre-grouped ogxs
+             # apply the border threshold for ALL pre-grouped hgxs
     print(
-        '\t\t' + str(len(ogx2dist)) + ' OGx pass border threshold', 
+        '\t\t' + str(len(hgx2dist)) + ' HGx pass border threshold', 
         flush = True
         )
-    ogx2dist = togx2dist
+    hgx2dist = thgx2dist
     
-    ogx2gbc, omes2patch = {}, {}
-#    print('\nIV. Quantifying OGx patchiness', flush = True)
+    hgx2gbc, omes2patch = {}, {}
+#    print('\nIV. Quantifying HGx patchiness', flush = True)
  #   omes2patch = patch_main(
-  #      phylo, ogx2omes, ogx2dist, wrk_dir,
+  #      phylo, hgx2omes, hgx2dist, wrk_dir,
    #     old_path = 'patchiness.scores.pickle', cpus = cpus
     #    )
 
-    ogx_dir = wrk_dir + 'ogx/'
-    if not checkdir(ogx_dir, unzip = True, rm = True):
-        os.mkdir(ogx_dir)
+    hgx_dir = wrk_dir + 'hgx/'
+    if not checkdir(hgx_dir, unzip = True, rm = True):
+        os.mkdir(hgx_dir)
 
-    print('\nIV. Quantifying OGx coevolution', flush = True)
-    if not og_dir:
-        og_dir = wrk_dir + 'og/'
-        if not os.path.isdir(og_dir):
-            os.mkdir(og_dir)
-        for og, genes in og2gene.items():
-            og_file = og_dir + str(og) + '.faa'
-            if not os.path.isfile(og_file):
-                fa_str = dict2fa(acc2fa(
-                            db, genes, error = False, spacer = '\t\t'
-                            ))
-                with open(og_file, 'w') as out:
-                    out.write(fa_str)
+    print('\nIV. Quantifying HGx coevolution', flush = True)
+    if not hg_dir:
+        og_fa_cmds = []
+        hg_dir = wrk_dir + 'og/'
+        if not os.path.isdir(hg_dir):
+            os.mkdir(hg_dir)
+        for og, genes in hg2gene.items():
+            hg_file = hg_dir + str(og) + '.faa'
+            if not os.path.isfile(hg_file):
+                og_fa_cmds.append([db, genes, hg_file])
+        with mp.Pool(processes = cpus) as pool:
+            pool.starmap(output_og_fas, og_fa_cmds)
+#                fa_str = dict2fa(acc2fa(
+ #                           db, genes, error = False, spacer = '\t\t'
+  #                          ))
+   #             with open(hg_file, 'w') as out:
+    #                out.write(fa_str)
 
-    ogx2gbc = gbc_main(
-        ogx2loc, wrk_dir, ome2i, og_dir, ogx_dir,
-        blastp, db, gene2og, plusminus, og2gene, 
-        old_path = 'ogx2gbc.pickle', cpus = cpus
+    hgx2gbc = gbc_main(
+        hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
+        'diamond', db, gene2hg, plusminus, hg2gene, 
+        old_path = 'hgx2gbc.pickle', cpus = cpus, printexit = printexit
         ) # should be able to skip this
 
-    # Group ogxs
-    print('\nV. Inferring OGx clans', flush = True)
+    # Group hgxs
+    print('\nV. Inferring HGx clans', flush = True)
     if not os.path.isfile(wrk_dir + 'ocgs.pickle'): # need to add this to
     # log parsing
-        ocgs, ocg_ogxs, ocg_omes, omes2dist = classify_ocgs(
-            ogx2loc, db, gene2og, i2ogx, ogx2i,
+        ocgs, ocg_hgxs, ocg_omes, omes2dist = classify_ocgs(
+            hgx2loc, db, gene2hg, i2hgx, hgx2i,
             phylo, clusScores, bordScores, ome2i,
-            ogx2omes, wrk_dir, #ogx2dist,
+            hgx2omes, wrk_dir, #hgx2dist,
             omes2dist = omes2dist, clusplusminus = plusminus, 
             min_omes = 2, cpus = cpus
             )
         with open(wrk_dir + 'ocgs.pickle', 'wb') as pickout:
-            pickle.dump([ocgs, ocg_omes, ocg_ogxs], pickout)
+            pickle.dump([ocgs, ocg_omes, ocg_hgxs], pickout)
         with open(wrk_dir + 'ome_scores.pickle', 'wb') as pickout:
             pickle.dump(omes2dist, pickout)
     else: # or just load old data
         with open(wrk_dir + 'ocgs.pickle', 'rb') as raw:
-            ocgs, ocg_omes, ocg_ogxs = pickle.load(raw)
+            ocgs, ocg_omes, ocg_hgxs = pickle.load(raw)
 
     runOmes = [
         omes for omes in ocg_omes \
         if omes not in omes2patch
         ] # omes without patchiness scores
-    runOGxs = [
-        ogx for i, ogx in enumerate(ocg_ogxs) \
+    runHGxs = [
+        hgx for i, hgx in enumerate(ocg_hgxs) \
         if ocg_omes[i] not in omes2patch
-        ] # ogxs without patchiness scores
+        ] # hgxs without patchiness scores
    
     print('\nVI. Quantifying OCG patchiness', flush = True)
     omes2patch = {**patch_main(
-        phylo, runOGxs, runOmes, wrk_dir,
+        phylo, runHGxs, runOmes, wrk_dir,
         old_path = 'patchiness.full.pickle', cpus = cpus
         ), **omes2patch} # could make more efficient by skipping redos
 
-    ogx_dir = wrk_dir + 'ogx/'
-    if not checkdir(ogx_dir, unzip = True, rm = True):
-        os.mkdir(ogx_dir)
+    hgx_dir = wrk_dir + 'hgx/'
+    if not checkdir(hgx_dir, unzip = True, rm = True):
+        os.mkdir(hgx_dir)
 
     print('\nVII. Quantifying OCG gene evolution congruence', flush = True)
-    ogx2omes2gbc = gbc_main(
-        ogx2loc, wrk_dir, ome2i, og_dir, ogx_dir,
-        blastp, db, gene2og, plusminus, og2gene, 
-        old_path = 'ogx2omes2gbc.full.pickle',
-        modules = ocgs, moduleOGxs = ocg_ogxs,
+    hgx2omes2gbc = gbc_main(
+        hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
+        blastp, db, gene2hg, plusminus, hg2gene, 
+        old_path = 'hgx2omes2gbc.full.pickle',
+        modules = ocgs, moduleHGxs = ocg_hgxs,
         moduleOmes = ocg_omes, cpus = cpus
         )
 
     if coevo_thresh > 0 or patch_thresh > 0 or microsyn_thresh > 0:
         print('\tApplying thresholds', flush = True)
         print('\t\t' + str(len(ocgs)) + ' ocgs before', flush = True)
-        # edit ocgs, ogx2dist
- #       newOgx2dist, newOCGs, newOCGOmes, newOCGOGxs = {}, [], [], []
-        newOCGs, newOCGOmes, newOCGOGxs = [], [], []
+        # edit ocgs, hgx2dist
+ #       newOgx2dist, newOCGs, newOCGOmes, newOCGHGxs = {}, [], [], []
+        newOCGs, newOCGOmes, newOCGHGxs = [], [], []
         for i0, ocg in enumerate(ocgs):
             check = False # have we added a new list
-            ogc = ocg_ogxs[i0]
+            ogc = ocg_hgxs[i0]
             omesc = ocg_omes[i0]
             for x, omes in ocg.items():
-                if ogx2omes2gbc[ogc][omesc] >= coevo_thresh \
+                if hgx2omes2gbc[ogc][omesc] >= coevo_thresh \
                     and omes2patch[omesc] >= patch_thresh:
                     if check:
                         newOCGs[-1][x] = omes
@@ -3269,32 +3419,32 @@ def main(
                         check = True
             if check:
                 newOCGOmes.append(ocg_omes[i0])
-                newOCGOGxs.append(ogc)
-        ocgs, ocg_omes, ocg_ogxs = \
-            newOCGs, newOCGOmes, newOCGOGxs
+                newOCGHGxs.append(ogc)
+        ocgs, ocg_omes, ocg_hgxs = \
+            newOCGs, newOCGOmes, newOCGHGxs
         print('\t\t' + str(len(ocgs)) + ' ocgs after', flush = True)
 
     if run_dnds: # need to bring file naming to speed
         print('\nIIX. Quantifying OCG dn/ds', flush = True)
-        omes4ogs, ogx_files = {x: defaultdict(list) for x in range(len(ome2i))}, []
+        omes4hgs, hgx_files = {x: defaultdict(list) for x in range(len(ome2i))}, []
         for i, ocg in enumerate(ocgs):
-            for ogx in ocg:
-#                ogX = ogx2i[x]
-                for gene in ogx2loc[ogx]:
+            for hgx in ocg:
+#                hgx = hgx2i[x]
+                for gene in hgx2loc[hgx]:
                     omeI = ome2i[gene[:gene.find('_')]]
-                    if omeI in set(ocg[i][ogx]):
-                        omes4ogs[omeI][gene].append(ocg_ogxs[i])
+                    if omeI in set(ocg[i][hgx]):
+                        omes4hgs[omeI][gene].append(ocg_hgxs[i])
 
-        ogx_files = []
-        for ogx in ocg_ogxs:
-            for og in ogx:
-                out_base = ogx_dir + '-'.join([str(x) for x in ogx]) + '.' + str(og)
-                ogx_files.append(out_base)
+        hgx_files = []
+        for hgx in ocg_hgxs:
+            for og in hgx:
+                out_base = hgx_dir + '-'.join([str(x) for x in hgx]) + '.' + str(og)
+                hgx_files.append(out_base)
 
-        maffts = [file + '.mafft' for file in ogx_files]
-        if not all(os.path.isfile(x + '.aa.fa') for x in ogx_files):
-            print("\tCompiling OGx kernels' genes", flush = True)
-            dnds_preparation(db, omes4ogs, ogx2omes, gene2og, plusminus, ogx_dir, i2ome)
+        maffts = [file + '.mafft' for file in hgx_files]
+        if not all(os.path.isfile(x + '.aa.fa') for x in hgx_files):
+            print("\tCompiling HGx kernels' genes", flush = True)
+            dnds_preparation(db, omes4hgs, hgx2omes, gene2hg, plusminus, hgx_dir, i2ome)
         if not all(os.path.isfile(x) for x in maffts):
             print('\tAligning proteins', flush = True)
             maffts = [x for x in maffts if not os.path.isfile(x)]
@@ -3311,66 +3461,66 @@ def main(
             dnds_res = pool.map(calc_dnds, maffts)
         pool.join()
     
-        ogx2dnds = parse_dnds(dnds_res)
+        hgx2dnds = parse_dnds(dnds_res)
     else:
         print('\nIIX. Skipping quantifying selection', flush = True)
-        ogx2dnds = {}
+        hgx2dnds = {}
 
     print('\nIX. Writing and annotating clusters', flush = True)
     print('\tWriting cluster scores', flush = True)
-    ocg_output, done, maxval = [], set(), max(ogx2dist.values())
-    for ocg, modOGx2omes in enumerate(ocgs):
-        for ogX, omes in modOGx2omes.items():
-            ogX_id = ogx2i[ogX]
-            if ogX_id not in done:
-                done.add(ogX_id)
+    ocg_output, done, maxval = [], set(), max(hgx2dist.values())
+    for ocg, modHGx2omes in enumerate(ocgs):
+        for hgx, omes in modHGx2omes.items():
+            hgx_id = hgx2i[hgx]
+            if hgx_id not in done:
+                done.add(hgx_id)
             else:
                 continue
             ocg_output.append([
-                ','.join([str(x) for x in ogX]), ogX_id,
-                ocg, ogx2dist[ogX]/maxval, ogx2gbc[ogX], 
-#                omes2patch[tuple(ogx2omes[ogX])],
-                ','.join([i2ome[x] for x in ogx2omes[ogX]])
-                ]) # OGxs at this stage are not segregated into groups
+                ','.join([str(x) for x in hgx]), hgx_id,
+                ocg, hgx2dist[hgx]/maxval, hgx2gbc[hgx], 
+#                omes2patch[tuple(hgx2omes[hgx])],
+                ','.join([i2ome[x] for x in hgx2omes[hgx]])
+                ]) # HGxs at this stage are not segregated into groups
     ocg_output = sorted(ocg_output, key = lambda x: x[3], reverse = True)
-    with gzip.open(out_dir + 'ogxs.tsv.gz', 'wt') as out:
-        out.write('#ogs\togX_id\tocg\tdistance\tcoevolution\tomes')#\tpatchiness\tomes')
+    with gzip.open(out_dir + 'hgxs.tsv.gz', 'wt') as out:
+        out.write('#hgs\thgx_id\tocg\tdistance\tcoevolution\tomes')#\tpatchiness\tomes')
         for entry in ocg_output:
             out.write('\n' + '\t'.join([str(x) for x in entry]))
 
-    kern_output, top_ogxs = [], []
-    for i, ocg in enumerate(ocg_ogxs):
+    kern_output, top_hgxs = [], []
+    for i, ocg in enumerate(ocg_hgxs):
         omesc = ocg_omes[i]
         try:
             if ocg not in dnds_dict:
                 dnds_dict[ocg] = ['na' for x in range(3)]
         except NameError:
             dnds_dict = {ocg: ['na' for x in range(3)]}
-        if ocg in ogx2omes2gbc:
+        if ocg in hgx2omes2gbc:
             kern_output.append([
                 ','.join([str(x) for x in ocg]), i, 
-                omes2dist[omesc]/maxval, ogx2omes2gbc[ocg][omesc], omes2patch[omesc], 
+                omes2dist[omesc]/maxval, hgx2omes2gbc[ocg][omesc], omes2patch[omesc], 
                 ','.join([str(i2ome[x]) for x in omesc])
-#                dnds_dict[ogX][0], dnds_dict[ogX][1], str(dnds_dict[ogX][2]),
+#                dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
 #                omes2dist[omesc]
                 ])
         else:
             kern_output.append([
                 ','.join([str(x) for x in ogc]), i,
-                omes2dist[omesc]/maxval, ogx2omes2gbc[ogc][omesc], omes2patch[omesc], 
+                omes2dist[omesc]/maxval, hgx2omes2gbc[ogc][omesc], omes2patch[omesc], 
                 ','.join([str(i2ome[x]) for x in omesc]) 
-#                dnds_dict[ogX][0], dnds_dict[ogX][1], str(dnds_dict[ogX][2]),
+#                dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
                # omes2dist[omesc]
                 ])
-        for sogx, omes in ocgs[i].items():
-            top_ogxs.append([sogx, i, set(omes)])
+        for shgx, omes in ocgs[i].items():
+            top_hgxs.append([shgx, i, set(omes)])
 
     kern_output = sorted(kern_output, key = lambda x: x[4], reverse = True)
 
 
     with gzip.open(out_dir + 'ocgs.tsv.gz', 'wt') as out:
         out.write(
-            '#ogs\tocg\tdistance\t' + \
+            '#hgs\tocg\tdistance\t' + \
             'coevolution\tpatchiness\tomes' #+ \
             #'selection_coef\tmean_dnds\tog_dnds\t' + \
          #   'total_dist'
@@ -3409,7 +3559,7 @@ def main(
 
     print('\tCompiling clusters from annotations', flush = True)
     sig_clus = extrct_sig_clus(
-        ogx2dist, ogx2loc, top_ogxs, ome2i
+        hgx2dist, hgx2loc, top_hgxs, ome2i
         )
     write_clus_cmds = []
     ome_dir = out_dir + 'ome/'
@@ -3420,13 +3570,13 @@ def main(
             os.mkdir(ome_dir + ome)
         gff = db[ome]['gff3']
         out_file = ome_dir + ome + '/info.out'
-        write_clus_cmds.append([sig_clus[ome], ome, out_file, gff, gene2og, plusminus])
+        write_clus_cmds.append([sig_clus[ome], ome, out_file, gff, gene2hg, plusminus])
     with mp.get_context('fork').Pool(processes = cpus) as pool:
         out_genes = pool.starmap(write_clusters, write_clus_cmds)
     pool.join()
     genes = {x[0]: x[1] for x in out_genes if x[1]}
 
-#    ogx_dirTar.join()
+#    hgx_dirTar.join()
 
     print('\tApplying Pfam annotations', flush = True)
     prot_paths = {}
@@ -3446,9 +3596,9 @@ def main(
         gff_path = db[ome]['gff3']
         pro_path = db[ome]['faa']
         try:
-            grabClus_cmds.append([genes[ome], gff_path, pro_path, ome, ome_dir, gene2og, pfamRes[ome]])
+            grabClus_cmds.append([genes[ome], gff_path, pro_path, ome, ome_dir, gene2hg, pfamRes[ome]])
         except KeyError:
-            grabClus_cmds.append([genes[ome], gff_path, pro_path, ome, ome_dir, gene2og])
+            grabClus_cmds.append([genes[ome], gff_path, pro_path, ome, ome_dir, gene2hg])
 
 
     with mp.get_context('fork').Pool(processes = cpus) as pool:
@@ -3499,40 +3649,52 @@ if __name__ == '__main__':
     constituent genes of the homolog combination, and 3) phylogenetic patchiness of
     the homolog combination."""
     parser = argparse.ArgumentParser(description = description)
-    parser.add_argument('-d', '--database', required = True, default = masterDB(), 
+    i_opt = parser.add_argument_group('Inputs')
+    i_opt.add_argument('-d', '--database', required = True, default = masterDB(), 
         help = 'MycotoolsDB. DEFAULT: masterdb')
  #   parser.add_argument('-i', '--input', 
 #        help = 'Precomputed whitespace delimitted file of homologous sequences')
-    parser.add_argument('-of', '--orthofinder',
+    i_opt.add_argument('-of', '--orthofinder',
         help = 'Precomputed OrthoFinder output directory')
-    parser.add_argument('-l', '--linclust',
-        help = 'Precomputed linclust results file')
-    parser.add_argument('-w', '--window', default = 5, type = int,
+    i_opt.add_argument('-i', '--input',
+        help = 'Precomputed cluster results file')
+    i_opt.add_argument('-c', '--constraint',
+        help = 'Constrain microsynteny topology to species tree')
+    i_opt.add_argument('--pfam', help = 'Pfam-A.hmm')
+
+    det_opt = parser.add_argument_group('Detection parameters')
+    det_opt.add_argument('-l', '--linclust', action = 'store_true',
+        help = 'Homology inference via linclust; DEFAULT: mmseqs cluster')
+    det_opt.add_argument('-w', '--window', default = 5, type = int,
         help = 'Max genes +/- for each locus window. DEFAULT: 5 (11 gene window)')
-    parser.add_argument('-r', '--root', 
+    det_opt.add_argument('-r', '--root', 
         help = 'Ome code or 2 ome codes to root upon, e.g. psicya1, ' + \
         '"psicya1 psicub1"; DEFAULT: midpoint')
-    parser.add_argument('-sp', '--seed_percentile', type = int, default = 75,
-        help = 'Percentile of OG pair distances. DEFAULT: 75')
-    parser.add_argument('-op', '--ogx_percentile', type = int,
-        help = 'Percentile of OGx microsynteny distances. ' + \
+
+    thr_opt = parser.add_argument_group('Thresholding')
+    thr_opt.add_argument('-sp', '--seed_percentile', type = int, default = 75,
+        help = 'Percentile of HG pair distances. DEFAULT: 75')
+    thr_opt.add_argument('-op', '--hgx_percentile', type = int,
+        help = 'Percentile of HGx microsynteny distances. ' + \
         'Must be less than -cp. DEFAULT: -cp')
-    parser.add_argument('-cp', '--clus_percentile', type = int, default = 80, 
-        help = 'Percentile of OGx microsynteny distances . DEFAULT: 80')
-    parser.add_argument('-pt', '--patch_threshold', default = 0, type = float,
+    thr_opt.add_argument('-cp', '--clus_percentile', type = int, default = 80, 
+        help = 'Percentile of HGx microsynteny distances . DEFAULT: 80')
+    thr_opt.add_argument('-pt', '--patch_threshold', default = 0, type = float,
         help = "Threshold [0 < value < 1] of high order OG combinations' patchiness scores.")
-    parser.add_argument('-ct', '--coevo_threshold', default = 0, type = float, 
+    thr_opt.add_argument('-ct', '--coevo_threshold', default = 0, type = float, 
         help = "Threshold [0 < value < 1] of high order OG combinations' coevolution scores.")
-    parser.add_argument('-p', '--pfam', required = True, help = 'Pfam-A.hmm path')
-#    parser.add_argument('-p', '--phylogeny', 
- #       help = 'Species phylogeny (newick). DEFAULT: generate neighbor joining tree from ' + \
-  #      'orthogroup pairs')
-    parser.add_argument('-n', '--null_sample', type = int, default = 10000,
+    thr_opt.add_argument('--null_sample', type = int, default = 10000,
         help = 'Samples for null distributions. DEFAULT: 10,000')
-    parser.add_argument('-s', '--dnds', action = 'store_true', help = 'Run dN/dS calculations')
-    parser.add_argument('--n50', help = 'Minimum assembly N50')
-    parser.add_argument('-o', '--output')
-    parser.add_argument('--cpus', default = 1, type = int)
+
+    run_opt = parser.add_argument_group('Runtime options')
+    run_opt.add_argument('-s', '--dnds', action = 'store_true', help = 'Run dN/dS calculations')
+    run_opt.add_argument('--n50', help = 'Minimum assembly N50')
+    run_opt.add_argument('--stop', action = 'store_true', 
+                        help = 'Print GBC commands and exit')
+    run_opt.add_argument('-o', '--output_dir')
+    run_opt.add_argument('-n', '--new', action = 'store_true', 
+        help = 'Overwrite old run')
+    run_opt.add_argument('--cpus', default = 1, type = int)
     args = parser.parse_args()
 
     if args.root:
@@ -3544,8 +3706,8 @@ if __name__ == '__main__':
         root = []
         root_txt = 'midpoint'
 
-    if not args.ogx_percentile:
-        args.ogx_percentile = args.clus_percentile # set the default
+    if not args.hgx_percentile:
+        args.hgx_percentile = args.clus_percentile # set the default
 
     execs = ['mafft', 'hmmsearch', 'blastp', 'mcxload', 'mcxdump', 'mcl',
              'diamond']
@@ -3553,31 +3715,37 @@ if __name__ == '__main__':
         of_out = format_path(args.orthofinder)
         if os.path.isdir(of_out):
             orthogroups = of_out + '/Orthogroups/Orthogroups.txt'
-            og_dir = of_out + '/Orthogroup_Sequences/'
+            hg_dir = of_out + '/Orthogroup_Sequences/'
         else:
             orthogroups = of_out
-            og_dir = os.path.dirname(of_out) + '../Orthogroup_Sequences/'
-        if not os.path.isfile(og_dir + 'OG0000000.fa'):
-            og_dir = None
+            hg_dir = os.path.dirname(of_out) + '../Orthogroup_Sequences/'
+        if not os.path.isfile(hg_dir + 'OG0000000.fa'):
+            hg_dir = None
         method = 'orthofinder'
+    elif args.input:
+        orthogroups = format_path(args.input)
+        hg_dir = None
+        method = 'mmseqs easy-cluster'
     elif args.linclust:
-        orthogroups = format_path(args.linclust)
-        og_dir = None
-        method = 'linclust'
+        method = 'mmseqs easy-linclust'
+        hg_dir = None
+        orthogroups = None
+        execs.append('mmseqs')
     else:
-        method = 'linclust'
-        og_dir = None
+        method = 'mmseqs easy-cluster'
+        hg_dir = None
         orthogroups = None
         execs.append('mmseqs')
 
     args_dict = {
-        'Homology groups': orthogroups, 'MycotoolsDB': args.database, 
+        'Homology groups': orthogroups, 'Sequence clusters': method, 'MycotoolsDB': args.database, 
         'Root': root_txt, 'Pfam DB': args.pfam, 'Window': args.window*2+1,
         'Seed Percentile': args.seed_percentile, #'Precluster threshold': args.clus_threshold,
-        'Cluster percentile': args.clus_percentile, 'OGx percentile': args.ogx_percentile,
+        'Cluster percentile': args.clus_percentile, 'HGx percentile': args.hgx_percentile,
         'Patchiness threshold': args.patch_threshold, 'Coevolution threshold': args.coevo_threshold,
         'Null samples': args.null_sample, 'Calculate dN/dS': args.dnds, 'Minimum N50': args.n50,
-        'Processors': args.cpus, 'Output directory': args.output
+        'Processors': args.cpus, 'Output directory': args.output_dir,
+        'Overwrite': bool(args.new)
         }
 
     pfam = format_path(args.pfam)
@@ -3587,28 +3755,28 @@ if __name__ == '__main__':
     
 
     findExecs(execs, exit = set(execs))
-    if args.clus_percentile < args.ogx_percentile:
-        print('\nERROR: ogx percentile is greater than cluster percentile',
+    if args.clus_percentile < args.hgx_percentile:
+        print('\nERROR: hgx percentile is greater than cluster percentile',
             flush = True)
         sys.exit(3)
 
     start_time = intro('orthogroups to clusters - og2clus', args_dict, 'Zachary Konkel, Jason Slot')
     date = datetime.strftime(start_time, '%Y%m%d')
 
-    if not args.output:
+    if not args.output_dir:
         out_dir = os.getcwd() + '/og2clus_' + date + '/'
         if not os.path.isdir(out_dir):
             os.mkdir(out_dir)
     else:
-        out_dir = format_path(args.output)
+        out_dir = format_path(args.output_dir)
         if not os.path.isdir(out_dir):
             os.mkdir(out_dir)
             out_dir += '/'
 
-#    if args.phylogeny:
- #       tree_path = format_path(args.phylogeny)
+#    if args.constraint:
+ #       constraint_path = format_path(args.constraint)
   #  else:
-   #     tree_path = None
+   #     constraint_path = None
     if len(str(args.seed_percentile)) > 1:
         seed_perc = float('.' + str(args.seed_percentile))
     else:
@@ -3617,22 +3785,23 @@ if __name__ == '__main__':
         clus_perc = float('.' + str(args.clus_percentile))
     else:
         clus_perc = float('.0' + str(args.clus_percentile))   
-    if len(str(args.ogx_percentile)) > 1:
-        ogx_perc = float('.' + str(args.ogx_percentile))
+    if len(str(args.hgx_percentile)) > 1:
+        hgx_perc = float('.' + str(args.hgx_percentile))
     else:
-        ogx_perc = float('.0' + str(args.ogx_percentile))   
+        hgx_perc = float('.0' + str(args.hgx_percentile))   
 
 
     db = mtdb(format_path(args.database))
     main(
         db, orthogroups, out_dir, plusminus = args.window,
-        cpus = args.cpus, og_dir = og_dir, 
+        cpus = args.cpus, hg_dir = hg_dir, 
         seed_perc = seed_perc, #clus_thresh = args.clus_threshold,
         clus_perc = clus_perc, blastp= 'blastp',#seed_thresh = args.seed_threshold,
-        ogx_perc = ogx_perc, pfam = pfam, samples = args.null_sample,
+        hgx_perc = hgx_perc, pfam = pfam, samples = args.null_sample,
         run_dnds = args.dnds, n50thresh = args.n50,
         root = root, coevo_thresh = args.coevo_threshold, 
-        patch_thresh = args.patch_threshold, method = method
+        patch_thresh = args.patch_threshold, method = method,
+        printexit = args.stop, flag = bool(not args.new)
         )
 
     outro(start_time)
