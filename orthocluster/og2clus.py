@@ -963,7 +963,7 @@ def Hash4nulls(
 
 def gen_hgx_nulls(
     gffs, gene2hg, max_clus_size, plusminus, phylo,
-    hgx_perc, clus_perc, wrk_dir,
+    hgx_perc, clus_perc, nul_dir, partition_num,
     omes2dist = {}, samples = 10000, cpus = 1
     ): # NEED to adjust; this currently uses way too much memory
     """Generates a null distribution of randomly sampled HGxs for each 
@@ -996,7 +996,7 @@ def gen_hgx_nulls(
             }, []
 
         nullSizes = []
-        with open(wrk_dir + str(size) + '.null.txt', 'w') as out:
+        with open(f'{nul_dir}{size}.{partition_num}.null.txt', 'w') as out:
             for omes in list(null_dict.values()):
                 nullSizes.append(omes2dist[omes])
                 out.write(str(omes2dist[omes]) + '\n')
@@ -1012,12 +1012,12 @@ def gen_hgx_nulls(
     return hgxBordPercs, hgxClusPercs
 
 
-def loadNulls(max_clus_size, wrk_dir, hgx_perc, clus_perc):
+def load_nulls(max_clus_size, nul_dir, hgx_perc, clus_perc, partition_num):
 
     hgxBordPercs, hgxClusPercs = {}, {}
     for size in range(3, max_clus_size + 1):
         nullSizes = []
-        with open(wrk_dir + str(size) + '.null.txt', 'r') as raw:
+        with open(f'{nul_dir}{size}.{partition_num}.null.txt', 'r') as raw:
             for line in raw:
                 nullSizes.append(float(line.rstrip()))
         nullSizes.sort()
@@ -2933,7 +2933,7 @@ def rmOldData(
     log_res, out_dir, wrk_dir
     ):
     if not log_res['null_samples']:
-        nulls = collect_files(wrk_dir, 'null.txt')
+        nulls = collect_files(wrk_dir + 'null/', 'null.txt')
         for null in nulls:
             os.remove(null)
     if not log_res['pair_percentile']:
@@ -3262,17 +3262,21 @@ def main(
         partition_omes = [i2ome]
         ome2partition = {ome: 0 for ome in i2ome}
 
+    nul_dir = wrk_dir + 'null/'
+    if not os.path.isdir(nul_dir):
+        os.mkdir(nul_dir)
+
     # create null distribution for orthogroup pairs
     final_partition = len(partition_phylos) - 1
     pair_nulls = []
-    if not os.path.isfile(wrk_dir + f'2.null.{final_partition}.txt'):
+    if not os.path.isfile(f'{nul_dir}2.null.{final_partition}.txt'):
         print('\tGenerating null distributions', flush = True)
         for i, pphylo in enumerate(partition_phylos):
                 omes2dist, pair_null = gen_nulls(
-                    {o: ome2pairs[o] for o in partition_omes[i], 
+                    {o: ome2pairs[o] for o in partition_omes[i]}, 
                     pphylo, samples = samples, cpus = cpus
                     )
-                with open(wrk_dir + f'2.null.{i}.txt', 'w') as out:
+                with open(f'{nul_dir}2.null.{i}.txt', 'w') as out:
                     out.write('\n'.join([str(i0) for i0 in pair_null]))
                 pair_nulls.append(pair_null)
         with open(wrk_dir + 'ome_scores.pickle', 'wb') as out:
@@ -3281,7 +3285,7 @@ def main(
         with open(wrk_dir + 'ome_scores.pickle', 'rb') as raw:
             omes2dist = pickle.load(raw)
         for i, pphylo in enumerate(paritition_phylos):
-            with open(wrk_dir + '2.null.{i}.txt', 'r') as raw:
+            with open(f'{nul_dir}2.null.{i}.txt', 'r') as raw:
                pair_nulls.append([float(x.rstrip()) for x in raw])
     min_scores = []
     for i, pair_null in enumerate(pair_nulls):
@@ -3415,15 +3419,16 @@ def main(
     bordScores_list, clusScores_list = [], []
     print('\tPreparing HGx nulls', flush = True)
     for i, pphylo in enumerate(partition_phylos):
-        if not os.path.isfile(f'{wrk_dir}{i}.{final_partition}.null.txt'):
+        if not os.path.isfile(f'{nul_dir}{i}.{final_partition}.null.txt'):
             bordScores, clusScores = gen_hgx_nulls(
                 [db[k]['gff3'] for k in partition_omes[i] if k in ome2i], 
                 gene2hg, max_hgx_size, plusminus, pphylo,
-                hgx_perc, clus_perc, wrk_dir,
+                hgx_perc, clus_perc, nul_dir, i,
                 omes2dist, samples = samples, cpus = cpus
                 )
         else:
-            bordScores, clusScores = loadNulls(max_hgx_size, wrk_dir, hgx_perc, clus_perc)
+            bordScores, clusScores = load_nulls(max_hgx_size, nul_dir, hgx_perc,
+                                                clus_perc, i)
         bordScores_list.append(bordScores)
         clusScores_list.append(clusScores)
 
