@@ -3,6 +3,7 @@ import pickle
 import multiprocessing as mp
 from datetime import datetime
 from itertools import combinations
+from collections import defaultdict
 from mycotools.lib.biotools import gff2list
 from orthocluster.orthocluster.lib import phylocalcs
 from orthocluster.orthocluster.lib.input_parsing import compileCDS
@@ -202,13 +203,13 @@ def id_hgx(db, hgpair_dict, gene2hg, ome2i, cpus, clusplusminus = 10):
     return hgx2omes, hgx2loc
 
 
-def hgpairs2hgx(db, wrk_dir, top_hgs, hgpair_dict, gene2hg, ome2i, 
+def hgpairs2hgx(db, wrk_dir, top_hgs, gene2hg, ome2i, 
                 omes2dist, phylo, plusminus = 3, cpus = 1):
     if not os.path.isfile(wrk_dir + 'hgx_omes.pickle'):
         hgpair_dict = form_hgpairDict(top_hgs)
         print('\tForming HGxs', flush = True)
         form_clus_start = datetime.now()
-        hgx2omes, hgx2loc = (
+        hgx2omes, hgx2loc = id_hgx(
             db, hgpair_dict, gene2hg,  
             ome2i, cpus, clusplusminus = plusminus
             )

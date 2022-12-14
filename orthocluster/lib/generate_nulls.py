@@ -1,3 +1,4 @@
+import os
 import sys
 import random
 import pickle
@@ -91,18 +92,24 @@ def gen_null_dict(combo_dict, sample = 10000):
     return hgx2i, i2hgx, cooccur_dict
 
 
-def partition_for_nulls(phylo, partition_file):
+def load_partitions(partition_file, ome2i):
+    omes = set(ome2i.keys())
     with open(partition_file, 'r') as raw:
-        partition_omes = [x.rstrip().split() \
+        partition_omes = [[ome2i[y] for y in x.rstrip().split() if y in omes] \
                           for x in raw \
                           if x.rstrip() and not x.startswith('#')]
-    complete_set = {x for x in phylo.iter_tips()}
-    check_set = {}
+    return partition_omes
+
+
+def partition_for_nulls(phylo, partition_file, ome2i):
+    partition_omes_prep = load_partitions(partition_file, ome2i)
+    complete_set = {int(x.name) for x in phylo.iter_tips()}
+    check_set = set()
         
-    partition_phylos, partition_omes, ome2partition = [], [], {}
-    for i, partitions in enumerate(partion_omes):
-        part_phy = phylo.last_common_ancestor(partitions) # MRCA
-        part_phy_omes = [x for x in part_phy.iter_tips()]
+    partition_omes, ome2partition = [], {}
+    for i, partitions in enumerate(partition_omes_prep):
+        part_phy = phylo.get_sub_tree([str(x) for x in partitions]) # MRCA
+        part_phy_omes = [int(x.name) for x in part_phy.iter_tips()]
         if set(part_phy_omes).intersection(check_set):
             eprint('\tERROR: MRCA tree of partition overlaps previous partition: ' \
                  + str(partitions), flush = True)
@@ -115,7 +122,7 @@ def partition_for_nulls(phylo, partition_file):
     diff_list = list(complete_set.difference(check_set))
     if diff_list:   
         eprint('\t\tWARNING: omes missing from partitions: ' \
-             + str(','.join(diff_list)),
+             + str(','.join([str(x) for x in diff_list])),
              flush = True)
         ome2partition = {**ome2partition, **{x: None for x in diff_list}}
     return partition_phylos, partition_omes, ome2partition
@@ -137,27 +144,29 @@ def gen_nulls(pairs, phylo, samples = 10000, cpus = 1):
     return omes2dist, sorted(pair_scores)
 
 
-def gen_pair_nulls(phylo, i2ome, wrk_dir, nul_dir, seed_perc,
+def gen_pair_nulls(phylo, ome2i, wrk_dir, nul_dir, seed_perc, ome2pairs,
                    samples = 1000, partition_file = None, cpus = 1):
     if partition_file:
         print('\tPartitioning tree for null distributions', flush = True)
-        partition_phylos, partition_omes, ome2partition = \
-            partition_for_nulls(phylo, partition_file)
+        partition_omes = load_partitions(partition_file, ome2i)
+        ome2partition = {}
+        for k, omes in enumerate(partition_omes):
+            for ome in omes:
+                ome2partition[ome] = k
+#            partition_for_nulls(phylo, partition_file, ome2i)
     else: # spoof it
-        partition_phylos = [phylo]
-        partition_omes = [i2ome]
-        ome2partition = {ome: 0 for ome in i2ome}
-
+        partition_omes = [ome2i.values()]
+        ome2partition = {i: 0 for i in ome2i.values()}
 
     # create null distribution for orthogroup pairs
-    final_partition = len(partition_phylos) - 1 
+    final_partition = len(partition_omes) - 1 
     pair_nulls = []
     if not os.path.isfile(f'{nul_dir}2.null.{final_partition}.txt'):
         print('\tGenerating null distributions', flush = True)
-        for i, pphylo in enumerate(partition_phylos):
+        for i, omes in enumerate(partition_omes):
                 omes2dist, pair_null = gen_nulls(
-                    {o: ome2pairs[o] for o in partition_omes[i]},
-                    pphylo, samples = samples, cpus = cpus
+                    {o: ome2pairs[o] for o in omes},
+                    phylo, samples = samples, cpus = cpus
                     )
                 with open(f'{nul_dir}2.null.{i}.txt', 'w') as out:
                     out.write('\n'.join([str(i0) for i0 in pair_null]))
@@ -167,7 +176,7 @@ def gen_pair_nulls(phylo, i2ome, wrk_dir, nul_dir, seed_perc,
     else: # or just load what is available
         with open(wrk_dir + 'ome_scores.pickle', 'rb') as raw:
             omes2dist = pickle.load(raw)
-        for i, pphylo in enumerate(paritition_phylos):
+        for i, omes in enumerate(partition_omes):
             with open(f'{nul_dir}2.null.{i}.txt', 'r') as raw:
                pair_nulls.append([float(x.rstrip()) for x in raw])
     min_pair_scores = []
@@ -175,7 +184,7 @@ def gen_pair_nulls(phylo, i2ome, wrk_dir, nul_dir, seed_perc,
         scores_i = round(seed_perc * len(pair_null) + .5)
         min_pair_scores.append(pair_null[scores_i])
 
-    return partition_phylos, partition_omes, ome2partition, \
+    return partition_omes, ome2partition, \
            omes2dist, min_pair_scores
 
 
@@ -245,22 +254,23 @@ def gen_hgx_nulls(
     return hgxBordPercs, hgxClusPercs
 
 
-def partitions2hgx_nulls(db, partition_omes, ome2i, gene2hg, max_hgx_size,
+def partitions2hgx_nulls(db, partition_omes, i2ome, gene2hg, max_hgx_size,
                          plusminus, hgx_perc, clus_perc, nul_dir, omes2dist,
-                         samples = 1000, cpus = 1):
+                         phylo, samples = 1000, cpus = 1):
     bordScores_list, clusScores_list = [], []
+    final_partition = len(partition_omes) - 1
     print('\tPreparing HGx nulls', flush = True)
-    for i, pphylo in enumerate(partition_phylos):
+    for i, omes in enumerate(partition_omes):
         if not os.path.isfile(f'{nul_dir}{i}.{final_partition}.null.txt'):
             bordScores, clusScores = gen_hgx_nulls(
-                [db[k]['gff3'] for k in partition_omes[i] if k in ome2i],
-                gene2hg, max_hgx_size, plusminus, pphylo,
+                [db[i2ome[k]]['gff3'] for k in omes],
+                gene2hg, max_hgx_size, plusminus, phylo,
                 hgx_perc, clus_perc, nul_dir, i,
                 omes2dist, samples = samples, cpus = cpus
                 )
         else:
             bordScores, clusScores = load_hgx_nulls(max_hgx_size, nul_dir, hgx_perc,
-                                                clus_perc, i)
+                                                    clus_perc, i)
         bordScores_list.append(bordScores)
         clusScores_list.append(clusScores)
     return bordScores_list, clusScores_list

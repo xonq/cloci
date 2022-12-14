@@ -1,4 +1,5 @@
 import os
+import gzip
 from cogent3 import PhyloNode, load_tree
 from collections import defaultdict
 from itertools import combinations
@@ -125,6 +126,19 @@ def parseLoci(
     out_pairs = set(pairs) # unique pairs of OGs
 
     return ome_num, out_pairs
+
+
+def load_seedScores(file_):#, seed_thresh):
+
+    out_hgs = []
+    with gzip.open(file_, 'rt') as raw:
+        for line in raw:
+            if not line.startswith('#'):
+                data = [x.rstrip() for x in line.split('\t')]
+#                if float(data[3]) > seed_thresh:
+                out_hgs.append(line.split('\t'))
+    
+    return out_hgs
 
 
 def compile_tree(i2ome, tree_path, root = []):

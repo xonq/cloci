@@ -37,11 +37,9 @@ from mycotools.lib.biotools import \
 from mycotools.lib.dbtools import mtdb, masterDB
 from mycotools.gff2svg import main as gff2svg
 from mycotools.acc2fa import dbmain as acc2fa
-from orthocluster.orthocluster.tools import db2microsynt
-from orthocluster.orthocluster.lib.generate_nulls import \
-    gen_pair_nulls, partitions2hgx_nulls
+from orthocluster.orthocluster.tools import db2microsyntree
 from orthocluster.orthocluster.lib import phylocalcs, evo_conco, \
-    hgx2gcfs
+    hgx2gcfs, input_parsing, hgpairs2hgx, generate_nulls
 from orthocluster.orthocluster.lib.output_data import output_res
 
 
@@ -124,19 +122,6 @@ def combo_prob_mngr(
         hgx2pval[hgx] = comparisons * pval
 
     return hgx2pval
-
-
-def load_seedScores(file_, seed_thresh):#, seed_thresh):
-
-    out_hgs = []
-    with gzip.open(file_, 'rt') as raw:
-        for line in raw:
-            if not line.startswith('#'):
-                data = [x.rstrip() for x in line.split('\t')]
-                if float(data[3]) > seed_thresh:
-                    out_hgs.append(line.split('\t'))
-
-    return out_hgs
 
 
 def outputSVG(clus, svg_dict, svg_dir, width):
@@ -401,22 +386,22 @@ def main(
     log_res = logCheck(log_dict, log_path, out_dir, wrk_dir, flag)
     tree_path = out_dir + 'microsynt.newick'
 
-    ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_array =  \
-        db2microsynt.main(db, hg_file, out_dir, wrk_dir,
+    ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_dict = \
+        db2microsyntree.main(db, hg_file, out_dir, wrk_dir,
                             method, tree_path, plusminus = plusminus,
                             min_cov = 0, min_id = 0.3, n50thresh = n50thresh,
                             near_single_copy_genes = near_single_copy_genes,
                             constraint = constraint_path, verbose = verbose,
                             cpus = cpus)
     print('\tReading microsynteny tree', flush = True)
-    phylo = phylocalcs.compileTree(
+    phylo = input_parsing.compile_tree(
         i2ome, tree_path, root = root
         )
 
-    partition_phylos, partition_omes, ome2partition, \
-    omes2dist, min_pair_scores = generate_nulls.gen_pair_nulls(
-                                            phylo, i2ome, wrk_dir,
-                                            nul_dir, seed_perc,
+    partition_omes, ome2partition, omes2dist, min_pair_scores = \
+                                generate_nulls.gen_pair_nulls(
+                                            phylo, ome2i, wrk_dir,
+                                            nul_dir, seed_perc, ome2pairs,
                                             samples = samples,
                                             partition_file = partition_file,
                                             cpus = cpus
@@ -441,9 +426,8 @@ def main(
                     continue
             min_pair_score = min([min_pair_scores[i] for i in list(parts)])
             if score > min_pair_score:
-                i = revs[hgpair]
                 top_hgs.append([
-                    [0], hgpair[1], len(omes), score#, score/ome_dist
+                    hgpair[0], hgpair[1], len(omes), score#, score/ome_dist
                     ])
 
         # write scores            
@@ -454,23 +438,23 @@ def main(
             out.write('#hg0\thg1\tcooccurrences\tscore\tadj_score\n')
             for line in top_hgs:
                 out.write('\t'.join([str(x) for x in line]) + '\n')
-        print('\t\t' + str(len(top_hgs)) + ' significant seeds', flush = True)
-    
-    elif not os.path.isfile(wrk_dir + 'hgx_scores.pickle'): # load previous og pairs
+        print('\t\t' + str(len(top_hgs)) + ' significant HG pairs', flush = True)
+    elif not os.path.isfile(wrk_dir + 'hgx_scores.pickle'): # load previous hg pairs
         print('\tLoading previous seed HG pairs', flush = True)
-        top_hgs = load_seedScores(out_dir + 'seed_scores.tsv.gz', min_score)
-        print('\t\t' + str(len(top_hgs)) + ' significant seeds', flush = True)
-
+        top_hgs = input_parsing.load_seedScores(out_dir + 'seed_scores.tsv.gz')
+        print('\t\t' + str(len(top_hgs)) + ' significant HG pairs', flush = True)
+    else:
+        top_hgs = None
 
     # begin sifting for HGxs using pairs as seeds for HGx detection
     print('\nIV. Sprouting high order HG combinations (HGx)', flush = True)
     hgx2omes, hgx2loc = hgpairs2hgx.hgpairs2hgx(db, wrk_dir, top_hgs,
-                                                hgpair_dict, gene2hg, 
+                                                gene2hg, 
                                                 ome2i, omes2dist, phylo, 
-                                                plusmimus, cpus) 
+                                                plusminus, cpus) 
     ome_combos = set([tuple(sorted(list(x))) for x in list(hgx2omes.values())])
     if not os.path.isfile(wrk_dir + 'hgx_scores.pickle'):
-        hgx2i, i2hgx, hgx_cooccur_dict = form_cooccur_dict(
+        hgx2i, i2hgx, hgx_cooccur_dict = generate_nulls.form_cooccur_dict(
             hgx2omes
             ) # create hgx data structures
 
@@ -497,7 +481,6 @@ def main(
         print('\tLoading previous HGxs', flush = True)
         with open(wrk_dir + 'hgx_scores.pickle', 'rb') as pickin:
             hgx2dist = pickle.load(pickin)
-
 
 
     calc_hgx_p = False
@@ -532,9 +515,10 @@ def main(
     # in HGxs    
     max_hgx_size = max([len(x) for x in hgx2omes])
     bordScores_list, clusScores_list = generate_nulls.partitions2hgx_nulls(
-                                            db, partition_omes, ome2i, gene2hg,
+                                            db, partition_omes, i2ome, gene2hg,
                                             max_hgx_size, plusminus, hgx_perc, 
-                                            clus_perc, nul_dir, omes2dist, samples,
+                                            clus_perc, nul_dir, omes2dist, 
+                                            phylo, samples,
                                             cpus)
 
 
@@ -553,7 +537,7 @@ def main(
             parts = parts.remove(None)
             if not parts:
                 continue
-        bord_score = min([bordScores[i][len(hgx)] for i in list(parts)])
+        bord_score = min([bordScores_list[i][len(hgx)] for i in list(parts)])
         if dist >= bord_score:
              thgx2dist[hgx] = dist
              i2hgx[count], hgx2i[hgx] = hgx, count
@@ -681,7 +665,7 @@ def main(
     output_res(hgx2dist, gcfs, i2ome, hgx2omes, out_dir, gcf_hgxs,
          omes2dist, hgx2omes2gbc, omes2patch, hgx2omes2id,
          hgx2omes2pos, hgx2loc, gene2hg, plusminus, ome2i,
-         hgx2i, hgx2gbc, hgx2omes, dnds_dict = {}, cpus = cpus)
+         hgx2i, hgx2gbc, dnds_dict = {}, cpus = cpus)
 
 
 if __name__ == '__main__':
@@ -869,7 +853,7 @@ if __name__ == '__main__':
         seed_perc = seed_perc, #clus_thresh = args.clus_threshold,
         clus_perc = clus_perc, blastp= 'blastp',#seed_thresh = args.seed_threshold,
         hgx_perc = hgx_perc, pfam = pfam, samples = args.null_sample,
-#        run_dnds = args.dnds, 
+        partition_file = args.null_partitions, #        run_dnds = args.dnds, 
         n50thresh = args.n50, near_single_copy_genes = focal_genes,
         root = root, coevo_thresh = args.coevo_threshold, 
         patch_thresh = args.patch_threshold, method = method,

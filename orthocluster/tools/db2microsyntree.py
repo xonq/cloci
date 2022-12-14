@@ -1,6 +1,10 @@
+#!/usr/bin/env python3
+
 import os
+import sys
 import shutil
 import argparse
+import subprocess
 import numpy as np
 import multiprocessing as mp
 from mycotools.db2files import soft_main as symlink_files
@@ -140,10 +144,10 @@ def compile_loci(
     ):
 
     loci_hash_cmds = [
-        [x, ome2i[db['ome'][i]],
+        [v['gff3'], ome2i[ome],
         gene2hg, plusminus]
-        for i, x in enumerate(db['gff3']) \
-        if db['ome'][i] in ome2i
+        for ome, v in db.items() \
+        if ome in set(ome2i)
         ]
     with mp.get_context('fork').Pool(processes = cpus) as pool:
         loci_hashes = pool.starmap(parseLoci, loci_hash_cmds)
@@ -264,7 +268,7 @@ def run_tree(alignment, wrk_dir, constraint = False, iqtree = 'iqtree',
     
     prefix = tree_dir + 'microsynt'
     tree_cmd = [iqtree, '-s', alignment, '-m', model,
-                '-p', prefix] 
+                '--prefix', prefix] 
     if constraint:
         tree_cmd.extend(['-te', constraint])
         comp_file = prefix + '.treefile'
@@ -316,13 +320,14 @@ def main(db, hg_file, out_dir, wrk_dir, algorithm,
     print('\t\tGenes:', len(gene2hg), flush = True)
     
     cc_arr_path = wrk_dir + ''
+    ome2pairs = compile_loci(
+        db, ome2i, gene2hg, plusminus,
+        cpus = cpus
+        )
+
     if not os.path.isfile(out_dir + 'seed_scores.tsv.gz'):
         # compile cooccuring pairs of homogroups in each genome
         print('\tCompiling all loci', flush = True)
-        ome2pairs = compile_loci(
-            db, ome2i, gene2hg, plusminus,
-            cpus = cpus
-            )
         
         # assimilate cooccurrences across omes
         print('\tIdentifying cooccurences', flush = True)
@@ -349,6 +354,7 @@ def main(db, hg_file, out_dir, wrk_dir, algorithm,
 #    elif not os.path.isfile(tree_path):
     else:
         cooccur_array = np.load(cc_arr_path + '.npy')
+        cooccur_dict = None
 
     microsynt_dict = {}
     print('\nII. Building microsynteny tree', flush = True)
@@ -368,10 +374,10 @@ def main(db, hg_file, out_dir, wrk_dir, algorithm,
         align_file = align_microsynt_np(cooccur_array, i2ome, hg2gene,
                                         hgpair2i, wrk_dir, nschgs)
         print('\tBuilding microsynteny tree', flush = True)
-        run_tree(align_file, wrk_dir, constraint = constraint_path, iqtree = 'iqtree',
+        run_tree(align_file, wrk_dir, constraint = constraint, iqtree = 'iqtree',
                  model = 'GTR2+FO+ASC+R5', verbose = False, cpus = cpus)
 
-    return ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_array
+    return ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_dict
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description = 'Generate a microsynteny ' \

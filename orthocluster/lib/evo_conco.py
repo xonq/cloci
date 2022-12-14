@@ -135,7 +135,7 @@ def blast_homolog(db, hgs, hg_dir, hgx_dir,
     print('\tMaking ' + str(len(cmds1)) + ' diamond databases', flush = True)
 #    with mp.get_context('fork').Pool(processes = cpus) as pool:
  #       pool.starmap(run_make_dmnddb, cmds1)
-    multisub(cmds1, process = cpus)
+    multisub(cmds1, processes = cpus)
 
     print('\tRunning ' + str(len(cmds2)) + ' diamonds', flush = True)
     multisub(cmds2, processes = cpus)
