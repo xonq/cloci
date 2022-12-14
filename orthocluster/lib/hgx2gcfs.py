@@ -9,7 +9,7 @@ from itertools import combinations
 from collections import defaultdict
 from scipy.sparse import lil_matrix
 from mycotools.acc2fa import dbmain as acc2fa
-from mycotools.lib.biotools import dict2fa
+from mycotools.lib.biotools import dict2fa, gff2list
 from mycotools.lib.kontools import write_json, read_json
 from orthocluster.orthocluster.lib import input_parsing
 
@@ -293,7 +293,6 @@ def write_adj_matrix(Q, out_file):
 #                out.flush() # shouldn't be a bottleneck
 
 
-
 def classify_gcfs(
     hgx2loc, db, gene2hg, i2hgx, hgx2i,
     phylo, bordScores, ome2i, hgx2omes,
@@ -360,7 +359,6 @@ def classify_gcfs(
             omes_set = set(omes)
             if len(omes_set) > 1: # need at least one ome to calc a branch length
                 pairDict[id_] = tuple(sorted(omes_set))
-
 
         omes2dist = phylocalcs.update_dists(phylo, pairDict, cpus = cpus, omes2dist = omes2dist)
 

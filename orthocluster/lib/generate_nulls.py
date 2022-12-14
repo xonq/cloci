@@ -1,5 +1,8 @@
+import sys
 import random
 import pickle
+import multiprocessing as mp
+from itertools import combinations
 from cogent3 import PhyloNode
 from mycotools.lib.biotools import gff2list
 from mycotools.lib.kontools import eprint
@@ -41,7 +44,6 @@ def Hash4nulls(
         **{k: set(v) for k,v in lrg_sizes.items()}
         } # make them unique sets of combinations
     return nulls
-
 
 
 def form_cooccur_dict(cooccur_dict):

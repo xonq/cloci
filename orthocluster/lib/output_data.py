@@ -9,7 +9,7 @@ from collections import defaultdict
 from plotly.subplots import make_subplots
 from mycotools.acc2gff import grabGffAcc
 from mycotools.lib.kontools import eprint
-from mycotools.lib.biotools import gff2list, fa2dict, dict2fa
+from mycotools.lib.biotools import list2gff, gff2list, fa2dict, dict2fa
 from orthocluster.orthocluster.lib import input_parsing
 
 
@@ -386,7 +386,7 @@ def grabClus(genes_list, gff_path, prot_path, ome, ome_dir, gene2hg, pfamRes = {
 def output_res(hgx2dist, gcfs, i2ome, hgx2omes, out_dir, gcf_hgxs,
          omes2dist, hgx2omes2gbc, omes2patch, hgx2omes2id,
          hgx2omes2pos, hgx2loc, gene2hg, plusminus, ome2i,
-         hgx2i, hgx2gbc, hgx2omes, dnds_dict = {}, cpus = 1):
+         hgx2i, hgx2gbc, dnds_dict = {}, cpus = 1):
 
     print('\tWriting cluster scores', flush = True)
     gcf_output, done, maxval = [], set(), max(hgx2dist.values())

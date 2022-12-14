@@ -1,5 +1,7 @@
+import os
 from cogent3 import PhyloNode, load_tree
 from collections import defaultdict
+from itertools import combinations
 from mycotools.lib.biotools import gff2list
 
 def compileCDS(gff_list, ome):

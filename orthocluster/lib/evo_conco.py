@@ -1,10 +1,13 @@
 import os
 import sys
+import pickle
+import subprocess
 import multiprocessing as mp
 from collections import defaultdict
 from mycotools.lib.kontools import multisub, tardir
+from mycotools.lib.biotools import gff2list
 from mycotools.acc2fa import dbmain as acc2fa
-from orthocluster.orthocluster.lib.input_parser import compileCDS2
+from orthocluster.orthocluster.lib.input_parsing import compileCDS2
 
 
 def retroactive_grab_hgx_genes(
@@ -69,7 +72,6 @@ def run_make_dmnddb(db, diamond, hgx_dir, og, genes):
     makeDBcmd.communicate(input=dict2fa(fa_dict).encode())[0]
     makeDBcmd.stdin.close()
     makeDBcmd.wait()
-
 
 
 def blast_homolog(db, hgs, hg_dir, hgx_dir,
