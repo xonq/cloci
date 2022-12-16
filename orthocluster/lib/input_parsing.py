@@ -124,7 +124,6 @@ def parseLoci(
             # same OGs - tandem duplications will just naturally cooccur more often
 
     out_pairs = set(pairs) # unique pairs of OGs
-
     return ome_num, out_pairs
 
 
@@ -144,14 +143,22 @@ def load_seedScores(file_):#, seed_thresh):
 def compile_tree(i2ome, tree_path, root = []):
     phylo = load_tree(tree_path)
     if root:
-        if len(root) > 1:
-            phylo = phylo.rooted_at(
-                phylo.get_edge_names(root[0], root[1])[0]
-                    )
-        else:
-            phylo = phylo.rooted_with_tip(root[0])
+      #  if len(root) > 1:
+#            from ete3 import Tree
+ #           t = Tree(tree_path)
+  #          ancestor = t.get_common_ancestor(root[0], root[1])
+   #         t.set_outgroup(ancestor)
+    #        with open(tree_path, 'w') as out:
+     #           out.write(t.write())
+      #      phylo = load_tree(tree_path)
+      #      phylo = phylo.rooted_at(
+       #         phylo.get_edge_names(root[0], root[1])[0]
+        #            )
+      
+       # else:
+        phylo = phylo.rooted_with_tip(root[0])
+
         phylo.write(tree_path, with_distances = True)
 
     phylo.reassign_names({v: str(i) for i, v in enumerate(i2ome)})
     return phylo
-

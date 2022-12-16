@@ -32,7 +32,7 @@ def calc_patchiness(phylo, omes):
         eprint('\t\t' + ','.join([str(x) for x in omes]) + ' raised a tip not found error', flush = True)
         print(phylo)
     totalDist = mrca.total_descending_branch_length()
-    subDist = phylocalcs.addPatch(mrca, omes_set)
+    subDist = addPatch(mrca, omes_set)
     return tuple([int(x) for x in omes]), subDist/totalDist
 
 
@@ -45,7 +45,6 @@ def calc_branch_len(phylo, omes):
             omes
             ), set(omes)), tuple([int(i) for i in omes])
     except ValueError:
-        print(phylo)
         eprint('\t\t' + ','.join([str(x) for x in omes]) + ' raised a tip not found error', flush = True)
         return 0, tuple([int(i) for i in omes])
     except AttributeError:

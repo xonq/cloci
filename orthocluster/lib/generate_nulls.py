@@ -108,10 +108,10 @@ def partition_for_nulls(phylo, partition_file, ome2i):
         
     partition_omes, ome2partition = [], {}
     for i, partitions in enumerate(partition_omes_prep):
-        part_phy = phylo.get_sub_tree([str(x) for x in partitions]) # MRCA
+        part_phy = phylo.lowest_common_ancestor([str(x) for x in partitions]) # MRCA
         part_phy_omes = [int(x.name) for x in part_phy.iter_tips()]
         if set(part_phy_omes).intersection(check_set):
-            eprint('\tERROR: MRCA tree of partition overlaps previous partition: ' \
+            eprint('\tWARNINGS: MRCA of partitions overlap: ' \
                  + str(partitions), flush = True)
             sys.exit(13)
         check_set = check_set.union(set(part_phy_omes))
@@ -145,7 +145,7 @@ def gen_nulls(pairs, phylo, samples = 10000, cpus = 1):
 
 
 def gen_pair_nulls(phylo, ome2i, wrk_dir, nul_dir, seed_perc, ome2pairs,
-                   samples = 1000, partition_file = None, cpus = 1):
+                   i2ome, samples = 1000, partition_file = None, cpus = 1):
     if partition_file:
         print('\tPartitioning tree for null distributions', flush = True)
         partition_omes = load_partitions(partition_file, ome2i)
@@ -164,13 +164,17 @@ def gen_pair_nulls(phylo, ome2i, wrk_dir, nul_dir, seed_perc, ome2pairs,
     if not os.path.isfile(f'{nul_dir}2.null.{final_partition}.txt'):
         print('\tGenerating null distributions', flush = True)
         for i, omes in enumerate(partition_omes):
-                omes2dist, pair_null = gen_nulls(
-                    {o: ome2pairs[o] for o in omes},
-                    phylo, samples = samples, cpus = cpus
-                    )
-                with open(f'{nul_dir}2.null.{i}.txt', 'w') as out:
-                    out.write('\n'.join([str(i0) for i0 in pair_null]))
-                pair_nulls.append(pair_null)
+            run_omes = {o: ome2pairs[o] for o in omes if o in ome2pairs}
+            if not run_omes:
+                print(omes, i)
+                continue
+            omes2dist, pair_null = gen_nulls(
+                {o: ome2pairs[o] for o in omes if o in ome2pairs},
+                phylo, samples = samples, cpus = cpus
+                )
+            with open(f'{nul_dir}2.null.{i}.txt', 'w') as out:
+                out.write('\n'.join([str(i0) for i0 in pair_null]))
+            pair_nulls.append(pair_null)
         with open(wrk_dir + 'ome_scores.pickle', 'wb') as out:
                 pickle.dump(omes2dist, out)
     else: # or just load what is available
@@ -238,7 +242,7 @@ def gen_hgx_nulls(
             }, []
         
         nullSizes = []
-        with open(f'{nul_dir}{size}.{partition_num}.null.txt', 'w') as out:
+        with open(f'{nul_dir}{size}.null.{partition_num}.txt', 'w') as out:
             for omes in list(null_dict.values()):
                 nullSizes.append(omes2dist[omes])
                 out.write(str(omes2dist[omes]) + '\n') 
@@ -261,7 +265,7 @@ def partitions2hgx_nulls(db, partition_omes, i2ome, gene2hg, max_hgx_size,
     final_partition = len(partition_omes) - 1
     print('\tPreparing HGx nulls', flush = True)
     for i, omes in enumerate(partition_omes):
-        if not os.path.isfile(f'{nul_dir}{i}.{final_partition}.null.txt'):
+        if not os.path.isfile(f'{nul_dir}{max_hgx_size}.null.{i}.txt'):
             bordScores, clusScores = gen_hgx_nulls(
                 [db[i2ome[k]]['gff3'] for k in omes],
                 gene2hg, max_hgx_size, plusminus, phylo,

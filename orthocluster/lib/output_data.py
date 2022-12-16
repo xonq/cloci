@@ -383,10 +383,10 @@ def grabClus(genes_list, gff_path, prot_path, ome, ome_dir, gene2hg, pfamRes = {
 
 
 
-def output_res(hgx2dist, gcfs, i2ome, hgx2omes, out_dir, gcf_hgxs,
+def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, gcf_hgxs,
          omes2dist, hgx2omes2gbc, omes2patch, hgx2omes2id,
          hgx2omes2pos, hgx2loc, gene2hg, plusminus, ome2i,
-         hgx2i, hgx2gbc, dnds_dict = {}, cpus = 1):
+         hgx2i, hgx2gbc, pfam_path = None, dnds_dict = {}, cpus = 1):
 
     print('\tWriting cluster scores', flush = True)
     gcf_output, done, maxval = [], set(), max(hgx2dist.values())
@@ -410,7 +410,7 @@ def output_res(hgx2dist, gcfs, i2ome, hgx2omes, out_dir, gcf_hgxs,
             out.write('\n' + '\t'.join([str(x) for x in entry]))
 
     kern_output, top_hgxs = [], []
-    for i, gcf in enumerate(gcf_hgxs):
+    for i, ogc in enumerate(gcf_hgxs):
         omesc = gcf_omes[i]
 #        try:
  #           if gcf not in dnds_dict:
@@ -428,8 +428,9 @@ def output_res(hgx2dist, gcfs, i2ome, hgx2omes, out_dir, gcf_hgxs,
      #   else:
         kern_output.append([
             ','.join([str(x) for x in ogc]), i,
-            omes2dist[omesc]/maxval, hgx2omes2gbc[ogc][omesc], omes2patch[omesc],
-            hgx2omes2id[ogc][omesc], hgx2omes2pos[ogx][omesc],
+            omes2dist[omesc]/maxval, omes2patch[omesc], 
+            hgx2omes2gbc[ogc][omesc],
+            hgx2omes2id[ogc][omesc], hgx2omes2pos[ogc][omesc],
             ','.join([str(i2ome[x]) for x in omesc])#,
      #        dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
            # omes2dist[omesc]
@@ -440,12 +441,11 @@ def output_res(hgx2dist, gcfs, i2ome, hgx2omes, out_dir, gcf_hgxs,
     kern_output = sorted(kern_output, key = lambda x: x[4], reverse = True)
 
     with gzip.open(out_dir + 'gcfs.tsv.gz', 'wt') as out:
-        out.write(
-            '#hgs\tgcf\tdistance\t' + \
-            'coevolution\tpatchiness\t%id\t%pos\tomes' #+ \
+        out.write('#hgs\tgcf\tdistance\tpatchiness' \
+                + '\tcoevolution\t%id\t%pos\tomes') #+ \
             #'selection_coef\tmean_dnds\tog_dnds\t' + \
          #   'total_dist'
-            )
+#            )
         for entry in kern_output:
             out.write('\n' + '\t'.join([str(x) for x in entry]))
 
@@ -462,7 +462,7 @@ def output_res(hgx2dist, gcfs, i2ome, hgx2omes, out_dir, gcf_hgxs,
         axes[0].append(entry[4])
         axes[1].append(entry[3])
         axes[2].append(entry[2])
-        if run_dnds:
+        if dnds_dict:
             axes[3].append(entry[6])
             axes[4].append(entry[7])
     print('\tOutputting scatter plots', flush = True)
@@ -502,10 +502,15 @@ def output_res(hgx2dist, gcfs, i2ome, hgx2omes, out_dir, gcf_hgxs,
     prot_paths = {}
     for ome in genes:
         prot_paths[ome] = db[ome]['faa']
-    pfamRes, failedOmes = pfamMngr(
-        genes, prot_paths, wrk_dir, pfam, evalue = 0.01, threshold = 0.5, cpus = cpus
-        )
 
+    if pfam_path:
+        pfamRes, failedOmes = pfamMngr(
+            genes, prot_paths, wrk_dir, pfam_path, 
+            evalue = 0.01, threshold = 0.5, cpus = cpus
+            )
+    else:
+        pfamRes = {}
+    
 
     print('\nX. Outputting clusters', flush = True)
     print('\tCluster biofiles', flush = True)

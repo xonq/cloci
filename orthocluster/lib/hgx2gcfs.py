@@ -11,7 +11,7 @@ from scipy.sparse import lil_matrix
 from mycotools.acc2fa import dbmain as acc2fa
 from mycotools.lib.biotools import dict2fa, gff2list
 from mycotools.lib.kontools import write_json, read_json
-from orthocluster.orthocluster.lib import input_parsing
+from orthocluster.orthocluster.lib import input_parsing, phylocalcs
 
 def hash_hgx(gff_path, ome, hgx_genes, gene2hg, clusplusminus):
     """sliding window of size clusplusminus, identify sequences that may have

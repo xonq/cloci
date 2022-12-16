@@ -79,29 +79,31 @@ def blast_homolog(db, hgs, hg_dir, hgx_dir,
                   printexit = False):
 
     cmds1, cmds2 = [], []
-    for og in hgs:
-        if not os.path.isfile(hgx_dir + str(og) + '.out'):
-            hg_file = hg_dir + str(og) + '.faa'
-            out_file = hgx_dir + str(og) + '.out'
+    for hg in hgs:
+        if not os.path.isfile(hgx_dir + str(hg) + '.out'):
+            hg_file = hg_dir + str(hg) + '.faa'
+            out_file = hgx_dir + str(hg) + '.out'
             if not os.path.isfile(hg_file): # try OrthoFinder check
-                digits = len(str(og))
+                digits = len(str(hg))
                 zeros = 7 - digits
-                hg_file = hg_dir + 'OG' + '0' * zeros + str(og) + '.fa'
+                hg_file = hg_dir + 'OG' + '0' * zeros + str(hg) + '.fa'
+            cmds2.append([
+                diamond, 'blastp', '--query', hg_file,
+                '--db', hgx_dir + str(hg) + '.dmnd',
+                '-o', out_file, '--outfmt',
+                '6', 'qseqid', 'sseqid', 'evalue', 'pident', 'ppos'
+                ])
+        else:
+            continue
 #            if len(hg2gene[og]) > 100: # key here is efficiency
-        if not os.path.isfile(hgx_dir + str(og) + '.dmnd'):
+        if not os.path.isfile(hgx_dir + str(hg) + '.dmnd'):
 #            cmds1.append([
  #               db, blastp, hgx_dir, og, hg2gene[og]
   #              ])
             cmds1.append([diamond, 'makedb', '--db',
-                          hgx_dir + str(og) + '.dmnd',
+                          hgx_dir + str(hg) + '.dmnd',
                           '--in', hg_file])
 
-            cmds2.append([
-                diamond, 'blastp', '--query', hg_file,
-                '--db', hgx_dir + str(og) + '.dmnd',
-                '-o', out_file, '-outfmt',
-                '-6', 'qseqid', 'sseqid', 'evalue', 'pident', 'ppos'
-                ])
  #               search_cmd = subprocess.call(('mmseqs easy-search ' + hg_file + ' ' \
   #                          + hg_file + ' ' + out_file + '.tmp ' \
    #                         + hgx_dir + 'tmp/ --threads ' + str(cpus) + ' ' \
@@ -198,6 +200,8 @@ def hgx2omes2gbc_calc(
     res = {}
     for og, qs in hgxDict.items():
         hgx_genes, hgx_omes = set(qs), set([q[:q.find('_')] for q in qs])
+        if len(hgx_genes) == 1: # no homologs
+            continue
         res[og] = {}
         with open(hgx_dir + str(og) + '.out', 'r') as raw:
         # open the blast results
@@ -223,33 +227,27 @@ def hgx2omes2gbc_calc(
 #            if geneInfo[gene][0][0] in geneInfo: # ONLY SHARED GENES PASS
             hits = {gene}
             # while all cluster homologs aren't accounted for and there remain hits
+            if gene not in geneInfo:
+                continue
             while hgx_genes.difference(hits) and geneInfo[gene]:
                 sbj_gene = geneInfo[gene][0][0]
                 sbj_ome = sbj_gene[:sbj_gene.find('_')]
-                if sbj_ome == ome: # same ome, could be recent paralog
-                    geneInfo[gene].pop(0)
-                elif sbj_gene in hgx_genes:
+ #               if sbj_ome == ome: # same ome, could be recent paralog
+                if sbj_gene in hgx_genes and sbj_ome != ome:
                     # grab the hit positives and identity
                     res[og][ome][1][sbj_gene] = tuple(geneInfo[gene][0][2:])
                     hits.add(sbj_gene)
-                elif sbj_ome in hgx_omes: # ome in subjects, could be recent paralog
-                    continue
+#                elif sbj_ome in hgx_omes: # ome in subjects, could be recent paralog
                 else:
                     res[og][ome][0] += 1 # add one to the failed count
-            # conservative penality
-                # penalize the cluster family by 1 for each hit that's missing
-#            res[og][ome][0] += len(hgx_genes) - len(res[og][ome]) - 1
- #           res[og][ome][0] = len(hgx_genes) / res[og][ome][0]
-            # normalize to 0.5-1 because 0.5 is lowest possible completely penalized
-  #          if res[og][ome][0] < 0.5:
-   #             res[og][ome][0] = 0
-    #        else:
-     #           res[og][ome][0] = (res[og][ome][0] - 0.5) / 0.5
-            if len(hgx_genes) - len(res[og][ome]) + 1:
+                geneInfo[gene].pop(0)
+
+            # if there are missing hits
+#            print(len(hgx_genes) -  len(res[og][ome][1]) + 1)
+            if len(hgx_genes) - len(res[og][ome][1]) - 1 > 0:
                 res[og][ome][0] = 0
             else:
-                res[og][ome][0] = len(hgx_genes) / res[og][ome][0]
-
+                res[og][ome][0] = len(hgx_genes) / (len(hgx_genes) + res[og][ome][0])
 
     # populate a binary response dictionary for each ome and its genes that are
     # in the shared HGx; 0 = the OG's best blast hit in this ome is not another
@@ -258,29 +256,35 @@ def hgx2omes2gbc_calc(
     omeScores = defaultdict(dict)
     ids_y_pos = defaultdict(dict)
     for og in res:
-        for ome, d in res[og].items():
-            omeScores[ome][og] = d[0]
+        for ome, data in res[og].items():
+            d = data[1]
+            omeScores[ome][og] = data[0]
             ids, pos = [x[0] for x in d.values()], [x[1] for x in d.values()]
-            ids_y_pos[og][ome] = (min(ids), min(pos))
+            if ids:
+                ids_y_pos[og][ome] = (min(ids), min(pos))
+            else:
+                ids, pos = 0, 0
     try:
         # average score of each og (perhaps needs to be weighted by presence)
         # sum of percent top hits that're in GCF adjusted number of ogs appear
         # in) averaged over number of omes
-        gbcScore = \
-            sum([sum(omeScores[ome].values()) \
-            / len(omeScores[ome]) for ome in omeScores]) \
-            / len(omeScores)
+        gbcScore = 0
+        ome_av = [sum(v.values())/len(v) for ome, v in omeScores.items()]
+        gbcScore = sum(ome_av)/len(omeScores)
     except ZeroDivisionError:
+        print(f'\t{hgx} ome_av')
         gbcScore = 0
 
     # average minimum identity / minimum positive; for each gene homolog group
     gcf_min_id, gcf_min_pos, total = 0, 0, 0
     for og, ome_dict in ids_y_pos.items():
-        gcf_min_id += sum([x[0] for x in ome_dict.values()]) / len(ome_dict)
-        gcf_min_pos += sum([x[1] for x in ome_dict.values()]) / len(ome_dict)
+        gcf_min_id += sum([x[0] for x in ome_dict.values()])
+        gcf_min_pos += sum([x[1] for x in ome_dict.values()])
         total += len(ome_dict)
     gcf_min_id /= total
     gcf_min_pos /= total
+
+    print(hgx, gcf_min_id, gcf_min_pos, gbcScore)
 
     return hgx, omesI, gbcScore, gcf_min_id, gcf_min_pos
 
@@ -417,7 +421,7 @@ def calc_gbc(
 def gbc_main_0(
     hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
     blastp, db, gene2hg, plusminus, hg2gene, 
-    old_path = 'hgx2gbc.pickle',
+    old_path = f'hgx2gbc.pickle',
     cpus = 1, printexit = False
     ):
     
@@ -425,15 +429,17 @@ def gbc_main_0(
     for hgx in hgx2loc:
         hgs_list.extend(list(hgx))
     hgs = set(hgs_list) 
-    if not os.path.isfile(wrk_dir + old_path):
+    if not os.path.isfile(old_path):
         d2gbc = gbc_mngr_2(
             list(hgs), list(ome2i.keys()), hg_dir, hgx_dir, blastp, hgx2loc,
             db, gene2hg, plusminus, hg2gene, cpus = cpus, 
             printexit = printexit
             )
+        with open(old_path, 'wb') as pickout:
+            pickle.dump(d2gbc, pickout)
     else:
         print('\tLoading previous coevolution results', flush = True)
-        with open(wrk_dir + old_path, 'rb') as pickin: 
+        with open(old_path, 'rb') as pickin: 
             d2gbc = pickle.load(pickin)
     return d2gbc
 
