@@ -153,10 +153,14 @@ def gen_pair_nulls(phylo, ome2i, wrk_dir, nul_dir, seed_perc, ome2pairs,
         for k, omes in enumerate(partition_omes):
             for ome in omes:
                 ome2partition[ome] = k
+        missing_omes = set(ome2i.values()).difference(set(ome2partition.keys()))
+        ome2partition = {**ome2partition, **{k: None for k in missing_omes}}
 #            partition_for_nulls(phylo, partition_file, ome2i)
     else: # spoof it
         partition_omes = [ome2i.values()]
         ome2partition = {i: 0 for i in ome2i.values()}
+
+
 
     # create null distribution for orthogroup pairs
     final_partition = len(partition_omes) - 1 

@@ -23,6 +23,7 @@ import copy
 import gzip
 import shutil
 import pickle
+import hashlib
 import argparse
 import numpy as np
 import multiprocessing as mp
@@ -30,14 +31,13 @@ from datetime import datetime
 from collections import defaultdict
 from mycotools.lib.kontools import \
     intro, outro, format_path, collect_files, \
-    findExecs, multisub, checkdir, eprint, \
-    write_json, read_json
+    findExecs, checkdir, eprint
 from mycotools.lib.biotools import \
     gff2list, dict2fa
 from mycotools.lib.dbtools import mtdb, masterDB
 from mycotools.gff2svg import main as gff2svg
 from mycotools.acc2fa import dbmain as acc2fa
-from orthocluster.orthocluster.tools import db2microsyntree
+from mycotools import db2microsyntree
 from orthocluster.orthocluster.lib import phylocalcs, evo_conco, \
     hgx2gcfs, input_parsing, hgpairs2hgx, generate_nulls
 from orthocluster.orthocluster.lib.output_data import output_res
@@ -182,129 +182,6 @@ def runGFF2SVG(ome_dir, regex = r'Pfam=[^;]+'):
         gff2svg(gff2list(gff), svg_path, prod_comp = regex, types = types)
 
 
-def initLog(
-    log_file, log_dict
-    ):
-    with open(log_file, 'w') as out:
-        out.write(
-            'hg_file\t' + str(log_dict['hg_file']) + '\n' + \
-            'plusminus\t' + str(log_dict['plusminus']) + '\n' + \
-            'pair_percentile\t' + str(log_dict['pair_percentile']) + '\n' + \
-            'hgx_percentile\t' + str(log_dict['hgx_percentile']) + '\n' + \
-            'border_percentile\t' + str(log_dict['border_percentile']) + '\n' + \
-            'null_samples\t' + str(log_dict['null_samples']) + '\n' + \
-            'n50\t' + str(log_dict['n50'])
-            )
-
-def readLog(
-    log_file, log_dict
-    ):
-    log_res = {}
-    with open(log_file, 'r') as raw:
-        for line in raw:
-            key = line[:line.find('\t')]
-            res = line[line.find('\t') + 1:].rstrip()
-            if res != str(log_dict[key]):
-                log_res[key] = False
-            else:
-                log_res[key] = True
-    try:
-        if not log_res['n50']:
-            log_res['plusminus'] = False
-        if not log_res['plusminus']:
-            log_res['null_samples'] = False
-        if not log_res['null_samples']:
-            log_res['pair_percentile'] = False
-        if not log_res['pair_percentile']:
-            log_res['border_percentile'] = False
-        if not log_res['border_percentile']:
-            log_res['hgx_percentile'] = False
-    except KeyError:
-        print('\nERROR: corrupted log.txt.' + \
-            '\nIf not rectified, future runs will completely overwrite the current\n')
-        sys.exit(149)
-
-    return log_res
-
-
-def rmOldData(
-    log_res, out_dir, wrk_dir
-    ):
-    if not log_res['null_samples']:
-        nulls = collect_files(wrk_dir + 'null/', 'null.txt')
-        for null in nulls:
-            os.remove(null)
-    if not log_res['pair_percentile']:
-        seed_file = out_dir + 'seed_scores.tsv.gz'
-        seed_arr = wrk_dir + '.arr.npy'
-        if os.path.isfile(seed_file):
-            os.remove(seed_file)
-        if os.path.isfile(seed_arr):
-            os.remove(seed_arr)
-        clus_pickle = wrk_dir + 'hgx2loc.pickle'
-        hgx_pickle = wrk_dir + 'hgx_scores.pickle'
-        ome_pickle = wrk_dir + 'hgx_omes.pickle'
-        if os.path.isfile(clus_pickle):
-            os.remove(clus_pickle)
-        if os.path.isfile(hgx_pickle):
-            os.remove(hgx_pickle)
-        if os.path.isfile(ome_pickle):
-            os.remove(ome_pickle)
-    if not log_res['border_percentile']:
-        row_file = wrk_dir + 'mtx/mcl.prep.rows'
-        prep_file = wrk_dir + 'mtx/mcl.prep.gz'
-        if os.path.isfile(row_file):
-            os.remove(row_file)    
-        if os.path.isfile(prep_file):
-            os.remove(prep_file)
-    if not log_res['hgx_percentile']:
-        kern_file = out_dir + 'hgx_clans.tsv.gz'
-        clus_file = out_dir + 'hgxs.tsv.gz'
-        patch_pickle = wrk_dir + 'patchiness.scores.pickle'
-        ome_dir = wrk_dir + 'ome/'
-        hgx_dir = wrk_dir + 'hgx/'
-        hmm_dir = wrk_dir + 'hmm/'
-        if os.path.isfile(kern_file):
-            os.remove(kern_file)
-        if os.path.isfile(clus_file):
-            os.remove(clus_file)
-        if os.path.isdir(ome_dir):
-            shutil.rmtree(ome_dir)
-        if os.path.isdir(hgx_dir):
-            shutil.rmtree(hgx_dir)
-        if os.path.isdir(hmm_dir):
-            shutil.rmtree(hmm_dir)
-        if os.path.isfile(wrk_dir + 'hgx.tar.gz'):
-            os.remove(wrk_dir + 'hgx.tar.gz')
-        if os.path.isfile(patch_pickle):
-            os.remove(patch_pickle)
-    if not log_res['hg_file']:
-        shutil.rmtree(wrk_dir)
-        os.mkdir(wrk_dir)
-        for key in log_res:
-            log_res[key] = False
-
-
-def logCheck(log_dict, log_path, out_dir, wrk_dir, flag = True):
-
-    if not os.path.isfile(log_path):
-        log_res = {x: False for x in log_dict}
-        rmOldData(log_res, out_dir, wrk_dir)
-        initLog(log_path, log_dict)
-    log_res = readLog(log_path, log_dict)
-    if any(not log_res[x] for x in log_res):
-        if not flag:
-            print('\nInitializing new run', flush = True)
-            rmOldData(log_res, out_dir, wrk_dir)
-            initLog(log_path, log_dict)
-        else:
-            eprint('\nERROR: -n not specified and run parameters changed \
-                    \nSee ' + log_path, flush = True)
-            sys.exit(15)
-
-    return log_res
-
-
 def patch_main(
     phylo, hgx2omes, hgxs, wrk_dir, 
     old_path = 'patchiness.scores.pickle', cpus = 1
@@ -348,14 +225,14 @@ def output_og_fas(db, genes, hg_file):
 def main(
     db, hg_file, out_dir, plusminus = 1, hg_dir = None,
     seed_perc = 0.2, clus_perc = 0.7, hgx_perc = 0.7,
-    id_perc = 0.3, pos_perc = 0.3,
+    id_perc = 30, pos_perc = 30,
     minimum_omes = 2, samples = 10000, pfam = None,
     constraint_path = None, blastp = 'blastp',
     run_dnds = False, cpus = 1, n50thresh = None, 
     root = None, coevo_thresh = 0, patch_thresh = 0,
     microsyn_thresh = 0, method = 'mmseqs easy-cluster',
     printexit = False, flag = True, partition_file = None,
-    near_single_copy_genes = [], verbose = False
+    near_single_copy_genes = [], tree_path = None, verbose = False
     ):
     """
     The general workflow:
@@ -366,26 +243,15 @@ def main(
     coevolution calculation -> optional dN/dS calculations ->
     HGx data output -> cluster retrieving -> data output
     """
-
-    # initialize the log and working directory
-    db = db.set_index('ome')
-    wrk_dir = out_dir + 'working/'
-    if not os.path.isdir(wrk_dir):
-        os.mkdir(wrk_dir)
-
-    nul_dir = wrk_dir + 'null/'
-    if not os.path.isdir(nul_dir):
-        os.mkdir(nul_dir)
-
-    log_path = out_dir + 'log.txt'
-    log_dict = {
-        'hg_file': hg_file, 'plusminus': plusminus,
-        'pair_percentile': seed_perc, 'hgx_percentile': clus_perc,
-        'border_percentile': hgx_perc,
-        'null_samples': samples, 'n50': n50thresh
-        }
-    log_res = logCheck(log_dict, log_path, out_dir, wrk_dir, flag)
-    tree_path = out_dir + 'microsynt.newick'
+    db = db.set_index()
+   
+    wrk_dir, nul_dir = input_parsing.init_run(db, out_dir, 
+                                              near_single_copy_genes, constraint_path,
+                                              tree_path, hg_file, plusminus, 
+                                              seed_perc, clus_perc,
+                                              hgx_perc, id_perc, pos_perc, 
+                                              patch_thresh, coevo_thresh,
+                                              samples, n50thresh, flag)
 
     ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_dict = \
         db2microsyntree.main(db, hg_file, out_dir, wrk_dir,
@@ -413,10 +279,16 @@ def main(
     if not os.path.isfile(out_dir + 'seed_scores.tsv.gz'):
         print('\tCalculating seed HG-pair scores', flush = True)
         seed_score_start = datetime.now()
-        results = phylocalcs.calc_dists(phylo, cooccur_dict, cpus)
-        omes2dist, top_hgs = {x[1]: x[0] for x in results}, []
-        with open(wrk_dir + 'ome_scores.pickle', 'wb') as out:
-            pickle.dump(omes2dist, out)
+        if not os.path.isfile(wrk_dir + 'ome_scores.pickle'):
+            results = phylocalcs.calc_dists(phylo, cooccur_dict, cpus)
+            omes2dist = {x[1]: x[0] for x in results}
+            with open(wrk_dir + 'ome_scores.pickle', 'wb') as out:
+                pickle.dump(omes2dist, out)
+        else:
+            with open(wrk_dir + 'ome_scores.pickle', 'rb') as pickin:
+                omes2dist = pickle.load(pickin)
+
+        top_hgs = []
         for hgpair, omes in cooccur_dict.items():
             score = omes2dist[omes]
             parts = set(ome2partition[x] for x in omes)
@@ -835,10 +707,10 @@ if __name__ == '__main__':
             os.mkdir(out_dir)
             out_dir += '/'
 
-#    if args.constraint:
- #       constraint_path = format_path(args.constraint)
-  #  else:
-   #     constraint_path = None
+    if args.constraint:
+        constraint_path = format_path(args.constraint)
+    else:
+        constraint_path = None
     if len(str(args.seed_percentile)) > 1:
         seed_perc = float('.' + str(args.seed_percentile))
     else:
@@ -868,6 +740,7 @@ if __name__ == '__main__':
         partition_file = args.null_partitions, #        run_dnds = args.dnds, 
         n50thresh = args.n50, near_single_copy_genes = focal_genes,
         root = root, coevo_thresh = args.coevo_threshold, 
+        constraint_path = constraint_path,
         patch_thresh = args.patch_threshold, method = method,
         printexit = args.stop, flag = bool(not args.new)
         )
