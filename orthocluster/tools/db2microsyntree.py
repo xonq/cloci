@@ -140,7 +140,7 @@ def compile_homolog_groups(hg_file, wrk_dir,
 
 
 def compile_loci(
-    db, ome2i, gene2hg, plusminus, cpus = 1
+    db, i2ome, ome2i, gene2hg, plusminus, cpus = 1
     ):
 
     loci_hash_cmds = [
@@ -152,7 +152,8 @@ def compile_loci(
     with mp.get_context('fork').Pool(processes = cpus) as pool:
         loci_hashes = pool.starmap(parseLoci, loci_hash_cmds)
     pool.join()
-    pairs = {x[0]: x[1] for x in loci_hashes}
+    pairs = {}
+    pairs = {x[0]: x[1] for x in loci_hashes if x[1]}
 
     return pairs
 
@@ -315,13 +316,34 @@ def main(db, hg_file, out_dir, wrk_dir, algorithm,
     print('\tParsing homology groups (HGs)', flush = True)
     ome2i, gene2hg, i2ome, hg2gene = compile_homolog_groups(hg_file, wrk_dir, 
                                                             algorithm, useableOmes)
+    
+    missing_from_db = set(ome2i.keys()).difference(set(db.keys()))
     print('\t\tOmes:', len(ome2i), flush = True)
+    if missing_from_db:
+        print(f'\t\t\t{len(missing_from_db)} omes in HGs but not mtdb')
+        for ome in list(missing_from_db):
+            i = ome2i[ome]
+            del ome2i[ome]
+            del i2ome[i]
+        todel = []
+        for gene in gene2hg:
+            ome = gene[:gene.find('_')]
+            if ome in missing_from_db:
+                todel.append(gene)
+        for gene in todel:
+            hg = gene2hg[gene]
+            del gene2hg[gene]
+            hg2gene[hg].pop(hg2gene[hg].index(gene))
+            if not hg2gene[hg]:
+                del hg2gene[hg]
+        i2ome = [ome for ome in ome2i]
+        ome2i = {ome: i for i, ome in enumerate(i2ome)} 
     print('\t\tHGs:', len(hg2gene), flush = True)
     print('\t\tGenes:', len(gene2hg), flush = True)
     
     cc_arr_path = wrk_dir + ''
     ome2pairs = compile_loci(
-        db, ome2i, gene2hg, plusminus,
+        db, i2ome, ome2i, gene2hg, plusminus,
         cpus = cpus
         )
 

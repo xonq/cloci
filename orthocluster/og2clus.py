@@ -348,6 +348,7 @@ def output_og_fas(db, genes, hg_file):
 def main(
     db, hg_file, out_dir, plusminus = 1, hg_dir = None,
     seed_perc = 0.2, clus_perc = 0.7, hgx_perc = 0.7,
+    id_perc = 0.3, pos_perc = 0.3,
     minimum_omes = 2, samples = 10000, pfam = None,
     constraint_path = None, blastp = 'blastp',
     run_dnds = False, cpus = 1, n50thresh = None, 
@@ -397,12 +398,11 @@ def main(
     phylo = input_parsing.compile_tree(
         i2ome, tree_path, root = root
         )
-
     partition_omes, ome2partition, omes2dist, min_pair_scores = \
                                 generate_nulls.gen_pair_nulls(
                                             phylo, ome2i, wrk_dir,
                                             nul_dir, seed_perc, ome2pairs,
-                                            samples = samples,
+                                            i2ome, samples = samples,
                                             partition_file = partition_file,
                                             cpus = cpus
                                             )
@@ -581,7 +581,8 @@ def main(
     hgx2gbc = evo_conco.gbc_main_0(
         hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
         'diamond', db, gene2hg, plusminus, hg2gene, 
-        old_path = 'hgx2gbc.pickle', cpus = cpus, printexit = printexit
+        old_path = f'{wrk_dir}hgx2gbc.pickle', cpus = cpus, 
+        printexit = printexit
         ) # should be able to skip this
 
     # Group hgxs
@@ -590,8 +591,8 @@ def main(
     # log parsing
         gcfs, gcf_hgxs, gcf_omes, omes2dist = hgx2gcfs.classify_gcfs(
             hgx2loc, db, gene2hg, i2hgx, hgx2i,
-            phylo, bordScores, ome2i,
-            hgx2omes, wrk_dir, ome2partion, #hgx2dist,
+            phylo, bordScores_list, ome2i,
+            hgx2omes, wrk_dir, ome2partition, #hgx2dist,
             omes2dist = omes2dist, clusplusminus = plusminus, 
             min_omes = 2, cpus = cpus
             )
@@ -643,7 +644,9 @@ def main(
             omesc = gcf_omes[i0]
             for x, omes in gcf.items():
                 if hgx2omes2gbc[ogc][omesc] >= coevo_thresh \
-                    and omes2patch[omesc] >= patch_thresh:
+                    and omes2patch[omesc] >= patch_thresh \
+                    and hgx2omes2id[ogc][omesc] >= id_perc \
+                    and hgx2omes2id[ogc][omesc] >= pos_perc:
                     if check:
                         newGCFs[-1][x] = omes
                     else:
@@ -662,10 +665,11 @@ def main(
     hgx2dnds = {}
 
     print('\nIX. Writing and annotating clusters', flush = True)
-    output_res(hgx2dist, gcfs, i2ome, hgx2omes, out_dir, gcf_hgxs,
+    output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, 
+         i2ome, hgx2omes, out_dir, gcf_hgxs,
          omes2dist, hgx2omes2gbc, omes2patch, hgx2omes2id,
          hgx2omes2pos, hgx2loc, gene2hg, plusminus, ome2i,
-         hgx2i, hgx2gbc, dnds_dict = {}, cpus = cpus)
+         hgx2i, hgx2gbc, pfam_path = pfam, dnds_dict = {}, cpus = cpus)
 
 
 if __name__ == '__main__':
@@ -726,13 +730,19 @@ if __name__ == '__main__':
     thr_opt = parser.add_argument_group('Thresholding')
     thr_opt.add_argument('-sp', '--seed_percentile', type = int, default = 75,
         help = 'Percentile of HG pair distances; DEFAULT: 75')
-    thr_opt.add_argument('-op', '--hgx_percentile', type = int,
-        help = 'Percentile of HGx microsynteny distances. ' + \
-        'Must be less than -cp; DEFAULT: -cp')
     thr_opt.add_argument('-cp', '--clus_percentile', type = int, default = 80, 
-        help = 'Percentile of HGx microsynteny distances; DEFAULT: 80')
+        help = 'Percentile [0 < value < 100] of HGx microsynteny distances. ' \
+             + 'DEFAULT: 80')
+    thr_opt.add_argument('-hp', '--hgx_percentile', type = int,
+        help = 'Percentile [0 < value < 100] of HGx microsynteny distances. ' \
+             + 'Must be less than -cp; DEFAULT: -cp')
+    thr_opt.add_argument('-ip', '--id_percent', default = 0, type = float,
+        help = 'Percent [0 < value < 100] identity minimum for gene cluster family')
+    thr_opt.add_argument('-pp', '--pos_percent', default = 0, type = float,
+        help = 'Percent [0 < value < 100] positive minimum for gene cluster family')
     thr_opt.add_argument('-pt', '--patch_threshold', default = 0, type = float,
-        help = "Threshold [0 < value < 1] of high order OG combinations' patchiness scores")
+        help = "Threshold [0 < value < 1] of gene cluster family " \
+             + " patchiness scores")
     thr_opt.add_argument('-ct', '--coevo_threshold', default = 0, type = float, 
         help = "Threshold [0 < value < 1] of high order OG combinations' coevolution scores")
 
@@ -792,6 +802,7 @@ if __name__ == '__main__':
         'Root': root_txt, 'Pfam DB': args.pfam, 'Window': args.window*2+1,
         'Seed Percentile': args.seed_percentile, #'Precluster threshold': args.clus_threshold,
         'Cluster percentile': args.clus_percentile, 'HGx percentile': args.hgx_percentile,
+        'Minimum family %id': args.id_percent, 'Minimum family %pos': args.pos_percent,
         'Patchiness threshold': args.patch_threshold, 'Coevolution threshold': args.coevo_threshold,
         'Null samples': args.null_sample, #'Calculate dN/dS': args.dnds, 
         'Minimum N50': args.n50,
@@ -800,9 +811,9 @@ if __name__ == '__main__':
         }
 
     pfam = format_path(args.pfam)
-    if not os.path.isfile(pfam):
-        print('\nERROR: invalid Pfam-A.hmm path', flush = True)
-        sys.exit(4)
+#    if not os.path.isfile(pfam):
+ #       print('\nERROR: invalid Pfam-A.hmm path', flush = True)
+  #      sys.exit(4)
 
     findExecs(execs, exit = set(execs))
     if args.clus_percentile < args.hgx_percentile:
@@ -852,6 +863,7 @@ if __name__ == '__main__':
         cpus = args.cpus, hg_dir = hg_dir, 
         seed_perc = seed_perc, #clus_thresh = args.clus_threshold,
         clus_perc = clus_perc, blastp= 'blastp',#seed_thresh = args.seed_threshold,
+        id_perc = args.id_percent, pos_perc = args.pos_percent,
         hgx_perc = hgx_perc, pfam = pfam, samples = args.null_sample,
         partition_file = args.null_partitions, #        run_dnds = args.dnds, 
         n50thresh = args.n50, near_single_copy_genes = focal_genes,
