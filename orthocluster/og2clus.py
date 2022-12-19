@@ -244,6 +244,8 @@ def main(
     HGx data output -> cluster retrieving -> data output
     """
     db = db.set_index()
+    if not tree_path:
+        tree_path = f'{out_dir}microsynt.newick'
    
     wrk_dir, nul_dir = input_parsing.init_run(db, out_dir, 
                                               near_single_copy_genes, constraint_path,

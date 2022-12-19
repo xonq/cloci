@@ -147,7 +147,7 @@ def log_check(log_dict, log_path, out_dir, wrk_dir, flag = True):
                 eprint('\nERROR: -n not called and incompatible parameters: \
                         \n\t' + ','.join([x for x,v in log_res.items() if not v]),
                    flush = True)
-            sys.exit(15)
+                sys.exit(15)
 
     return log_res
 
