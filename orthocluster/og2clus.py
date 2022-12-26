@@ -213,7 +213,7 @@ def patch_main(
  
     return omes2patch
 
-def output_og_fas(db, genes, hg_file):
+def output_hg_fas(db, genes, hg_file):
     fa_str = dict2fa(acc2fa(
                 db, genes, error = False, spacer = '\t\t',
                 coord_check = False
@@ -436,16 +436,17 @@ def main(
 
     print('\nV. Quantifying HGx coevolution', flush = True)
     if not hg_dir:
-        og_fa_cmds = []
-        hg_dir = wrk_dir + 'og/'
+        print('\tOutputting HG fastas', flush = True)
+        hg_fa_cmds = []
+        hg_dir = wrk_dir + 'hg/'
         if not os.path.isdir(hg_dir):
             os.mkdir(hg_dir)
-        for og, genes in hg2gene.items():
-            hg_file = hg_dir + str(og) + '.faa'
+        for hg, genes in hg2gene.items():
+            hg_file = hg_dir + str(hg) + '.faa'
             if not os.path.isfile(hg_file):
-                og_fa_cmds.append([db, genes, hg_file])
+                hg_fa_cmds.append([db, genes, hg_file])
         with mp.Pool(processes = cpus) as pool:
-            pool.starmap(output_og_fas, og_fa_cmds)
+            pool.starmap(output_hg_fas, hg_fa_cmds)
 #                fa_str = dict2fa(acc2fa(
  #                           db, genes, error = False, spacer = '\t\t'
   #                          ))
