@@ -201,7 +201,7 @@ def load_hgx_nulls(max_clus_size, nul_dir, hgx_perc, clus_perc, partition_num):
     hgxBordPercs, hgxClusPercs = {}, {}
     for size in range(3, max_clus_size + 1):
         nullSizes = []
-        with open(f'{nul_dir}{size}.{partition_num}.null.txt', 'r') as raw:
+        with open(f'{nul_dir}{size}.null.{partition_num}.txt', 'r') as raw:
             for line in raw:
                 nullSizes.append(float(line.rstrip()))
         nullSizes.sort()
@@ -222,7 +222,7 @@ def gen_hgx_nulls(
     Outputs a dictionary of the minimum values for each size HGx
     based on the inputted percentiles. {# of OGs: minimum value}"""
 
-    print('\t\tParsing for random samples', flush = True)
+    print('\t\t\tParsing for random samples', flush = True)
     hash_null_cmds = [
         (x, gene2hg, max_clus_size, plusminus,) \
         for x in gffs
@@ -231,10 +231,11 @@ def gen_hgx_nulls(
         hashRes = pool.starmap(Hash4nulls, hash_null_cmds)
         # hashRes = [({size: [HGx]})...] by ome
 
-    print('\t\tCalculating microsyteny distances of random samples\n\t\tHGx size:', flush = True)
+    print('\t\t\tCalculating microsyteny distances of random samples\n\t\tHGx size:', flush = True)
     hgxBordPercs, hgxClusPercs = {}, {}
+    print('\t\t\t', end = '')
     for size in range(3, max_clus_size + 1): # for all observed sizes
-        print('\t\t\t' + str(size), flush = True)
+        print(str(size), flush = True, end = ' ')
         size_dict = {i: v[size] for i, v in enumerate(hashRes)}
         # spoof i keys, size_dict values 
         hgx2i, i2hgx, null_dict = gen_null_dict(size_dict, samples)
@@ -269,6 +270,8 @@ def partitions2hgx_nulls(db, partition_omes, i2ome, gene2hg, max_hgx_size,
     final_partition = len(partition_omes) - 1
     print('\tPreparing HGx nulls', flush = True)
     for i, omes in enumerate(partition_omes):
+        if len(partition_omes) > 1:
+            print(f'\tLineage {i}', flush = True)
         if not os.path.isfile(f'{nul_dir}{max_hgx_size}.null.{i}.txt'):
             bordScores, clusScores = gen_hgx_nulls(
                 [db[i2ome[k]]['gff3'] for k in omes],
