@@ -22,12 +22,12 @@ def form_hgpairDict(out_hgs):
     return hgpair_dict
 
 
-def hash_protoclusters(gff_path, hgpair_dict, gene2hg, clusplusminus = 10):
+def hash_protohgxs(gff_path, hgpair_dict, gene2hg, clusplusminus = 10):
     """parse a gff and compile its organized CDS_dict. identify where og-pairs
     co-occur and retrieve the set of hgs for the locus with the locus seed
     protein"""
 
-    gff_list, protoclus = gff2list(gff_path), defaultdict(list)
+    gff_list, protohgx = gff2list(gff_path), defaultdict(list)
     cds_dict = compileCDS(gff_list, os.path.basename(gff_path).replace('.gff3',''))
 
     for scaf in cds_dict:
@@ -61,19 +61,19 @@ def hash_protoclusters(gff_path, hgpair_dict, gene2hg, clusplusminus = 10):
                             og_loc = set(og_loc_list)
                             # the set of hgs in this locus
                             hgpair = tuple(sorted([og0, og1])) # sort the hgs
-                            protoclus[hgpair].append([og_loc, seq0, seq1])
+                            protohgx[hgpair].append([og_loc, seq0, seq1])
                             # {(og0, og1}: [[set(hgx, .. ogy), seq0, seq1], ...]}
 
-    return dict(protoclus)
+    return dict(protohgx)
 
-def merge_protos(protoclus_res):
-    """combine protoclus results from each organism"""
+def merge_protos(protohgx_res):
+    """combine protohgx results from each organism"""
 
     protohgx2omes = defaultdict(list)
-    for ome_protoclus in protoclus_res: # for each protoclus from the mp
+    for ome_protohgx in protohgx_res: # for each protohgx from the mp
     # results
-        for hgpair in ome_protoclus: 
-            protohgx2omes[hgpair].extend(ome_protoclus[hgpair])
+        for hgpair in ome_protohgx: 
+            protohgx2omes[hgpair].extend(ome_protohgx[hgpair])
             # {(og0, og1)}: [[set(hgx, ogy), seq], ...]
 
     return dict(protohgx2omes)
@@ -157,23 +157,23 @@ def id_hgx(db, hgpair_dict, gene2hg, ome2i, cpus, clusplusminus = 10):
     """form hgxs from hgpairs by extracting higher order combinations from
     overlapping hgx loci"""
 
-    hash_protoclus_cmds = []
+    hash_protohgx_cmds = []
     gffs = [v['gff3'] for k, v in db.items() if k in ome2i]
-    print('\t\tForming protocluster hashes', flush = True)
-    for gff in gffs: # prepare for protocluster hashing by organism
-        hash_protoclus_cmds.append((gff, hgpair_dict, gene2hg, clusplusminus,))
+    print('\t\tForming proto-HGx hashes', flush = True)
+    for gff in gffs: # prepare for protohgx hashing by organism
+        hash_protohgx_cmds.append((gff, hgpair_dict, gene2hg, clusplusminus,))
     with mp.get_context('fork').Pool(processes = cpus) as pool:
-        protoclus_res = pool.starmap(hash_protoclusters, hash_protoclus_cmds)
+        protohgx_res = pool.starmap(hash_protohgxs, hash_protohgx_cmds)
     pool.join()
                 
     print('\t\tForming proto-HGxs', flush = True)
-    protohgx2omes = merge_protos(protoclus_res) # merge mp results
+    protohgx2omes = merge_protos(protohgx_res) # merge mp results
             
     print('\t\tGenerating high order HGxs', flush = True)
     print('\t\t\t' + str(sum([
            len(protohgx2omes[x])**2 - len(protohgx2omes[x]) \
            for x in protohgx2omes
-        ])) + ' to run', flush = True)
+        ])/2) + ' to run', flush = True)
     count = 0       
                     
     # generate dictionaries of crude predicted hgxs
