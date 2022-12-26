@@ -130,8 +130,8 @@ def blast_homolog(db, hgs, hg_dir, hgx_dir,
             out.write('\n'.join([' '.join(x) for x in cmds1]))
         with open(hgx_dir + '../../gbc_srch.sh', 'w') as out:
             out.write('\n'.join([' '.join(x) for x in cmds2]))
-        print('\nGBC commands outputted to `<OUTPUT>/gbc*.sh` \
-               Run makedb first', flush = True)
+        print('\nGBC commands outputted to `<OUTPUT>/gbc*.sh` ' \
+            + 'Run `gbc_makedb.sh` first', flush = True)
         sys.exit(0)
 
     print('\tMaking ' + str(len(cmds1)) + ' diamond databases', flush = True)
