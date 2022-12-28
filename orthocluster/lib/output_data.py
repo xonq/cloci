@@ -386,7 +386,7 @@ def grabClus(genes_list, gff_path, prot_path, ome, ome_dir, gene2hg, pfamRes = {
 def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, gcf_hgxs,
          omes2dist, hgx2omes2gbc, omes2patch, hgx2omes2id,
          hgx2omes2pos, hgx2loc, gene2hg, plusminus, ome2i,
-         hgx2i, hgx2gbc, pfam_path = None, dnds_dict = {}, cpus = 1):
+         hgx2i, pfam_path = None, dnds_dict = {}, cpus = 1):
 
     print('\tWriting cluster scores', flush = True)
     gcf_output, done, maxval = [], set(), max(hgx2dist.values())
@@ -399,13 +399,12 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
                 continue
             gcf_output.append([
                 ','.join([str(x) for x in hgx]), hgx_id,
-                gcf, hgx2dist[hgx]/maxval, hgx2gbc[hgx],
-#                omes2patch[tuple(hgx2omes[hgx])],
+                gcf, hgx2dist[hgx]/maxval,
                 ','.join([i2ome[x] for x in hgx2omes[hgx]])
                 ]) # HGxs at this stage are not segregated into groups
     gcf_output = sorted(gcf_output, key = lambda x: x[3], reverse = True)
     with gzip.open(out_dir + 'hgxs.tsv.gz', 'wt') as out:
-        out.write('#hgs\thgx_id\tgcf\tdistance\tcoevolution\tomes')#\tpatchiness\tomes')
+        out.write('#hgs\thgx_id\tgcf\tdistance\tomes')#\tpatchiness\tomes')
         for entry in gcf_output:
             out.write('\n' + '\t'.join([str(x) for x in entry]))
 
@@ -442,7 +441,7 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
 
     with gzip.open(out_dir + 'gcfs.tsv.gz', 'wt') as out:
         out.write('#hgs\tgcf\tdistance\tpatchiness' \
-                + '\tcoevolution\t%id\t%pos\tomes') #+ \
+                + '\tgbc\t%id\t%pos\tomes') #+ \
             #'selection_coef\tmean_dnds\tog_dnds\t' + \
          #   'total_dist'
 #            )
