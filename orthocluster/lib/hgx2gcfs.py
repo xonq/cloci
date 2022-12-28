@@ -8,9 +8,8 @@ from datetime import datetime
 from itertools import combinations
 from collections import defaultdict
 from scipy.sparse import lil_matrix
-from mycotools.acc2fa import dbmain as acc2fa
-from mycotools.lib.biotools import dict2fa, gff2list
-from mycotools.lib.kontools import write_json, read_json
+from mycotools.lib.biotools import fa2dict, dict2fa, gff2list
+from mycotools.lib.kontools import write_json, read_json, collect_files
 from orthocluster.orthocluster.lib import input_parsing, phylocalcs
 
 def hash_hgx(gff_path, ome, hgx_genes, gene2hg, clusplusminus):
@@ -151,56 +150,61 @@ def acquire_clus_gcf_sim(
 
 
 def clan_to_gcf_loci(
-    db, clanI, loci, ogLoci, gcf_dir, Q, index,
+    db, clanI, loci, hgLoci, hg_dir, gcf_dir, Q, index,
     diamond = 'diamond', minid = 30
     ):
 
-
     blast_hash = defaultdict(list)
     for i, locus in enumerate(loci):
-        hgs = ogLoci[i]
-        for i1, og in enumerate(hgs):
-            if og is not None:
-                blast_hash[og].append(locus[i1])
+        hgs = hgLoci[i]
+        for i1, hg in enumerate(hgs):
+            if hg is not None:
+                blast_hash[hg].append(locus[i1])
 
     blast_ids = defaultdict(dict)
-    for og, genes in blast_hash.items():
+
+    for hg, genes in blast_hash.items():
         if len(genes) > 1:
-            fileBase = gcf_dir + str(clanI) + '.' + str(og)
+            fileBase = gcf_dir + str(clanI) + '.' + str(hg)
             if not os.path.isfile(fileBase + '.out'):
-                fa_dict = acc2fa(db, genes)
-                with open(fileBase + '.fa', 'w') as out:
+                f_fa_dict = fa2dict(f'{hg_dir}{hg}.faa')
+                fa_dict = {g: f_fa_dict[g] for g in genes}
+                with open(fileBase + '.faa', 'w') as out:
                     out.write(dict2fa(fa_dict))
                 makeDBcmd = subprocess.call([
-                    diamond, 'makedb', '--in', fileBase + '.fa', '--db',
+                    diamond, 'makedb', '--in', fileBase + '.faa', '--db',
                     fileBase + '.dmnd', '--threads', str(2)
                     ], stdout = subprocess.DEVNULL,
                     stderr = subprocess.DEVNULL
                     )
-                dmndBlast = subprocess.call([diamond, 'blastp', '--query', fileBase + '.fa',
-                    '--db', fileBase, '--threads', str(2), '--id', str(minid), '--no-self-hits',
-                    '-o', fileBase + '.out.tmp', '--outfmt', '6', 'qseqid', 'sseqid', 'pident'
-                    ], stdin = subprocess.PIPE, stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL)
+                dmndBlast = subprocess.call([diamond, 'blastp', '--query', 
+                    fileBase + '.fa', '--db', fileBase, '--threads', str(2), 
+                    '--id', str(minid), '--no-self-hits', '-o', 
+                    fileBase + '.out.tmp', '--outfmt', '6', 'qseqid', 'sseqid', 
+                    'pident'
+                    ], stdin = subprocess.PIPE, stdout = subprocess.DEVNULL, 
+                    stderr = subprocess.DEVNULL)
                 shutil.move(fileBase + '.out.tmp', fileBase + '.out')
 
-            with open(fileBase + '.out', 'r') as raw:
-                for line in raw:
-                    q, s, pident = line.split()
-                    if q not in blast_ids[og]:
-                        blast_ids[og][q] = {}
-                    blast_ids[og][q][s] = float(pident)/100 # adjust diamond to decimal
+        with open(fileBase + '.out', 'r') as raw:
+            for line in raw:
+                q, s, pident = line.split()
+                if q not in blast_ids[hg]:
+                    blast_ids[hg][q] = {}
+                blast_ids[hg][q][s] = float(pident)/100 # adjust diamond to decimal
+
 
     blast_ids = dict(blast_ids)
     if blast_ids:
         for i0, i1 in combinations(range(len(loci)), 2):
             loc0, loc1 = loci[i0], loci[i1]
-            ogL0, ogL1 = ogLoci[i0], ogLoci[i1]
-            sOGl0 = set([x for x in ogL0 if x is not None])
-            sOGl1 = set([x for x in ogL1 if x is not None])
-            if not sOGl0.isdisjoint(sOGl1): # if there is an intersection 
+            hgL0, hgL1 = hgLoci[i0], hgLoci[i1]
+            sHGl0 = set([x for x in hgL0 if x is not None])
+            sHGl1 = set([x for x in hgL1 if x is not None])
+            if not sHGl0.isdisjoint(sHGl1): # if there is an intersection 
 #                print('\t', i0, i1, flush = True)
-                acquire_clus_gcf_sim(i0, i1, index, loc0, loc1, ogL0, ogL1, sOGl0,
-                                 sOGl1, blast_ids, Q)
+                acquire_clus_gcf_sim(i0, i1, index, loc0, loc1, hgL0, hgL1, sHGl0,
+                                 sHGl1, blast_ids, Q)
 
 
 
@@ -295,15 +299,16 @@ def write_adj_matrix(Q, out_file):
 
 def classify_gcfs(
     hgx2loc, db, gene2hg, i2hgx, hgx2i,
-    phylo, bordScores, ome2i, hgx2omes,
+    phylo, bordScores, ome2i, hgx2omes, hg_dir,
     wrk_dir, ome2partition, omes2dist = {}, clusplusminus = 3,
-    inflation = 1.5, minimum = 2, min_omes = 2, cpus = 1
+    inflation = 1.5, minimum = 2, min_omes = 2, 
+    minid = 30, cpus = 1
     ):
 
     groupI = wrk_dir + 'group.I.pickle'
     groupII = wrk_dir + 'group.II.pickle'
     if not os.path.isfile(groupI):
-        print('\tDiscovering HGxs with overlapping loci', flush = True)
+        print('\tAggregating HGxs with overlapping loci', flush = True)
 
         hgx_genes = {}
         for hgx in hgx2loc:
@@ -340,13 +345,13 @@ def classify_gcfs(
             pickle.dump([gene2hgx, hgx2genes], out)
         print('\t\t\t' + str(datetime.now() - start))
     elif not os.path.isfile(groupII):
-        print('\tLoading HGxs with overlapping loci', flush = True)
+        print('\tLoading aggregated HGxs', flush = True)
         with open(groupI, 'rb') as in_:
             gene2hgx, hgx2genes = pickle.load(in_)
 
     groupIII = wrk_dir + 'group.III.pickle'
     if not os.path.isfile(groupIII):
-        print('\tIdentifying significantly overlapping HGxs', flush = True)
+        print('\tIdentifying significant HGx aggregations', flush = True)
         tpairDict = defaultdict(list)
         for ome, gene2hgx_ome in gene2hgx.items():
             tpairDict = findHGxPairSingle(
@@ -362,7 +367,7 @@ def classify_gcfs(
 
         omes2dist = phylocalcs.update_dists(phylo, pairDict, cpus = cpus, omes2dist = omes2dist)
 
-        print('\tClassifying HGx clans and Orthologous Cluster Groups (GCFs)', flush = True)
+        print('\tClassifying HGx clans and gene cluster families (GCFs)', flush = True)
         # populate a lil_matrix here, then use that network to identify modules
         print('\t\tBuilding binary HGx-HGx network', flush = True)
         matrix = lil_matrix((len(i2hgx), len(i2hgx)), dtype=bool)
@@ -378,7 +383,7 @@ def classify_gcfs(
             if omes2dist[omes] >= bord_score:
                 matrix[i0, i1] = True
                 matrix[i1, i0] = True
-        print('\t\tIsolating subgraphs', flush = True)
+        print('\t\tIsolating subgraphs (HGx clans)', flush = True)
         network = nx.from_scipy_sparse_matrix(matrix)
         subgraphs = [network.subgraph(c) for c in nx.connected_components(network)]
         # use .copy() after iterator to copy
@@ -412,7 +417,7 @@ def classify_gcfs(
 
     print('\tClassifying HGx clans into GCFs', flush = True)
     clanFile = wrk_dir + 'clan2loci.'
-    if not os.path.isfile(clanFile + 'og.json.gz'):
+    if not os.path.isfile(clanFile + 'hg.json.gz'):
         print('\t\tPreparing loci extraction', flush = True)
         ome2clus2extract = defaultdict(dict)
         for i, clan in enumerate(clans):
@@ -444,7 +449,7 @@ def classify_gcfs(
                 clanOGloci[clan].extend(outclanOGloci[clan])
         write_json(clanLoci, clanFile + 'json.gz')
         write_json(clanHGx4gcfs, clanFile + 'hgx.json.gz')
-        write_json(clanOGloci, clanFile + 'og.json.gz')
+        write_json(clanOGloci, clanFile + 'hg.json.gz')
     else:
         print('\t\tLoading clan loci', flush = True)
         clanLoci = {
@@ -452,7 +457,7 @@ def classify_gcfs(
                 read_json(clanFile + 'json.gz').items(), key = lambda x: len(x[1]), reverse = True
             )}
         clanHGx4gcfs = {int(k): tuple([tuple(i) for i in v]) for k,v in read_json(clanFile + 'hgx.json.gz').items()}
-        clanOGloci = {int(k): tuple(v) for k, v in read_json(clanFile + 'og.json.gz').items()}
+        clanOGloci = {int(k): tuple(v) for k, v in read_json(clanFile + 'hg.json.gz').items()}
 
     # dict(clanLoci) = {int(clanI): ((ome0_gene0, ome0_gene1,)...,)}
     # dict(clanHGx4gcfs) = {int(clanI): ((og0, og1, ogn,)...,)}
@@ -464,7 +469,7 @@ def classify_gcfs(
 
     print('\t\tCalling GCFs', flush = True)
     print('\t\t\t' + str(sum([len(v) for v in list(clanLoci.values())])) \
-        + ' loci considered', flush = True)
+        + ' loci analyzed', flush = True)
 
     m, adj_mtr = mp.Manager(), gcf_dir + 'loci.adj.tmp'
     Q = m.Queue()
@@ -479,7 +484,7 @@ def classify_gcfs(
     for clanI in clanLoci:
         cmds.append([
             db, clanI, clanLoci[clanI], clanOGloci[clanI],
-            gcf_dir, Q, index
+            gcf_dir, hg_dir, Q, index, minid
             ])
         for i, locus in enumerate(clanLoci[clanI]):
             loci[index] = clanLoci[clanI][i]
