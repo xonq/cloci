@@ -1,8 +1,7 @@
 #! /usr/bin/env python3
 
-#NEED thresholding for percent pos and percent id
 #NEED a coverage filter for the diamond searches
-#NEED to make gbc_mngr_3 split different families with the same GCF
+#NEED to make gbc_mngr split different families with the same GCF
 #NEED to change border percentile entries to clus percentile
 #NEED to allow hard threshold for microsynteny distance
 #NEED locus-based GCF hypergeometric average
@@ -14,7 +13,6 @@
 #NEED to implement gff2svg
 #NEED to delete excess when checkpoints are reached
     # implement tarring effectively
-#NEED to use conservative thresholds depending on partition
 
 import os
 import re
@@ -27,6 +25,7 @@ import hashlib
 import argparse
 import numpy as np
 import multiprocessing as mp
+from itertools import chain
 from datetime import datetime
 from collections import defaultdict
 from mycotools.lib.kontools import \
@@ -220,6 +219,69 @@ def output_hg_fas(db, genes, hg_file):
                 ))
     with open(hg_file, 'w') as out:
         out.write(fa_str)
+
+def cp_files(f0, f1):
+    shutil.copy(f0, f1)
+
+def symlink_files(f0, f1):
+    os.symlink(f0, f1)
+
+def hg_fa_mngr(wrk_dir, hg_dir, hgx2dist, db, hg2gene):
+    new_hg_dir = wrk_dir + 'hg/'
+    if not os.path.isdir(new_hg_dir):
+        os.mkdir(new_hg_dir)
+    # extract only used HGs
+    hgs = sorted(set(chain(*list(hgx2dist.keys()))))
+    hg_files = set([int(x[:-4]) for x in collect_files(new_hg_dir, 'faa')])
+    missing_hgs = sorted(set(hgs).difference(hg_files))
+
+    if not hg_dir:
+        hg_fa_cmds = []
+        for hg in missing_hgs:
+            hg_file = new_hg_dir + str(hg) + '.faa'
+            genes = hg2gene[hg]
+            hg_fa_cmds.append([db, genes, hg_file])
+        with mp.Pool(processes = cpus) as pool:
+            pool.starmap(output_hg_fas, hg_fa_cmds)
+    else: # predetermined hg input
+        hg_fa_cmds = []
+        if not os.path.isfile(f'{hg_dir}{hgs[0]}.faa'):
+             digits = len(str(hgs[0]))
+             zeros = 7 - digits
+             if os.path.isfile(f'{hg_dir}OG{"0" * zeros}{hgs[0]}.fa'):
+                 orthofinder = True
+                 ext = '.fa'
+             elif os.path.isfile(f'{hg_dir}{hgs[0]}.fa'):
+                 ext = '.fa'
+             elif os.path.isfile(f'{hg_dir}{hgs[0]}.fasta'):
+                 ext = '.faa'
+        else:
+             raise FileNotFoundError('HG fastas missing')
+
+        if orthofinder:
+             for hg in missing_hgs:
+                 digits = len(str(hg))
+                 zeros = 7 - digits
+                 hg_file = (f'{hg_dir}OG{"0" * zeros}{hg}.fa')
+                 hg_fa_cmds.append((hg_file, f'{new_hg_dir}{hg}.faa'))
+        else:
+            hg_fa_cmds = [(f'{hg_dir}{hg}{ext}', f'{new_hg_dir}{hg}.faa') \
+                          for hg in missing_hgs]
+    copy_hgs = False
+    try:
+        os.symlink(hg_fa_cmds[0][0], hg_fa_cmds[0][1])
+        del hg_fa_cmds[0]
+    except:
+        copy_hgs = True
+
+    if copy_hgs:
+        with mp.Pool(processes = cpus) as pool:
+            pool.starmap(symlink_files, hg_fa_cmds)
+    else:
+        with mp.Pool(processes = cpus) as pool:
+            pool.starmap(cp_files, hg_fa_cmds)
+
+    return new_hg_dir
 
 
 def main(
@@ -434,40 +496,21 @@ def main(
     if not checkdir(hgx_dir, unzip = True, rm = True):
         os.mkdir(hgx_dir)
 
-    print('\nV. Quantifying HGx coevolution', flush = True)
-    if not hg_dir:
-        print('\tOutputting HG fastas', flush = True)
-        hg_fa_cmds = []
-        hg_dir = wrk_dir + 'hg/'
-        if not os.path.isdir(hg_dir):
-            os.mkdir(hg_dir)
-        for hg, genes in hg2gene.items():
-            hg_file = hg_dir + str(hg) + '.faa'
-            if not os.path.isfile(hg_file):
-                hg_fa_cmds.append([db, genes, hg_file])
-        with mp.Pool(processes = cpus) as pool:
-            pool.starmap(output_hg_fas, hg_fa_cmds)
-#                fa_str = dict2fa(acc2fa(
- #                           db, genes, error = False, spacer = '\t\t'
-  #                          ))
-   #             with open(hg_file, 'w') as out:
-    #                out.write(fa_str)
-
-    hgx2gbc = evo_conco.gbc_main_0(
-        hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
-        'diamond', db, gene2hg, plusminus, hg2gene, 
-        old_path = f'{wrk_dir}hgx2gbc.pickle', cpus = cpus, 
-        printexit = printexit
-        ) # should be able to skip this
-
     # Group hgxs
-    print('\nVI. Inferring HGx clans', flush = True)
+    hgx_dir = wrk_dir + 'hgx/'
+    if not checkdir(hgx_dir, unzip = True, rm = True):
+        os.mkdir(hgx_dir)
+
+    print('\nV. Calling gene clusters from HGxs', flush = True)
+    print('\tOutputting HG fastas', flush = True)
+    hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgx2dist, db, hg2gene)
+
     if not os.path.isfile(wrk_dir + 'gcfs.pickle'): # need to add this to
     # log parsing
         gcfs, gcf_hgxs, gcf_omes, omes2dist = hgx2gcfs.classify_gcfs(
             hgx2loc, db, gene2hg, i2hgx, hgx2i,
             phylo, bordScores_list, ome2i,
-            hgx2omes, wrk_dir, ome2partition, #hgx2dist,
+            hgx2omes, hg_dir, wrk_dir, ome2partition, #hgx2dist,
             omes2dist = omes2dist, clusplusminus = plusminus, 
             min_omes = 2, cpus = cpus
             )
@@ -488,23 +531,21 @@ def main(
         if gcf_omes[i] not in omes2patch
         ] # hgxs without patchiness scores
    
-    print('\nVII. Quantifying GCF patchiness', flush = True)
+    print('\nVI. Quantifying GCF patchiness', flush = True)
     omes2patch = {**patch_main(
         phylo, runHGxs, runOmes, wrk_dir,
         old_path = 'patchiness.full.pickle', cpus = cpus
         ), **omes2patch} # could make more efficient by skipping redos
 
-    hgx_dir = wrk_dir + 'hgx/'
-    if not checkdir(hgx_dir, unzip = True, rm = True):
-        os.mkdir(hgx_dir)
 
-    print('\nIIX. Quantifying GCF gene evolution concordancy', flush = True)
-    hgx2omes2gbc, hgx2omes2id, hgx2omes2pos = evo_conco.gbc_main_1(
+    print('\nVII. Quantifying GCF gene BLAST concordance (GBC)', flush = True)
+    hgx2omes2gbc, hgx2omes2id, hgx2omes2pos = evo_conco.gbc_main(
                             hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
                             blastp, db, gene2hg, plusminus, hg2gene, 
                             old_path = 'hgx2omes2pos.full.pickle',
                             modules = gcfs, moduleHGxs = gcf_hgxs,
-                            moduleOmes = gcf_omes, cpus = cpus
+                            moduleOmes = gcf_omes, printexit = printexit,
+                            cpus = cpus
                             )
 
     if coevo_thresh > 0 or patch_thresh > 0 or microsyn_thresh > 0:
@@ -539,18 +580,18 @@ def main(
  #       print('\nIIX. Skipping quantifying selection', flush = True)
     hgx2dnds = {}
 
-    print('\nIX. Writing and annotating clusters', flush = True)
+    print('\nIIX. Writing and annotating clusters', flush = True)
     output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, 
          i2ome, hgx2omes, out_dir, gcf_hgxs,
          omes2dist, hgx2omes2gbc, omes2patch, hgx2omes2id,
          hgx2omes2pos, hgx2loc, gene2hg, plusminus, ome2i,
-         hgx2i, hgx2gbc, pfam_path = pfam, dnds_dict = {}, cpus = cpus)
+         hgx2i, pfam_path = pfam, dnds_dict = {}, cpus = cpus)
 
 
 if __name__ == '__main__':
     # need these here because spawn mp context forces reimport
-    from scipy.stats import hypergeom
-    from dna_features_viewer import GraphicFeature, GraphicRecord
+#    from scipy.stats import hypergeom
+ #   from dna_features_viewer import GraphicFeature, GraphicRecord
     
     description = \
     """Pharmaceuticals are primarily derived from biologically-produced compounds, their
@@ -619,13 +660,13 @@ if __name__ == '__main__':
         help = "Threshold [0 < value < 1] of gene cluster family " \
              + " patchiness scores")
     thr_opt.add_argument('-ct', '--coevo_threshold', default = 0, type = float, 
-        help = "Threshold [0 < value < 1] of high order OG combinations' coevolution scores")
+        help = "Threshold [0 < value < 1] of high order HG combinations' coevolution scores")
 
     run_opt = parser.add_argument_group('Runtime options')
 #    run_opt.add_argument('-s', '--dnds', action = 'store_true', help = 'Run dN/dS calculations')
     run_opt.add_argument('--n50', help = 'Minimum assembly N50')
     run_opt.add_argument('--stop', action = 'store_true', 
-                        help = 'Print GBC commands and exit')
+                        help = 'Print diamond commands and exit at Step VII.')
     run_opt.add_argument('-o', '--output_dir')
     run_opt.add_argument('-n', '--new', action = 'store_true', 
         help = 'Overwrite old run')
