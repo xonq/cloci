@@ -3,10 +3,11 @@ import sys
 import pickle
 import subprocess
 import multiprocessing as mp
+from itertools import chain
 from collections import defaultdict
-from mycotools.lib.kontools import multisub, tardir
-from mycotools.lib.biotools import gff2list
 from mycotools.acc2fa import dbmain as acc2fa
+from mycotools.lib.biotools import gff2list
+from mycotools.lib.kontools import multisub, tardir, collect_files
 from orthocluster.orthocluster.lib.input_parsing import compileCDS2
 
 
@@ -72,123 +73,6 @@ def run_make_dmnddb(db, diamond, hgx_dir, og, genes):
     makeDBcmd.communicate(input=dict2fa(fa_dict).encode())[0]
     makeDBcmd.stdin.close()
     makeDBcmd.wait()
-
-
-def blast_homolog(db, hgs, hg_dir, hgx_dir,
-                  diamond, hg2gene, cpus = 1,
-                  printexit = False):
-
-    cmds1, cmds2 = [], []
-    for hg in hgs:
-        if not os.path.isfile(hgx_dir + str(hg) + '.out'):
-            hg_file = hg_dir + str(hg) + '.faa'
-            out_file = hgx_dir + str(hg) + '.out'
-            if not os.path.isfile(hg_file): # try OrthoFinder check
-                digits = len(str(hg))
-                zeros = 7 - digits
-                hg_file = hg_dir + 'OG' + '0' * zeros + str(hg) + '.fa'
-            cmds2.append([
-                diamond, 'blastp', '--query', hg_file,
-                '--db', hgx_dir + str(hg) + '.dmnd',
-                '-o', out_file, '--outfmt',
-                '6', 'qseqid', 'sseqid', 'evalue', 'pident', 'ppos'
-                ])
-        else:
-            continue
-#            if len(hg2gene[og]) > 100: # key here is efficiency
-        if not os.path.isfile(hgx_dir + str(hg) + '.dmnd'):
-#            cmds1.append([
- #               db, blastp, hgx_dir, og, hg2gene[og]
-  #              ])
-            cmds1.append([diamond, 'makedb', '--db',
-                          hgx_dir + str(hg) + '.dmnd',
-                          '--in', hg_file])
-
- #               search_cmd = subprocess.call(('mmseqs easy-search ' + hg_file + ' ' \
-  #                          + hg_file + ' ' + out_file + '.tmp ' \
-   #                         + hgx_dir + 'tmp/ --threads ' + str(cpus) + ' ' \
-    #                        + '--format-output query,target,evalue').split(' '),
-     #                       stdout = subprocess.DEVNULL,
-      #                      stderr = subprocess.DEVNULL)
-       #     else:
-        #        search_cmd = subprocess.call('blastp -query {hg_file} -subject {hg_file} \
-         #                    -out {out_file}.tmp -num_threads {cpus} -outfmt \
-          #                   "6 qseqid sseqid evalue"' %
-           #                  {'hg_file': hg_file,
-            #                 'out_file': out_file,
-             #                'cpus': str(cpus)},
-              #               shell = True, stdout = subprocess.DEVNULL,
-               #              stderr = subprocess.DEVNULL)
-   #         if os.path.isfile(out_file + '.tmp'):
-  #              os.rename(out_file + '.tmp', out_file)
- #           else:
-#                raise FileNotFoundError('BLASTp failed: ' + str(search_cmd) \
-    #                                  + ' ' + out_file)
-
-    if printexit:
-        with open(hgx_dir + '../../gbc_makedb.sh', 'w') as out:
-            out.write('\n'.join([' '.join(x) for x in cmds1]))
-        with open(hgx_dir + '../../gbc_srch.sh', 'w') as out:
-            out.write('\n'.join([' '.join(x) for x in cmds2]))
-        print('\nGBC commands outputted to `<OUTPUT>/gbc*.sh` ' \
-            + 'Run `gbc_makedb.sh` first', flush = True)
-        sys.exit(0)
-
-    print('\tMaking ' + str(len(cmds1)) + ' diamond databases', flush = True)
-#    with mp.get_context('fork').Pool(processes = cpus) as pool:
- #       pool.starmap(run_make_dmnddb, cmds1)
-    multisub(cmds1, processes = cpus)
-
-    print('\tRunning ' + str(len(cmds2)) + ' diamonds', flush = True)
-    multisub(cmds2, processes = cpus)
-
-
-def gbc_mngr_2( 
-    hgs, omes, hg_dir, hgx_dir, diamond, hgx2loc, 
-    db, gene2hg, clusplusminus, hg2gene, cpus = 1,
-    printexit = False
-    ):
-                    
-    blast_homolog(db, hgs, hg_dir, hgx_dir, diamond, hg2gene, cpus = 1,
-                  printexit = printexit) 
-    hgxGene_cmds = []
-    ome_locs = {ome: defaultdict(list) for ome in omes}
-    for hgx in hgx2loc:
-        for seq in hgx2loc[hgx]:
-            ome = seq[:seq.find('_')]
-            ome_locs[ome][seq].append((hgx, None,))
-    
-    for ome in ome_locs:
-        gff = db[ome]['gff3']
-        hgxGene_cmds.append([gff, ome_locs[ome], gene2hg, clusplusminus])
-  
-    print('\tAssimilating loci with significant HGxs', flush = True)
-    with mp.get_context('fork').Pool(processes = cpus) as pool:
-        clus_hgs_prep = pool.starmap(retroactive_grab_hgx_genes, hgxGene_cmds)
-#    {hgx:[{og:[seq]}]}
-        
-    clus_hgs = {} 
-    for res in clus_hgs_prep:
-        for hgx, loci in res.items():
-            if hgx not in clus_hgs:
-                clus_hgs[hgx] = {x: [] for x in hgx}
-            for null, locus in loci:
-                for og in locus:
-                    clus_hgs[hgx][og].extend(locus[og])
-    clus_hgs = {    
-        hgx: {og: set(v) for og, v in hgs.items()} for hgx, hgs in clus_hgs.items()
-        } # make sets from it
-    # {hgx: {og: set(seqs)}}
-            
-    print('\tCalculating gene blast congruence (GBC) scores', flush = True)
-    with mp.get_context('fork').Pool(processes = cpus) as pool:
-        gbc_res = pool.starmap(
-            calc_gbc, [[hgx, clus_hgs[hgx], hgx_dir] for hgx in clus_hgs]
-            )
-                
-    gcb_scores = dict(gbc_res)
-     
-    return gcb_scores 
 
 
 def hgx2omes2gbc_calc(
@@ -289,7 +173,7 @@ def hgx2omes2gbc_calc(
     return hgx, omesI, gbcScore, gcf_min_id, gcf_min_pos
 
 
-def gbc_mngr_3(
+def gbc_mngr(
     hgs, omes, hgx_dir, hgx2loc,
     db, gene2hg, clusplusminus, hg2gene, modules,
     moduleOmes, moduleHGxs, ome2i, cpus = 1
@@ -360,91 +244,26 @@ def gbc_mngr_3(
     return hgx2omes2gbc, hgx2omes2id, hgx2omes2pos
 
 
-def calc_gbc(
-    hgx, hgxDict, hgx_dir
-    ):
-    # hgxDict = {og: set(gene1, gene2)}
+def prep_blast_cmds(db, hgs, hg_dir, hgx_dir, minid = 30, diamond = 'diamond'):
 
-    res= {}
-    for og in hgxDict:
-        res[og] = {}
-        with open(hgx_dir + str(og) + '.out', 'r') as raw:
-            geneInfo = defaultdict(list)
-            for line in raw:
-                # query,subject,...,bit
-                d = line.rstrip().split('\t')
-                q = d[0]
-                s = d[1]
-                evalue = float(d[-1])
-                if q in hgxDict[og]:
-                    geneInfo[q].append((s, evalue))
-        geneInfo = {
-            k: sorted(v, key = lambda x: x[1]) for k,v in
-            geneInfo.items()
-            } # would need to reverse if using bitscore
+    alnd_hgs = set([int(x[:-4]) for x in collect_files(hgx_dir, 'out')])
+    dmnd_dbs = set([int(x[:-5]) for x in collect_files(hgx_dir, 'dmnd')])
+    missing_alns = set(hgs).difference(alnd_hgs)
+    missing_dmnds = set(missing_alns).difference(dmnd_dbs)
 
-        for gene in list(hgxDict[og]):
-            ome = gene[:gene.find('_')]
-            if ome not in res[og]:
-                res[og][ome] = False
-            if res[og][ome]:
-                continue
-            try:
-                while geneInfo[gene][0][0][:geneInfo[gene][0][0].find('_')] == ome:
-                    geneInfo[gene].pop(0)
-            except IndexError:
-                continue
-            except KeyError: # the gene is not in the blast results (too short?)
-                continue # would be nice to quantitate the percent of this
-            if geneInfo[gene][0][0] in geneInfo:
-                res[og][ome] = geneInfo[gene][0][0] # this isn't a reciprocal
-                # analysis as it currently stands, its just a check for
-                # correlation
+    cmds1 = [(diamond, 'makedb', '--db', f'{hgx_dir}{hg}.dmnd',
+              '--in', f'{hg_dir}{hg}.faa', '--threads', '2') \
+              for hg in missing_dmnds]
+    cmds2 = [(diamond, 'blastp', '--query', f'{hg_dir}{hg}.faa',
+              '--db', f'{hgx_dir}{hg}.dmnd', '-o', f'{hgx_dir}{hg}.out',
+              '--outfmt', '6', 'qseqid', 'sseqid', 'evalue', 'pident',
+              'ppos', '--threads', '2', '--id', str(minid),
+              '--no-self-hits') for hg in missing_alns]
 
-    omeScores = defaultdict(dict)
-    for og in res:
-        for ome in res[og]:
-            omeScores[ome][og] = 0
-            if res[og][ome]:
-                omeScores[ome][og] = 1
-
-    try:
-        gbcScore = \
-            sum([sum(omeScores[ome].values()) / len(omeScores[ome]) for ome in omeScores]) \
-            / len(omeScores) # overall average of average binary positive per ome 
-    except ZeroDivisionError:
-        gbcScore = 0
-
-    return hgx, gbcScore
+    return cmds1, cmds2
 
 
-def gbc_main_0(
-    hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
-    blastp, db, gene2hg, plusminus, hg2gene, 
-    old_path = f'hgx2gbc.pickle',
-    cpus = 1, printexit = False
-    ):
-    
-    hgs_list = []
-    for hgx in hgx2loc:
-        hgs_list.extend(list(hgx))
-    hgs = set(hgs_list) 
-    if not os.path.isfile(old_path):
-        d2gbc = gbc_mngr_2(
-            list(hgs), list(ome2i.keys()), hg_dir, hgx_dir, blastp, hgx2loc,
-            db, gene2hg, plusminus, hg2gene, cpus = cpus, 
-            printexit = printexit
-            )
-        with open(old_path, 'wb') as pickout:
-            pickle.dump(d2gbc, pickout)
-    else:
-        print('\tLoading previous coevolution results', flush = True)
-        with open(old_path, 'rb') as pickin: 
-            d2gbc = pickle.load(pickin)
-    return d2gbc
-
-
-def gbc_main_1(
+def gbc_main(
     hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
     blastp, db, gene2hg, plusminus, hg2gene,
     old_path = 'hgx2gbc.pickle',
@@ -452,12 +271,30 @@ def gbc_main_1(
     moduleOmes = None, cpus = 1, printexit = False
     ):
 
+    hgs = sorted(set(chain(*list(hgx2loc.keys()))))
+    db_cmds, dmnd_cmds = prep_blast_cmds(db, hgs, hg_dir, hgx_dir, diamond = 'diamond')
+    if printexit and dmnd_cmds:
+        print('\tPreparing diamond commands and exiting', flush = True)
+        with open(hgx_dir + '../../makedb.sh', 'w') as out:
+            out.write('\n'.join([' '.join(x) for x in db_cmds]))
+        with open(hgx_dir + '../../srch.sh', 'w') as out:
+            out.write('\n'.join([' '.join(x) for x in dmnd_cmds]))
+        print('\nGBC commands outputted to `<OUTPUT>/*.sh` ' \
+            + 'Run `makedb.sh` first', flush = True)
+        sys.exit(0)
+    elif dmnd_cmds:
+        print(f'\tBuilding {len(db_cmds)} diamond dbs', flush = True)
+        multisub(db_cmds, verbose = 1, processes = cpus)
+        print(f'\tAligning {len(dmnd_cmds)} HGs', flush = True)
+        multisub(dmnd_cmds, verbose = 1, processes = cpus)
+
+
     hgs_list = []
     for hgx in hgx2loc:
         hgs_list.extend(list(hgx))
     hgs = set(hgs_list)
     if not os.path.isfile(wrk_dir + old_path):
-        d2gbc, d2id_, d2pos = gbc_mngr_3(
+        d2gbc, d2id_, d2pos = gbc_mngr(
             list(hgs), list(ome2i.keys()), hgx_dir, hgx2loc,
             db, gene2hg, plusminus, hg2gene, modules,
             moduleOmes, moduleHGxs, ome2i, cpus = cpus
