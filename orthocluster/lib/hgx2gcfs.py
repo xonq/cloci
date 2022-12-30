@@ -6,10 +6,10 @@ import networkx as nx
 import multiprocessing as mp
 from datetime import datetime
 from itertools import combinations
-from collections import defaultdict
 from scipy.sparse import lil_matrix
+from collections import defaultdict, Counter
 from mycotools.lib.biotools import fa2dict, dict2fa, gff2list
-from mycotools.lib.kontools import write_json, read_json, collect_files
+from mycotools.lib.kontools import write_json, read_json
 from orthocluster.orthocluster.lib import input_parsing, phylocalcs
 
 def hash_hgx(gff_path, ome, hgx_genes, gene2hg, clusplusminus):
@@ -76,16 +76,19 @@ def hash_hgx(gff_path, ome, hgx_genes, gene2hg, clusplusminus):
     return ome, gene_tup, hgx_tup
 
 
-def findHGxPairSingle(gene2hgx, ome, hgx2i, pairsDict, minimum = 2):
-    omePairs_dict = defaultdict(list)
-    for gene, hgxs in gene2hgx.items():
-        for pairTup in combinations(hgxs, 2):
-            omePairs_dict[pairTup].append(gene) # gene centric 
+def find_hgx_pairs(gene2hgx, ome, hgx2i, pairsDict, minimum = 2):
+    print(ome, flush = True)
+    # is this going to merge hgxs that overlap by one gene in minimum loci?
+    hgx_pairs_raw = []
+    # check for gene overlap in hgxs
+    for hgxs in list(gene2hgx.values()):
+        # add each possible hgxpair
+        hgx_pairs_raw.extend([x for x in combinations(sorted(hgxs), 2)])
 
-    for pairTup, genes in omePairs_dict.items():
-        if len(genes) >= minimum:
-            hgxpair = tuple(sorted([hgx2i[pairTup[0]], hgx2i[pairTup[1]]]))
-            pairsDict[hgxpair].append(ome)
+    hgx_pairs_count = [x for x, g in Counter(hgx_pairs_raw).items() \
+                       if g > minimum]
+    null = [pairsDict[hgxpair].append(ome) for hgxpair in hgx_pairs_count]
+
     return pairsDict
 
 def MCL(adj_path, clusFile, inflation = 1.0, threads = 1):
@@ -302,7 +305,7 @@ def classify_gcfs(
     phylo, bordScores, ome2i, hgx2omes, hg_dir,
     wrk_dir, ome2partition, omes2dist = {}, clusplusminus = 3,
     inflation = 1.5, minimum = 2, min_omes = 2, 
-    minid = 30, cpus = 1
+    minid = 30, cpus = 1, diamond = 'diamond'
     ):
 
     groupI = wrk_dir + 'group.I.pickle'
@@ -354,7 +357,7 @@ def classify_gcfs(
         print('\tIdentifying significant HGx aggregations', flush = True)
         tpairDict = defaultdict(list)
         for ome, gene2hgx_ome in gene2hgx.items():
-            tpairDict = findHGxPairSingle(
+            tpairDict = find_hgx_pairs(
                 gene2hgx_ome, ome, hgx2i, tpairDict,
                 minimum = minimum
                 )
@@ -441,27 +444,26 @@ def classify_gcfs(
         with mp.get_context('fork').Pool(processes = cpus) as pool:
             hash_res = pool.starmap(hash_clan_loci, cmds)
 
-        clanLoci, clanHGx4gcfs, clanOGloci = defaultdict(list), defaultdict(list), defaultdict(list)
-        for ome, outclanLoci, outclanHGx, outclanOGloci in hash_res:
+        clanLoci, clanHGx4gcfs, clanHGloci = defaultdict(list), defaultdict(list), defaultdict(list)
+        for ome, outclanLoci, outclanHGx, outclanHGloci in hash_res:
             for clan in outclanLoci:
                 clanLoci[clan].extend(outclanLoci[clan])
                 clanHGx4gcfs[clan].extend(outclanHGx[clan])
-                clanOGloci[clan].extend(outclanOGloci[clan])
+                clanHGloci[clan].extend(outclanHGloci[clan])
         write_json(clanLoci, clanFile + 'json.gz')
         write_json(clanHGx4gcfs, clanFile + 'hgx.json.gz')
-        write_json(clanOGloci, clanFile + 'hg.json.gz')
+        write_json(clanHGloci, clanFile + 'hg.json.gz')
     else:
         print('\t\tLoading clan loci', flush = True)
-        clanLoci = {
-            int(k): tuple(v) for k,v in sorted(
-                read_json(clanFile + 'json.gz').items(), key = lambda x: len(x[1]), reverse = True
-            )}
+        clanLoci = {int(k): tuple(v) for k,v in sorted(
+                read_json(clanFile + 'json.gz').items(), 
+                key = lambda x: len(x[1]), reverse = True)}
         clanHGx4gcfs = {int(k): tuple([tuple(i) for i in v]) for k,v in read_json(clanFile + 'hgx.json.gz').items()}
-        clanOGloci = {int(k): tuple(v) for k, v in read_json(clanFile + 'hg.json.gz').items()}
+        clanHGloci = {int(k): tuple(v) for k, v in read_json(clanFile + 'hg.json.gz').items()}
 
     # dict(clanLoci) = {int(clanI): ((ome0_gene0, ome0_gene1,)...,)}
     # dict(clanHGx4gcfs) = {int(clanI): ((og0, og1, ogn,)...,)}
-    # dict(clanOGloci) = {int(clanI): ((ome0_gene0_og, ome0_gene1_og,)...,)}
+    # dict(clanHGloci) = {int(clanI): ((ome0_gene0_og, ome0_gene1_og,)...,)}
 
     gcf_dir = wrk_dir + 'gcf/'
     if not os.path.isdir(gcf_dir):
@@ -483,8 +485,8 @@ def classify_gcfs(
     loci, hgxXloci = {}, {}
     for clanI in clanLoci:
         cmds.append([
-            db, clanI, clanLoci[clanI], clanOGloci[clanI],
-            gcf_dir, hg_dir, Q, index, minid
+            db, clanI, clanLoci[clanI], clanHGloci[clanI],
+            hg_dir, gcf_dir, Q, index, diamond, minid
             ])
         for i, locus in enumerate(clanLoci[clanI]):
             loci[index] = clanLoci[clanI][i]
@@ -498,12 +500,6 @@ def classify_gcfs(
             pool.starmap(
                 clan_to_gcf_loci, cmds
                 )
-    #    mpclan_to_gcf_loci(
-     #       db, bigClan, clanLoci[bigClan], clanOGloci[bigClan], 
-      #      clanHGx4gcfs[bigClan], gcf_dir, Q, 0,
-       #     diamond = 'diamond', minid = 30, cpus = cpus - 1
-        #    ) # now do the biggest GCF
-
         shutil.move(adj_mtr, gcf_dir + 'loci.adj')
 
     Q.put(None)

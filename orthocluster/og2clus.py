@@ -1,5 +1,7 @@
 #! /usr/bin/env python3
 
+#NEED GBC threshold
+#NEED inflation parameter
 #NEED a coverage filter for the diamond searches
 #NEED to make gbc_mngr split different families with the same GCF
 #NEED to change border percentile entries to clus percentile
@@ -226,13 +228,15 @@ def cp_files(f0, f1):
 def symlink_files(f0, f1):
     os.symlink(f0, f1)
 
-def hg_fa_mngr(wrk_dir, hg_dir, hgx2dist, db, hg2gene):
+def hg_fa_mngr(wrk_dir, hg_dir, hgx2dist, db, hg2gene,
+               cpus = 1):
     new_hg_dir = wrk_dir + 'hg/'
     if not os.path.isdir(new_hg_dir):
         os.mkdir(new_hg_dir)
     # extract only used HGs
     hgs = sorted(set(chain(*list(hgx2dist.keys()))))
-    hg_files = set([int(x[:-4]) for x in collect_files(new_hg_dir, 'faa')])
+    hg_files = set([int(os.path.basename(x[:-4])) \
+                    for x in collect_files(new_hg_dir, 'faa')])
     missing_hgs = sorted(set(hgs).difference(hg_files))
 
     if not hg_dir:
@@ -245,6 +249,7 @@ def hg_fa_mngr(wrk_dir, hg_dir, hgx2dist, db, hg2gene):
             pool.starmap(output_hg_fas, hg_fa_cmds)
     else: # predetermined hg input
         hg_fa_cmds = []
+        orthofinder = False
         if not os.path.isfile(f'{hg_dir}{hgs[0]}.faa'):
              digits = len(str(hgs[0]))
              zeros = 7 - digits
@@ -503,7 +508,7 @@ def main(
 
     print('\nV. Calling gene clusters from HGxs', flush = True)
     print('\tOutputting HG fastas', flush = True)
-    hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgx2dist, db, hg2gene)
+    hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgx2dist, db, hg2gene, cpus = cpus)
 
     if not os.path.isfile(wrk_dir + 'gcfs.pickle'): # need to add this to
     # log parsing

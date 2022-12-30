@@ -246,8 +246,10 @@ def gbc_mngr(
 
 def prep_blast_cmds(db, hgs, hg_dir, hgx_dir, minid = 30, diamond = 'diamond'):
 
-    alnd_hgs = set([int(x[:-4]) for x in collect_files(hgx_dir, 'out')])
-    dmnd_dbs = set([int(x[:-5]) for x in collect_files(hgx_dir, 'dmnd')])
+    alnd_hgs = set([int(os.path.basename(x[:-4])) \
+                    for x in collect_files(hgx_dir, 'out')])
+    dmnd_dbs = set([int(os.path.basename(x[:-5])) \
+                    for x in collect_files(hgx_dir, 'dmnd')])
     missing_alns = set(hgs).difference(alnd_hgs)
     missing_dmnds = set(missing_alns).difference(dmnd_dbs)
 
