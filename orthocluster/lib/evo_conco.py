@@ -265,14 +265,7 @@ def prep_blast_cmds(db, hgs, hg_dir, hgx_dir, minid = 30, diamond = 'diamond'):
     return cmds1, cmds2
 
 
-def gbc_main(
-    hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
-    blastp, db, gene2hg, plusminus, hg2gene,
-    old_path = 'hgx2gbc.pickle',
-    modules = None, moduleHGxs = None,
-    moduleOmes = None, cpus = 1, printexit = False
-    ):
-
+def run_blast(hgx2loc, db, hg_dir, hgx_dir, diamond = 'diamond', printexit = False):
     hgs = sorted(set(chain(*list(hgx2loc.keys()))))
     db_cmds, dmnd_cmds = prep_blast_cmds(db, hgs, hg_dir, hgx_dir, diamond = 'diamond')
     if printexit and dmnd_cmds:
@@ -290,6 +283,17 @@ def gbc_main(
         print(f'\tAligning {len(dmnd_cmds)} HGs', flush = True)
         multisub(dmnd_cmds, verbose = 1, processes = cpus)
 
+
+
+def gbc_main(
+    hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
+    blastp, db, gene2hg, plusminus, hg2gene,
+    old_path = 'hgx2gbc.pickle',
+    modules = None, moduleHGxs = None,
+    moduleOmes = None, cpus = 1, printexit = False
+    ):
+
+    run_blast(hgx2loc, db, hg_dir, hgx_dir, diamond = 'diamond', printexit = printexit)
 
     hgs_list = []
     for hgx in hgx2loc:
