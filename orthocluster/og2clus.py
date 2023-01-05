@@ -40,7 +40,7 @@ from mycotools.gff2svg import main as gff2svg
 from mycotools.acc2fa import dbmain as acc2fa
 from mycotools import db2microsyntree
 from orthocluster.orthocluster.lib import phylocalcs, evo_conco, \
-    hgx2gcfs, input_parsing, hgpairs2hgx, generate_nulls
+     hgx2gcfs, input_parsing, hgpairs2hgx, generate_nulls
 from orthocluster.orthocluster.lib.output_data import output_res
 
 
@@ -299,7 +299,8 @@ def main(
     root = None, coevo_thresh = 0, patch_thresh = 0,
     microsyn_thresh = 0, method = 'mmseqs easy-cluster',
     printexit = False, flag = True, partition_file = None,
-    near_single_copy_genes = [], tree_path = None, verbose = False
+    near_single_copy_genes = [], tree_path = None, 
+    sensitive_gcf = True, verbose = False
     ):
     """
     The general workflow:
@@ -509,15 +510,17 @@ def main(
     print('\nV. Calling gene clusters from HGxs', flush = True)
     print('\tOutputting HG fastas', flush = True)
     hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgx2dist, db, hg2gene, cpus = cpus)
-
+    if not sensitive_gcf:
+        evo_conco.run_blast(hgx2loc, db, hg_dir, hgx_dir, 
+                            diamond = 'diamond', printexit = printexit)
     if not os.path.isfile(wrk_dir + 'gcfs.pickle'): # need to add this to
     # log parsing
         gcfs, gcf_hgxs, gcf_omes, omes2dist = hgx2gcfs.classify_gcfs(
             hgx2loc, db, gene2hg, i2hgx, hgx2i,
             phylo, bordScores_list, ome2i,
-            hgx2omes, hg_dir, wrk_dir, ome2partition, #hgx2dist,
+            hgx2omes, hg_dir, hgx_dir, wrk_dir, ome2partition, #hgx2dist,
             omes2dist = omes2dist, clusplusminus = plusminus, 
-            min_omes = 2, cpus = cpus
+            min_omes = 2, sensitive = sensitive_gcf, cpus = cpus
             )
         with open(wrk_dir + 'gcfs.pickle', 'wb') as pickout:
             pickle.dump([gcfs, gcf_omes, gcf_hgxs], pickout)
@@ -647,6 +650,9 @@ if __name__ == '__main__':
              + 'separate lines')
     det_opt.add_argument('-ns', '--null_sample', type = int, default = 10000,
         help = 'Samples for null distributions; DEFAULT: 10,000')
+    det_opt.add_argument('-s', '--sensitivity', type = int, default = 1,
+        help = '[0] Reuse homology group diamonds for loci homology inference; ' \
+             + '[1] DEFAULT: Run pairwise loci diamonds - more sensitive')
 
     thr_opt = parser.add_argument_group('Thresholding')
     thr_opt.add_argument('-sp', '--seed_percentile', type = int, default = 75,
@@ -671,7 +677,8 @@ if __name__ == '__main__':
 #    run_opt.add_argument('-s', '--dnds', action = 'store_true', help = 'Run dN/dS calculations')
     run_opt.add_argument('--n50', help = 'Minimum assembly N50')
     run_opt.add_argument('--stop', action = 'store_true', 
-                        help = 'Print diamond commands and exit at Step VII.')
+                        help = 'Export homology group diamond commands ' \
+                             + 'for massive parallelization and stop')
     run_opt.add_argument('-o', '--output_dir')
     run_opt.add_argument('-n', '--new', action = 'store_true', 
         help = 'Overwrite old run')
@@ -726,7 +733,7 @@ if __name__ == '__main__':
         'Minimum family %id': args.id_percent, 'Minimum family %pos': args.pos_percent,
         'Patchiness threshold': args.patch_threshold, 'Coevolution threshold': args.coevo_threshold,
         'Null samples': args.null_sample, #'Calculate dN/dS': args.dnds, 
-        'Minimum N50': args.n50,
+        'Minimum N50': args.n50, 'Family sensitivity': args.sensitivity,
         'Processors': args.cpus, 'Output directory': args.output_dir,
         'Overwrite': bool(args.new)
         }
@@ -778,6 +785,13 @@ if __name__ == '__main__':
             focal_genes = [x.rstrip() for x in raw.read().split() \
                            if x.rstrip()]
 
+    if args.sensitivity == 0:
+        sensitive = False
+    else:
+        if args.sensitivity != 1:
+            eprint('\nSensitivity changed to 1', flush = True)
+        sensitive = True
+
     db = mtdb(format_path(args.database))
     main(
         db, homogroups, out_dir, plusminus = args.window,
@@ -789,7 +803,7 @@ if __name__ == '__main__':
         partition_file = args.null_partitions, #        run_dnds = args.dnds, 
         n50thresh = args.n50, near_single_copy_genes = focal_genes,
         root = root, coevo_thresh = args.coevo_threshold, 
-        constraint_path = constraint_path,
+        constraint_path = constraint_path, sensitive_gcf = sensitive,
         patch_thresh = args.patch_threshold, method = method,
         printexit = args.stop, flag = bool(not args.new)
         )
