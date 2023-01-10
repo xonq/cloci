@@ -387,7 +387,6 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
          omes2dist, hgx2omes2gbc, omes2patch, hgx2omes2id,
          hgx2omes2pos, hgx2loc, gene2hg, plusminus, ome2i,
          hgx2i, pfam_path = None, dnds_dict = {}, cpus = 1):
-
     print('\tWriting cluster scores', flush = True)
     gcf_output, done, maxval = [], set(), max(hgx2dist.values())
     for gcf, modHGx2omes in enumerate(gcfs):
@@ -411,20 +410,6 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
     kern_output, top_hgxs = [], []
     for i, ogc in enumerate(gcf_hgxs):
         omesc = gcf_omes[i]
-#        try:
- #           if gcf not in dnds_dict:
-  #              dnds_dict[gcf] = ['na' for x in range(3)]
-   #     except NameError:
-    #        dnds_dict = {gcf: ['na' for x in range(3)]}
-#        if gcf in hgx2omes2gbc:
- #           kern_output.append([
-  #              ','.join([str(x) for x in gcf]), i, 
-   #             omes2dist[omesc]/maxval, hgx2omes2gbc[gcf][omesc], omes2patch[omesc], 
-    #            ','.join([str(i2ome[x]) for x in omesc])
-#                dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
-#                omes2dist[omesc]
-        #        ])
-     #   else:
         kern_output.append([
             ','.join([str(x) for x in ogc]), i,
             omes2dist[omesc]/maxval, omes2patch[omesc], 
