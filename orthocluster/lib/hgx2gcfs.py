@@ -3,10 +3,11 @@ import shutil
 import pickle
 import subprocess
 import networkx as nx
+import numpy as np
 import multiprocessing as mp
 from datetime import datetime
 from itertools import combinations
-from scipy.sparse import lil_matrix
+from scipy.sparse import lil_matrix, csr_matrix
 from collections import defaultdict, Counter
 from mycotools.lib.biotools import fa2dict, dict2fa, gff2list
 from mycotools.lib.kontools import write_json, read_json, collect_files
@@ -91,36 +92,32 @@ def find_hgx_pairs(gene2hgx, ome, hgx2i, pairsDict, minimum = 2):
 
     return pairsDict
 
-def MCL(adj_path, clusFile, inflation = 1.0, threads = 1):
+def MCL(adj_path, clusFile, inflation = 1.5, threads = 1):
 
     subprocess.call([
         'mcl', adj_path, '--abc', '-I', str(inflation),
         '-o', clusFile, '-te', str(threads)
         ], stdout = subprocess.DEVNULL, stderr = subprocess.DEVNULL
         )
-#    mclFile = prep_mcl(adj_path + '.tmp', sym = True, output = None) 
-    # symmetrical matrix, no verbose, mcxload must be in path
- #   run_mcl(mclFile, clusFile, inflation, cpus = cpus)
-    # parallelization could be more efficient overall
 
     return clusFile
 
 
 def acquire_clus_gcf_sim_noq(
-    i0, i1, index, loc0, loc1, ogL0, ogL1, set0, set1, blast_ids,
+    i0, i1, index, loc0, loc1, hgL0, hgL1, set0, set1, blast_ids,
     mingcfid = 0.15
     ):
-    ogDict = {}
-    for i, og in enumerate(ogL0):
-        if og not in ogDict:
-            ogDict[og] = [[], []]
-        ogDict[og][0].append(loc0[i])
-    for i, og in enumerate(ogL1):
-        if og not in ogDict:
-            ogDict[og] = [[], []]
-        ogDict[og][1].append(loc1[i])
 
     intersection = set0.intersection(set1)
+    inter_list = list(intersection)
+    hg_dict = {k: [[], []] for k in inter_list}
+    for i, hg in enumerate(hgL0):
+        if hg in intersection:
+            hg_dict[hg][0].append(loc0[i])
+    for i, hg in enumerate(hgL1):
+        if hg in intersection:
+            hg_dict[hg][1].append(loc1[i])
+
     #jaccard = len(intersection)/len(set0.union(set1))
     # currently this is biased against contig edges and will also
     # force fragments with a much smaller subset OG # then the
@@ -129,27 +126,34 @@ def acquire_clus_gcf_sim_noq(
     # could alternatively weight just by incorporating 0 values
     # for OGs that don't overlap
 
-    overlap_coef = len(intersection)/min([len(set0), len(set1)])
     scores = []
-    for og in list(intersection):
-        if ogDict[og][0] and ogDict[og][1]:
-            scores.append([])
-            for gene0 in ogDict[og][0]:
-                for gene1 in ogDict[og][1]:
-                    try:
-                        scores[-1].append(blast_ids[og][gene0][gene1])
-                    except KeyError: # missing gene
-                        scores[-1].append(0)
-        else:
-            scores[-1].append(0)
-    maxScores = [max(i) for i in scores]
-    try:
-        total = (sum(maxScores)/len(maxScores)) * overlap_coef # * jaccard
-        if total > mingcfid:
-            return str(i0 + index) + '\t' + str(i1 + index) + '\t' + str(total) + '\n'
-    except ZeroDivisionError: # no overlapping OGs
+    for hg in inter_list:
+#        if hg_dict[hg][0] and hg_dict[hg][1]: #unnec
+        scores.append([])
+        for gene0 in hg_dict[hg][0]:
+            for gene1 in hg_dict[hg][1]:
+                try:
+                    scores[-1].append(blast_ids[hg][gene0][gene1])
+                except KeyError: # missing gene
+                    #adjust overlap coef, not 0
+   #                 scores[-1].append(0)
+                    pass
+    #    else:
+    #        scores[-1].append(0)
+    scores = [x for x in scores if x]
+    if scores:
+        maxScores = [max(i) for i in scores]
+        overlap_coef = len(scores)/min([len(set0), len(set1)])
+        gcf_id = (sum(maxScores)/len(maxScores)) * overlap_coef # * jaccard
+        if gcf_id > mingcfid:
+            return str(i0 + index) + '\t' + str(i1 + index) + '\t' + str(gcf_id) + '\n'
+
+    return
+
+#    try:
+ #   except ZeroDivisionError: # no overlapping OGs
 #        print(set0,set1, flush = True)
-        return
+  #      return
 
 
 def acquire_clus_gcf_sim(
@@ -216,7 +220,7 @@ def clan_to_gcf_loci_resume(
                     d = line.rstrip().split()
                     try:
                         if d[0] != data[-1][0]:
-                            out.write('\n'.([' '.join(x) for x in data]) \
+                            out.write('\n'.join([' '.join(x) for x in data]) \
                                     + '\n')
                             out.flush()
                             max_complete = int(data[-1][0]) - index
@@ -229,6 +233,169 @@ def clan_to_gcf_loci_resume(
     else:
         max_complete = 0
 
+    # if the minimum_gcf_id is greater than 33% then 
+    # at least HGx overlaps < 2 can be eliminated
+    min_overlap = round((mingcfid * 3) - 0.5)
+         
+    blast_hash = defaultdict(list)
+    # only examine loci that have not been completed
+    hg2i = {}
+    for i in range(max_complete, len(loci)):
+        locus = loci[i]
+        hgs = hgLoci[i]
+        for i1, hg in enumerate(hgs):
+            if hg is not None:
+                blast_hash[hg].append(locus[i1])
+                if hg not in hg2i:
+                    hg2i[hg] = len(hg2i)
+    if len(loci) < 250000:
+        clan_arr = np.zeros([len(loci) - max_complete,
+                            len(blast_hash)], dtype = bool)
+    else:
+        clan_arr = lil_matrix((len(loci), len(blast_hash)), dtype=bool)
+    for i in range(max_complete, len(loci)):
+        hgs = hgLoci[i]
+        for i1, hg in enumerate(hgs):
+            if hg is not None:
+                clan_arr[i, hg2i[hg]] = True
+
+    blast_ids = defaultdict(dict)
+    for hg, genes in blast_hash.items():
+        gene_len = len(genes)
+        if gene_len > 1:
+            gene_set = set(genes)
+            algn_base = f'{hgx_dir}{hg}.out'
+            try:
+                with open(algn_base, 'r') as raw:
+                    for line in raw:
+                        d = line.rstrip().split()
+                        q, s, pident = d[0], d[1], d[-2]
+                        if {q, s}.issubset(gene_set):
+                            if q not in blast_ids[hg]:
+                                blast_ids[hg][q] = {}
+                            blast_ids[hg][q][s] = float(pident)/100 # adjust diamond to decimal
+                        if len(blast_ids[hg]) == gene_len:
+                            break
+            except FileNotFoundError:
+                 blast_ids = run_gcf_blast(blast_ids, hg_dir, hg, genes, 
+                              gcf_dir, clanI, minid = minid,
+                              diamond = 'diamond')  
+
+    if blast_ids:
+        if len(loci) < 250000:
+            adj_arr = np.matmul(clan_arr, clan_arr.T)
+        else:
+            clan_arr = clan_arr.tocsr()
+            adj_arr = clan_arr @ clan_arr.transpose()
+            adj_arr = adj_arr.toarray()
+        # begin appending to temporary writing output
+        with open(f'{finished_file}.w', 'a') as out:
+            for ti0 in range(adj_arr.shape[0]):
+                i0 = ti0 + max_complete
+                row = adj_arr[ti0, :]
+                overlap_loci = [x for x in np.where(row > min_overlap)[0] if x > ti0]
+                loc0, hgL0 = loci[i0], hgLoci[i0]
+                sHGl0 = set([x for x in hgL0 if x is not None])
+                for ti1 in overlap_loci:
+                    i1 = ti1 + max_complete
+                    loc1, hgL1 = loci[i1], hgLoci[i1]
+                    sHGl1 = set([x for x in hgL1 if x is not None])
+                    data = acquire_clus_gcf_sim_noq(i0, i1, index, loc0,
+                                                    loc1, hgL0, hgL1,
+                                                    sHGl0, sHGl1, blast_ids,
+                                                    mingcfid = mingcfid)
+               
+                    if data:
+                        out.write(data)
+                out.flush()
+        # the file is now complete
+        shutil.move(f'{gcf_dir}{clanI}.sadj.tmp.w', f'{gcf_dir}{clanI}.sadj.tmp')
+
+
+def acquire_clus_gcf_sim_noq_mp(
+    gcf_dir, i0, i1, index, loc0, loc1, ogL0, ogL1, blast_ids,
+    mingcfid = 0.15
+    ):
+    ogDict = {}
+    for i, og in enumerate(ogL0):
+        if og not in ogDict:
+            ogDict[og] = [[], []]
+        ogDict[og][0].append(loc0[i])
+    for i, og in enumerate(ogL1):
+        if og not in ogDict:
+            ogDict[og] = [[], []]
+        ogDict[og][1].append(loc1[i])
+
+    set0, set1 = set(ogL0), set(ogL1)
+
+    intersection = set0.intersection(set1)
+    #jaccard = len(intersection)/len(set0.union(set1))
+    # currently this is biased against contig edges and will also
+    # force fragments with a much smaller subset OG # then the
+    # primary HGx into separate gcfs
+
+    # could alternatively weight just by incorporating 0 values
+    # for OGs that don't overlap
+
+    overlap_coef = len(intersection)/min([len(set0), len(set1)])
+    scores = []
+    for og in list(intersection):
+        if ogDict[og][0] and ogDict[og][1]: #unnec
+            scores.append([])
+            for gene0 in ogDict[og][0]:
+                for gene1 in ogDict[og][1]:
+                    try:
+                        scores[-1].append(blast_ids[og][gene0][gene1])
+                    except KeyError: # missing gene
+                        #adjust overlap coef, not 0
+                        scores[-1].append(0)
+        else:
+            scores[-1].append(0)
+    maxScores = [max(i) for i in scores]
+    try:
+        total = (sum(maxScores)/len(maxScores)) * overlap_coef # * jaccard
+    except ZeroDivisionError:
+        return
+
+    if total > mingcfid:
+        return str(i0 + index) + '\t' + str(i1 + index) + '\t' + str(total) + '\n'
+
+
+
+
+def clan_to_gcf_loci_resume_mp(
+    db, clanI, loci, hgLoci, hg_dir, hgx_dir, gcf_dir, index,
+    minid = 30, mingcfid = 0.15, cpus = 1
+    ):
+
+    finished_file = f'{gcf_dir}{clanI}.sadj.tmp'
+    # is this clan already completed?
+    if os.path.isfile(finished_file):
+        return
+    # was this clan partially written?
+    elif os.path.isfile(f'{finished_file}.w'):
+        # identify the last definitively known clan
+        with open(f'{finished_file}.w1', 'w') as out:
+            with open(f'{finished_file}.w', 'r') as raw:
+                data, max_complete = [], 0
+                for line in raw:
+                    d = line.rstrip().split()
+                    try:
+                        if d[0] != data[-1][0]:
+                            out.write('\n'.join([' '.join(x) for x in data]) \
+                                    + '\n')
+                            out.flush()
+                            max_complete = int(data[-1][0]) - index
+                            data = []
+                    except IndexError: # first line
+                        pass
+                    data.append(d)
+        shutil.move(f'{finished_file}.w1', f'{finished_file}.w')
+    # nothing completed
+    else:
+        max_complete = 0
+
+                        
     blast_hash = defaultdict(list)
     # only examine loci that have not been completed
     for i in range(max_complete, len(loci)):
@@ -237,6 +404,8 @@ def clan_to_gcf_loci_resume(
         for i1, hg in enumerate(hgs):
             if hg is not None:
                 blast_hash[hg].append(locus[i1])
+    clan_arr = np.zeros([len(loci) - max_complete,
+                        len(blast_hash)])
 
     blast_ids = defaultdict(dict)
     for hg, genes in blast_hash.items():
@@ -261,25 +430,33 @@ def clan_to_gcf_loci_resume(
                               diamond = 'diamond')  
 
     if blast_ids:
+        adj_arr = np.matmul(clan_arr, clan_arr.T)
+        cmds = []
         # begin appending to temporary writing output
         with open(f'{finished_file}.w', 'a') as out:
-            # for all unique, unexamined pairwise loci comparisons
-            for i0, i1 in combinations(range(max_complete, len(loci)), 2):
-                loc0, loc1 = loci[i0], loci[i1]
-                hgL0, hgL1 = hgLoci[i0], hgLoci[i1]
-                sHGl0 = set([x for x in hgL0 if x is not None])
-                sHGl1 = set([x for x in hgL1 if x is not None])
-                # if there is an intersection between HGs, calculate the gcf sim
-                if not sHGl0.isdisjoint(sHGl1):
-                    data = acquire_clus_gcf_sim_noq(i0, i1, index, loc0, 
-                                                    loc1, hgL0, hgL1, 
-                                                    sHGl0, sHGl1, blast_ids,
-                                                    mingcfid = mingcfid)
-                    if data:
-                        out.write(data)
-                        out.flush()
+            for i0 in range(adj_arr.shape[0]):
+                print(i0, flush = True)
+                row = adj_arr[i0, :]
+                overlap_loci = [x for x in np.where(row > 0)[0] if x > i0]
+                loc0, hgL0 = loci[i0], hgLoci[i0]
+                t0_blast_ids = {k: blast_ids[k] for k in hgL0}
+                for i1 in overlap_loci:
+                    t_blast_ids = {**t0_blast_ids, **{k: blast_ids[k] for k in hgL1}}
+                    loc1, hgL1 = loci[i1], hgLoci[i1]
+                    cmds.append([gcf_dir, i0, i1, index, loc0, loc1, hgL0, hgL1, t_blast_ids, mingcfid])
+                                 
+#                    data = acquire_clus_gcf_sim_noq(i0, i1, index, loc0,
+ #                                                   loc1, hgL0, hgL1,
+  #                                                  sHGl0, sHGl1, blast_ids,
+   #                                                 mingcfid = mingcfid)
+               
+#                    if data:
+ #                       out.write(data)
+  #              out.flush()
         # the file is now complete
-        shutil.move(f'{gcf_dir}{clanI}.sadj.tmp.w', f'{gcf_dir}{clanI}.sadj.tmp')
+        with mp.Pool(processes = cpus) as pool:
+            pool.starmap(acquire_clus_gcf_sim_noq_mp, cmds)
+    
     
 
 def run_gcf_blast(blast_ids, hg_dir, hg, genes, 
@@ -429,33 +606,43 @@ def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus):
 
     return ome, outclanLoci, outclanHGx, outogLoci
 
-def write_adj_matrix_noq(out_file, gcf_dir):
+
+def read_to_write(out_h, in_adj, min_gcf):
+    with open(in_adj, 'r') as raw:
+        for line in raw:
+            d = line.rstrip().split()
+            gcf_id = round(float(d[2]) * 100)
+            if gcf_id >= min_gcf:
+                out_h.write(line.rstrip() + '\n')
+    out_h.flush()
+
+
+def write_adj_matrix_noq(out_file, gcf_dir, min_gcf_id):
+    comp_gcf_id = round(float(min_gcf_id) * 100)
     with open(out_file, 'w') as out:
+        # get previously read adjacency matrices
         init_files = collect_files(gcf_dir, 'sadj.tmp.r')
         for f in init_files:
-            with open(f, 'r') as raw:
-                for line in raw:
-                    out.write(line.rstrip() + '\n')
-            out.flush()
+            read_to_write(out, f, comp_gcf_id)
 
+        # get ready to read adjacency matrices
         files = collect_files(gcf_dir, 'sadj.tmp')
         f_set = set(files)
+
+        # while the completion signal has not been received
         while f'{gcf_dir}done.sadj.tmp' not in f_set:
             for f in files:
                 print(f, flush = True)
-                with open(f, 'r') as raw:
-                    for line in raw:
-                        out.write(line.rstrip() + '\n')
+                read_to_write(out, f, comp_gcf_id)
                 shutil.move(f, f'{f}.r')
-                out.flush()
             files = collect_files(gcf_dir, 'sadj.tmp')
+
+        # get final files
         for f in files:
             if f == f'{gcf_dir}done.sadj.tmp':
                 os.remove(f'{gcf_dir}done.sadj.tmp')
             else:
-                with open(f, 'r') as raw:
-                    for line in raw:
-                        out.write(line.rstrip() + '\n')
+                read_to_write(out, f, comp_gcf_id)
                 shutil.move(f, f'{f}.r')
 
     for f in collect_files(gcf_dir, 'sadj.tmp.r'):
@@ -473,11 +660,11 @@ def write_adj_matrix(Q, out_file):
 
 def classify_gcfs(
     hgx2loc, db, gene2hg, i2hgx, hgx2i,
-    phylo, bordScores, ome2i, hgx2omes, hg_dir, hgx_dir,
+    phylo, bound_scores, ome2i, hgx2omes, hg_dir, hgx_dir,
     wrk_dir, ome2partition, omes2dist = {}, clusplusminus = 3,
     inflation = 1.5, minimum = 2, min_omes = 2, 
     minid = 30, cpus = 1, diamond = 'diamond',
-    sensitive = True
+    sensitive = True, min_gcf_id = 0.3
     ):
 
     groupI = wrk_dir + 'group.I.pickle'
@@ -554,8 +741,8 @@ def classify_gcfs(
                 parts = parts.remove(None)
                 if not parts:
                     continue
-            bord_score = min([bordScores[i][nullSize] for i in list(parts)])
-            if omes2dist[omes] >= bord_score:
+            bound_score = min([bound_scores[i][nullSize] for i in list(parts)])
+            if omes2dist[omes] >= bound_score:
                 matrix[i0, i1] = True
                 matrix[i1, i0] = True
         print('\t\tIsolating subgraphs (HGx clans)', flush = True)
@@ -637,7 +824,7 @@ def classify_gcfs(
     # dict(clanHGx4gcfs) = {int(clanI): ((og0, og1, ogn,)...,)}
     # dict(clanHGloci) = {int(clanI): ((ome0_gene0_og, ome0_gene1_og,)...,)}
 
-    gcf_dir = wrk_dir + 'gcf/'
+    gcf_dir = wrk_dir + 'gcf/' 
     if not os.path.isdir(gcf_dir):
         os.mkdir(gcf_dir)
 
@@ -664,11 +851,12 @@ def classify_gcfs(
                 hgxXloci[index] = clanHGx4gcfs[clanI][i]
                 index += 1
     else:
-        W = mp.Process(target = write_adj_matrix_noq, args = (adj_mtr, gcf_dir))
+        W = mp.Process(target = write_adj_matrix_noq, 
+                       args = (adj_mtr, gcf_dir, min_gcf_id))
         for clanI in clanLoci:
             cmds.append([
                 db, clanI, clanLoci[clanI], clanHGloci[clanI],
-                hg_dir, hgx_dir, gcf_dir, index, minid
+                hg_dir, hgx_dir, gcf_dir, index, minid, min_gcf_id
                 ])
             for i, locus in enumerate(clanLoci[clanI]):
                 loci[index] = clanLoci[clanI][i]
@@ -702,7 +890,7 @@ def classify_gcfs(
         else:
             mcl_threads = (cpus * 2) - 1
         MCL(gcf_dir + 'loci.adj', gcf_dir + 'loci.clus',
-            inflation = 1.5, threads = mcl_threads)
+            inflation = inflation, threads = mcl_threads)
         # could add iterative subsample MCL option here
 
     t_gcfs = []
