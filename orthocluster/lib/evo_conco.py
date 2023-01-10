@@ -84,7 +84,8 @@ def hgx2omes2gbc_calc(
     res = {}
     for og, qs in hgxDict.items():
         hgx_genes, hgx_omes = set(qs), set([q[:q.find('_')] for q in qs])
-        if len(hgx_genes) == 1: # no homologs
+        hgx_gene_len = len(hgx_genes)
+        if hgx_gene_len == 1: # no homologs
             continue
         res[og] = {}
         with open(hgx_dir + str(og) + '.out', 'r') as raw:
@@ -92,7 +93,7 @@ def hgx2omes2gbc_calc(
             geneInfo = defaultdict(list)
             for line in raw:
                 q,s,e,i,p = line.rstrip().split('\t')
-                if q in qs:
+                if q in hgx_genes:
                     geneInfo[q].append((s, float(e), float(i), float(p)))
                     # dict(geneInfo) = {query: [(sbj, evalue, id, pos)]}
         geneInfo = {
@@ -113,7 +114,7 @@ def hgx2omes2gbc_calc(
             # while all cluster homologs aren't accounted for and there remain hits
             if gene not in geneInfo:
                 continue
-            while hgx_genes.difference(hits) and geneInfo[gene]:
+            while True:
                 sbj_gene = geneInfo[gene][0][0]
                 sbj_ome = sbj_gene[:sbj_gene.find('_')]
  #               if sbj_ome == ome: # same ome, could be recent paralog
@@ -121,17 +122,22 @@ def hgx2omes2gbc_calc(
                     # grab the hit positives and identity
                     res[og][ome][1][sbj_gene] = tuple(geneInfo[gene][0][2:])
                     hits.add(sbj_gene)
+                    if not hgx_genes.difference(hits):
+                        break
 #                elif sbj_ome in hgx_omes: # ome in subjects, could be recent paralog
                 else:
                     res[og][ome][0] += 1 # add one to the failed count
-                geneInfo[gene].pop(0)
+                try:
+                    geneInfo[gene].pop(0)
+                except IndexError:
+                    break
 
             # if there are missing hits
-#            print(len(hgx_genes) -  len(res[og][ome][1]) + 1)
-            if len(hgx_genes) - len(res[og][ome][1]) - 1 > 0:
+#            print(hgx_gene_len -  len(res[og][ome][1]) + 1)
+            if hgx_gene_len - len(res[og][ome][1]) - 1 > 0:
                 res[og][ome][0] = 0
             else:
-                res[og][ome][0] = len(hgx_genes) / (len(hgx_genes) + res[og][ome][0])
+                res[og][ome][0] = hgx_gene_len / (hgx_gene_len + res[og][ome][0])
 
     # populate a binary response dictionary for each ome and its genes that are
     # in the shared HGx; 0 = the OG's best blast hit in this ome is not another
@@ -156,7 +162,7 @@ def hgx2omes2gbc_calc(
         ome_av = [sum(v.values())/len(v) for ome, v in omeScores.items()]
         gbcScore = sum(ome_av)/len(omeScores)
     except ZeroDivisionError:
-        print(f'\t{hgx} ome_av')
+        print(f'\t{hgx} {ome_av}')
         gbcScore = 0
 
     # average minimum identity / minimum positive; for each gene homolog group
@@ -167,8 +173,6 @@ def hgx2omes2gbc_calc(
         total += len(ome_dict)
     gcf_min_id /= total
     gcf_min_pos /= total
-
-    print(hgx, gcf_min_id, gcf_min_pos, gbcScore)
 
     return hgx, omesI, gbcScore, gcf_min_id, gcf_min_pos
 
@@ -265,7 +269,7 @@ def prep_blast_cmds(db, hgs, hg_dir, hgx_dir, minid = 30, diamond = 'diamond'):
     return cmds1, cmds2
 
 
-def run_blast(hgx2loc, db, hg_dir, hgx_dir, diamond = 'diamond', printexit = False):
+def run_blast(hgx2loc, db, hg_dir, hgx_dir, diamond = 'diamond', printexit = False, cpus = 1):
     hgs = sorted(set(chain(*list(hgx2loc.keys()))))
     db_cmds, dmnd_cmds = prep_blast_cmds(db, hgs, hg_dir, hgx_dir, diamond = 'diamond')
     if printexit and dmnd_cmds:
@@ -279,9 +283,9 @@ def run_blast(hgx2loc, db, hg_dir, hgx_dir, diamond = 'diamond', printexit = Fal
         sys.exit(0)
     elif dmnd_cmds:
         print(f'\tBuilding {len(db_cmds)} diamond dbs', flush = True)
-        multisub(db_cmds, verbose = 1, processes = cpus)
+        multisub(db_cmds, verbose = 2, processes = cpus)
         print(f'\tAligning {len(dmnd_cmds)} HGs', flush = True)
-        multisub(dmnd_cmds, verbose = 1, processes = cpus)
+        multisub(dmnd_cmds, verbose = 2, processes = cpus)
 
 
 
@@ -293,13 +297,17 @@ def gbc_main(
     moduleOmes = None, cpus = 1, printexit = False
     ):
 
-    run_blast(hgx2loc, db, hg_dir, hgx_dir, diamond = 'diamond', printexit = printexit)
+
+    run_blast(hgx2loc, db, hg_dir, hgx_dir, cpus = cpus,
+              diamond = 'diamond', printexit = printexit)
 
     hgs_list = []
     for hgx in hgx2loc:
         hgs_list.extend(list(hgx))
     hgs = set(hgs_list)
     if not os.path.isfile(wrk_dir + old_path):
+        if not checkdir(hgx_dir, unzip = True, rm = True):
+            os.mkdir(hgx_dir)
         d2gbc, d2id_, d2pos = gbc_mngr(
             list(hgs), list(ome2i.keys()), hgx_dir, hgx2loc,
             db, gene2hg, plusminus, hg2gene, modules,
