@@ -14,14 +14,14 @@ def init_log(
     ):
     with open(log_file, 'w') as out:
         out.write(f'mtdb\t{log_dict["mtdb"]}\n' \
-                + f'focal_genes\t{log_dict["focal_genes"]}' \
-                + f'microsynt_constraint\t{log_dict["microsynt_constraint"]}' \
+                + f'focal_genes\t{log_dict["focal_genes"]}\n' \
+                + f'microsynt_constraint\t{log_dict["microsynt_constraint"]}\n' \
                 + f'microsynt_tree\t{log_dict["microsynt_tree"]}\n'
                 + f'hg_file\t{log_dict["hg_file"]}\n' \
                 + f'plusminus\t{log_dict["plusminus"]}\n' \
-                + f'pair_percentile\t{log_dict["pair_percentile"]}\n' \
+                + f'hgp_percentile\t{log_dict["hgp_percentile"]}\n' \
+                + f'gcf_percentile\t{log_dict["gcf_percentile"]}\n' \
                 + f'hgx_percentile\t{log_dict["hgx_percentile"]}\n' \
-                + f'border_percentile\t{log_dict["border_percentile"]}\n' \
                 + f'id_percent\t{log_dict["id_percent"]}\n' \
                 + f'pos_percent\t{log_dict["pos_percent"]}\n' \
                 + f'patch_threshold\t{log_dict["patch_threshold"]}\n' \
@@ -37,7 +37,13 @@ def read_log(
         for line in raw:
             key = line[:line.find('\t')]
             res = line[line.find('\t') + 1:].rstrip()
-            if res != str(log_dict[key]):
+            if key == 'orig_gcf_id':
+                if round(float(res) * 100) \
+                   <= round(float(log_dict['gcf_id']) * 100):
+                   log_res[key] = True
+            elif key == 'gcf_id':
+                continue
+            elif res != str(log_dict[key]):
                 log_res[key] = False
             else:
                 log_res[key] = True
@@ -53,11 +59,15 @@ def read_log(
         if not log_res['plusminus']:
             log_res['null_samples'] = False
         if not log_res['null_samples']:
-            log_res['pair_percentile'] = False
-        if not log_res['pair_percentile']:
-            log_res['border_percentile'] = False
-        if not log_res['border_percentile']:
+            log_res['hgp_percentile'] = False
+        if not log_res['hgp_percentile']:
             log_res['hgx_percentile'] = False
+        if not log_res['hgx_percentile']:
+            log_res['orig_gcf_id'] = False
+        if not log_res['orig_gcf_id']:
+            log_res['inflation'] = False
+        if not log_res['inflation']:
+            log_res['gcf_percentile'] = False
     except KeyError:
         print('\nERROR: corrupted log.txt.' + \
             '\nIf not rectified, future runs will completely overwrite the current\n')
@@ -71,12 +81,12 @@ def rm_old_data(
     log_res, out_dir, wrk_dir
     ):
     if not log_res['null_samples']:
-        nulls = collect_files(wrk_dir + 'null/', 'null.txt')
+        nulls = collect_files(wrk_dir + 'null/', 'txt')
         for null in nulls:
             os.remove(null)
-    if not log_res['pair_percentile']:
-        seed_file = out_dir + 'seed_scores.tsv.gz'
-        seed_arr = wrk_dir + '.arr.npy'
+    if not log_res['hgp_percentile']:
+        seed_file = out_dir + 'hgps.tsv.gz'
+        seed_arr = wrk_dir + 'microsynt.npy'
         if os.path.isfile(seed_file):
             os.remove(seed_file)
         if os.path.isfile(seed_arr):
@@ -90,19 +100,35 @@ def rm_old_data(
             os.remove(hgx_pickle)
         if os.path.isfile(ome_pickle):
             os.remove(ome_pickle)
-    if not log_res['border_percentile']:
-        row_file = wrk_dir + 'mtx/mcl.prep.rows'
-        prep_file = wrk_dir + 'mtx/mcl.prep.gz'
+    if not log_res['hgx_percentile']:
+        groups = ['group.I', 'group.II', 'group.III']
+        clan_data = ['hg.json.gz', 'hgx.json.gz', 'json.gz']
+        for file_ in clan_data:
+            if os.path.isfile(f'{wrk_dir}clan2loci.{file_}'):
+                os.remove(f'{wrk_dir}clan2loci.{file_}')
+        for group in groups:
+             if os.path.isfile(f'{wrk_dir}{group}.pickle'):
+                 os.remove(f'{wrk_dir}{group}.pickle')
+    if not log_res['orig_gcf_id']:
+        gcf_dir = f'{wrk_dir}gcf/'
+        adj_rows = collect_files(gcf_dir, 'tmp.w')
+        adj_rows.extend(collect_files(gcf_dir, 'tmp.r'))
+        adj_rows.extend(collect_files(gcf_dir, 'tmp'))
+        row_file = wrk_dir + 'gcf/loci.adj'
         if os.path.isfile(row_file):
             os.remove(row_file)
-        if os.path.isfile(prep_file):
-            os.remove(prep_file)
-    if not log_res['hgx_percentile']:
-        kern_file = out_dir + 'hgx_clans.tsv.gz'
-        clus_file = out_dir + 'hgxs.tsv.gz'
-        patch_pickle = wrk_dir + 'patchiness.scores.pickle'
+    if not log_res['inflation']:
+        gcfs_file = f'{wrk_dir}gcfs.pickle'
+        if os.path.isfile(gcfs_file):
+            os.remove(gcfs_file)
+    if not log_res['gcf_percentile']:
+        kern_file = out_dir + 'hgxs.tsv.gz'
+        clus_file = out_dir + 'gcfs.tsv.gz'
+        hgx_files = ['hgx2omes2gbc.full.pickle',
+                     'hgx2omes2id.full.pickle',
+                     'hgx2omes2pos.pickle']
+#        patch_pickle = wrk_dir + 'patchiness.full.pickle'
         ome_dir = wrk_dir + 'ome/'
-        hgx_dir = wrk_dir + 'hgx/'
         hmm_dir = wrk_dir + 'hmm/'
         if os.path.isfile(kern_file):
             os.remove(kern_file)
@@ -110,14 +136,13 @@ def rm_old_data(
             os.remove(clus_file)
         if os.path.isdir(ome_dir):
             shutil.rmtree(ome_dir)
-        if os.path.isdir(hgx_dir):
-            shutil.rmtree(hgx_dir)
         if os.path.isdir(hmm_dir):
             shutil.rmtree(hmm_dir)
-        if os.path.isfile(wrk_dir + 'hgx.tar.gz'):
-            os.remove(wrk_dir + 'hgx.tar.gz')
-        if os.path.isfile(patch_pickle):
-            os.remove(patch_pickle)
+        for file_ in hgx_files:
+            if os.path.isfile(f'{wrk_dir}{file_}'):
+                os.remove(f'{wrk_dir}{file_}')
+#        if os.path.isfile(patch_pickle):
+ #           os.remove(patch_pickle)
     if not log_res['hg_file']:
         shutil.rmtree(wrk_dir)
         os.mkdir(wrk_dir)
@@ -145,7 +170,7 @@ def log_check(log_dict, log_path, out_dir, wrk_dir, flag = True):
                     failed.remove(skip)
             if failed:
                 eprint('\nERROR: -n not called and incompatible parameters: \
-                        \n\t' + ','.join([x for x,v in log_res.items() if not v]),
+                        \n\t' + ','.join([x for x in list(failed)]),
                    flush = True)
                 sys.exit(15)
 
@@ -314,7 +339,7 @@ def compile_tree(i2ome, tree_path, root = []):
 def init_run(db, out_dir, near_single_copy_genes, constraint_path,
              tree_path, hg_file, plusminus, seed_perc, clus_perc,
              hgx_perc, id_perc, pos_perc, patch_thresh, coevo_thresh,
-             samples, n50thresh, flag):
+             samples, n50thresh, flag, min_gcf_id, inflation):
     wrk_dir = out_dir + 'working/'
     if not os.path.isdir(wrk_dir):
         os.mkdir(wrk_dir)
@@ -333,10 +358,11 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
         'microsynt_constraint': format_path(constraint_path),
         'microsynt_tree': tree_path,
         'hg_file': hg_file, 'plusminus': plusminus,
-        'pair_percentile': seed_perc, 'hgx_percentile': clus_perc,
-        'border_percentile': hgx_perc, 'id_percent': id_perc,
+        'hgp_percentile': seed_perc, 'hgx_percentile': hgx_perc, 
+        'orig_gcf_id': None, 'gcf_id': min_gcf_id,
+        'gcf_percentile': clus_perc, 'id_percent': id_perc,
         'pos_percent': pos_perc, 'patch_threshold': patch_thresh,
-        'coevo_threshold': coevo_thresh,
+        'coevo_threshold': coevo_thresh, 'inflation': inflation,
         'null_samples': samples, 'n50': n50thresh}
 
     log_res = log_check(log_dict, log_path, out_dir, wrk_dir, flag)
