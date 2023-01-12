@@ -1,3 +1,5 @@
+# NEED delete omes2tmd if tree changes
+
 import os
 import sys
 import gzip
@@ -41,6 +43,9 @@ def read_log(
                 if round(float(res) * 100) \
                    <= round(float(log_dict['gcf_id']) * 100):
                    log_res[key] = True
+                else:
+                   log_dict['org_gcf_id'] = log_dict['gcf_id']
+                   log_res[key] = False
             elif key == 'gcf_id':
                 continue
             elif res != str(log_dict[key]):
@@ -92,8 +97,7 @@ def rm_old_data(
         if os.path.isfile(seed_arr):
             os.remove(seed_arr)
         clus_pickle = wrk_dir + 'hgx2loc.pickle'
-        hgx_pickle = wrk_dir + 'hgx_scores.pickle'
-        ome_pickle = wrk_dir + 'hgx_omes.pickle'
+        ome_pickle = wrk_dir + 'hgx2omes.pickle'
         if os.path.isfile(clus_pickle):
             os.remove(clus_pickle)
         if os.path.isfile(hgx_pickle):
