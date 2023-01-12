@@ -204,8 +204,8 @@ def id_hgx(db, hgpair_dict, gene2hg, ome2i, cpus, clusplusminus = 10):
 
 
 def hgpairs2hgx(db, wrk_dir, top_hgs, gene2hg, ome2i, 
-                omes2dist, phylo, plusminus = 3, cpus = 1):
-    if not os.path.isfile(wrk_dir + 'hgx_omes.pickle'):
+                phylo, plusminus = 3, cpus = 1):
+    if not os.path.isfile(wrk_dir + 'hgx2omes.pickle'):
         hgpair_dict = form_hgpairDict(top_hgs)
         print('\tForming HGxs', flush = True)
         form_clus_start = datetime.now()
@@ -215,7 +215,7 @@ def hgpairs2hgx(db, wrk_dir, top_hgs, gene2hg, ome2i,
             )
         with open(wrk_dir + 'hgx2loc.pickle', 'wb') as pickout:
             pickle.dump(hgx2loc, pickout)
-        with open(wrk_dir + 'hgx_omes.pickle', 'wb') as pickout:
+        with open(wrk_dir + 'hgx2omes.pickle', 'wb') as pickout:
             pickle.dump(hgx2omes, pickout)
         formHGxTime = datetime.now() - form_clus_start
         print('\t\t' + str(formHGxTime), flush = True)
@@ -223,7 +223,7 @@ def hgpairs2hgx(db, wrk_dir, top_hgs, gene2hg, ome2i,
     else: # or just load available structures 
         with open(wrk_dir + 'hgx2loc.pickle', 'rb') as pickin:
             hgx2loc = pickle.load(pickin)
-        with open(wrk_dir + 'hgx_omes.pickle', 'rb') as pickin:
+        with open(wrk_dir + 'hgx2omes.pickle', 'rb') as pickin:
             hgx2omes = pickle.load(pickin)
 
     return hgx2omes, hgx2loc
