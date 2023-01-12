@@ -26,8 +26,8 @@ def calc_patchiness(phylo, omes):
     omes_set = set(omes)
     try:
         mrca = phylo.lowest_common_ancestor(omes)
-    except ValueError:
-        print(phylo, omes)
+ #   except ValueError:
+#        print(phylo, omes)
     except AttributeError: # 1 ome
         eprint('\t\t' + ','.join([str(x) for x in omes]) + ' raised a tip not found error', flush = True)
         print(phylo)
