@@ -78,7 +78,6 @@ def hash_hgx(gff_path, ome, hgx_genes, gene2hg, clusplusminus):
 
 
 def find_hgx_pairs(gene2hgx, ome, hgx2i, pairsDict, minimum = 2):
-    print(ome, flush = True)
     # is this going to merge hgxs that overlap by one gene in minimum loci?
     hgx_pairs_raw = []
     # check for gene overlap in hgxs
@@ -89,7 +88,6 @@ def find_hgx_pairs(gene2hgx, ome, hgx2i, pairsDict, minimum = 2):
     hgx_pairs_count = [x for x, g in Counter(hgx_pairs_raw).items() \
                        if g > minimum]
     null = [pairsDict[hgxpair].append(ome) for hgxpair in hgx_pairs_count]
-
     return pairsDict
 
 def MCL(adj_path, clusFile, inflation = 1.5, threads = 1):
@@ -208,7 +206,7 @@ def clan_to_gcf_loci_resume(
 
     finished_file = f'{gcf_dir}{clanI}.sadj.tmp'
     # is this clan already completed?
-    if os.path.isfile(finished_file):
+    if os.path.isfile(finished_file) or os.path.isfile(finished_file + '.r'):
         return
     # was this clan partially written?
     elif os.path.isfile(f'{finished_file}.w'):
@@ -457,7 +455,40 @@ def clan_to_gcf_loci_resume_mp(
         with mp.Pool(processes = cpus) as pool:
             pool.starmap(acquire_clus_gcf_sim_noq_mp, cmds)
     
+ 
+def run_hgx_blast(blast_ids, hg_dir, hg, genes, 
+                  hgx_dir, clanI, minid = 30,
+                  diamond = 'diamond'):
+    fileBase = hgx_dir + str(hg)
+    if not os.path.isfile(fileBase + '.out'):
+        if not os.path.isfile(fileBase + '.dmnd'):
+            makeDBcmd = subprocess.call([
+                diamond, 'makedb', '--in', fileBase + '.faa', '--db',
+                fileBase + '.dmnd', '--threads', str(2)
+                ], stdout = subprocess.DEVNULL,
+                stderr = subprocess.DEVNULL
+                )
+        if not os.path.isfile(fileBase + '.out'):
+            dmndBlast = subprocess.call([diamond, 'blastp', '--query', 
+                f'{hg_dir}{hg}.faa', '--db', fileBase, '--threads', str(2), 
+                '--id', str(minid), '--no-self-hits', '-o', 
+                fileBase + '.out.tmp', '--outfmt', '6', 'qseqid', 'sseqid', 
+                'pident', 'ppos'
+                ], stdin = subprocess.PIPE, stdout = subprocess.DEVNULL, 
+                 stderr = subprocess.DEVNULL)
+            shutil.move(fileBase + '.out.tmp', fileBase + '.out')
     
+    with open(fileBase + '.out', 'r') as raw:
+        for line in raw:
+            d = line.rstrip().split()
+            q, s, pident = d[0], d[1], d[-2]
+            if q not in blast_ids[hg]:
+                blast_ids[hg][q] = {}
+            blast_ids[hg][q][s] = float(pident)/100 # adjust diamond to decimal
+
+    return blast_ids
+
+   
 
 def run_gcf_blast(blast_ids, hg_dir, hg, genes, 
                   gcf_dir, clanI, minid = 30,
@@ -632,10 +663,10 @@ def write_adj_matrix_noq(out_file, gcf_dir, min_gcf_id):
         # while the completion signal has not been received
         while f'{gcf_dir}done.sadj.tmp' not in f_set:
             for f in files:
-                print(f, flush = True)
                 read_to_write(out, f, comp_gcf_id)
                 shutil.move(f, f'{f}.r')
             files = collect_files(gcf_dir, 'sadj.tmp')
+            f_set = set(files)
 
         # get final files
         for f in files:
@@ -662,13 +693,14 @@ def classify_gcfs(
     hgx2loc, db, gene2hg, i2hgx, hgx2i,
     phylo, bound_scores, ome2i, hgx2omes, hg_dir, hgx_dir,
     wrk_dir, ome2partition, omes2dist = {}, clusplusminus = 3,
-    inflation = 1.5, minimum = 2, min_omes = 2, 
+    inflation = 1.5, minimum = 3, min_omes = 2, 
     minid = 30, cpus = 1, diamond = 'diamond',
     sensitive = True, min_gcf_id = 0.3
     ):
 
     groupI = wrk_dir + 'group.I.pickle'
     groupII = wrk_dir + 'group.II.pickle'
+
     if not os.path.isfile(groupI):
         print('\tAggregating HGxs with overlapping loci', flush = True)
 
@@ -706,13 +738,13 @@ def classify_gcfs(
         with open(groupI, 'wb') as out:
             pickle.dump([gene2hgx, hgx2genes], out)
         print('\t\t\t' + str(datetime.now() - start))
-    elif not os.path.isfile(groupII):
+    else:
         print('\tLoading aggregated HGxs', flush = True)
         with open(groupI, 'rb') as in_:
             gene2hgx, hgx2genes = pickle.load(in_)
 
-    groupIII = wrk_dir + 'group.III.pickle'
-    if not os.path.isfile(groupIII):
+
+    if not os.path.isfile(groupII):
         print('\tIdentifying significant HGx aggregations', flush = True)
         tpairDict = defaultdict(list)
         for ome, gene2hgx_ome in gene2hgx.items():
@@ -768,11 +800,11 @@ def classify_gcfs(
             phylo, {clanHGxs[i]: omes for i, omes in enumerate(clanOmes)},
             cpus = cpus, omes2dist = omes2dist
             )
-        with open(groupIII, 'wb') as out:
+        with open(groupII, 'wb') as out:
             pickle.dump([clans, clanOmes, clanHGxs], out)
     else:
         print('\tLoading HGx clans', flush = True)
-        with open(groupIII, 'rb') as in_:
+        with open(groupII, 'rb') as in_:
             clans, clanOmes, clanHGxs = pickle.load(in_)
 
     print('\t\t' + str(len(clans)) + ' clans', flush = True)
@@ -874,14 +906,15 @@ def classify_gcfs(
                     clan_to_gcf_loci_sensitive, cmds
                     )
             Q.put(None)
+            W.join()
         else:
             with mp.get_context('spawn').Pool(processes = cpus - 1) as pool:
                 pool.starmap(clan_to_gcf_loci_resume, cmds)
             with open(f'{gcf_dir}done.adj.tmp', 'w') as out:
                 pass
-        shutil.move(adj_mtr, gcf_dir + 'loci.adj')
+            W.join()
 
-    W.join()
+        shutil.move(adj_mtr, gcf_dir + 'loci.adj')
 
     if not os.path.isfile(gcf_dir + 'loci.clus'):
         print('\t\t\tRunning MCL', flush = True)
@@ -896,12 +929,10 @@ def classify_gcfs(
     t_gcfs = []
     with open(gcf_dir + 'loci.clus', 'r') as raw:
         for line in raw: # loci indices
-            d = line.rstrip().split('\t')
-            if len(d) > 1:
-                indices = [int(x) for x in d]
-            else: # singletons won't pass thresholds, disregard them
-                continue
-            t_gcfs.append(indices)
+            indices = [int(x) for x in line.rstrip().split()]
+            # singletons won't pass thresholds, disregard them
+            if len(indices) > 1:
+                t_gcfs.append(indices)
 
     # list(gcf) = [{hgx: (omes,)}]
     gcfs, gcf_hgxs, gcf_omes = [], [], []
@@ -924,7 +955,7 @@ def classify_gcfs(
             del gcfs[-1]
 
     print('\t\t\t' + str(len(gcfs)) + ' GCFs w/' \
-        + str(sum([len(x) for x in gcfs])) + ' loci', flush = True)
+        + str(sum([len(x) for x in t_gcfs])) + ' unfused clusters', flush = True)
     omes2dist = phylocalcs.update_dists(
         phylo, {gcf_hgxs[i]: omes for i, omes in enumerate(gcf_omes)},
         cpus = cpus, omes2dist = omes2dist
