@@ -260,11 +260,12 @@ def prep_blast_cmds(db, hgs, hg_dir, hgx_dir, minid = 30, diamond = 'diamond'):
     cmds1 = [(diamond, 'makedb', '--db', f'{hgx_dir}{hg}.dmnd',
               '--in', f'{hg_dir}{hg}.faa', '--threads', '2') \
               for hg in missing_dmnds]
-    cmds2 = [(diamond, 'blastp', '--query', f'{hg_dir}{hg}.faa',
-              '--db', f'{hgx_dir}{hg}.dmnd', '-o', f'{hgx_dir}{hg}.out',
+    cmds2 = [((diamond, 'blastp', '--query', f'{hg_dir}{hg}.faa',
+              '--db', f'{hgx_dir}{hg}.dmnd', '-o', f'{hgx_dir}{hg}.out.tmp',
               '--outfmt', '6', 'qseqid', 'sseqid', 'evalue', 'pident',
               'ppos', '--threads', '2', '--id', str(minid),
-              '--no-self-hits') for hg in missing_alns]
+              '--no-self-hits', '&&'), ('mv', f'{hgx_dir}{hg}.out.tmp',
+              f'{hgx_dir}{hg}.out')) for hg in missing_alns]
 
     return cmds1, cmds2
 
