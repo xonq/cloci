@@ -229,13 +229,13 @@ def cp_files(f0, f1):
 def symlink_files(f0, f1):
     os.symlink(f0, f1)
 
-def hg_fa_mngr(wrk_dir, hg_dir, hgx2dist, db, hg2gene,
+def hg_fa_mngr(wrk_dir, hg_dir, hgxs, db, hg2gene,
                cpus = 1):
     new_hg_dir = wrk_dir + 'hg/'
     if not os.path.isdir(new_hg_dir):
         os.mkdir(new_hg_dir)
     # extract only used HGs
-    hgs = sorted(set(chain(*list(hgx2dist.keys()))))
+    hgs = sorted(set(chain(*hgxs)))
     hg_files = set([int(os.path.basename(x[:-4])) \
                     for x in collect_files(new_hg_dir, 'faa')])
     missing_hgs = sorted(set(hgs).difference(hg_files))
@@ -316,6 +316,8 @@ def main(
     db = db.set_index()
     if not tree_path:
         tree_path = f'{out_dir}microsynt.newick'
+
+   
    
     wrk_dir, nul_dir = input_parsing.init_run(db, out_dir, 
                                               near_single_copy_genes, constraint_path,
@@ -325,6 +327,7 @@ def main(
                                               patch_thresh, coevo_thresh,
                                               samples, n50thresh, flag,
                                               min_gcf_id, inflation)
+
 
     ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_dict = \
         db2microsyntree.main(db, hg_file, out_dir, wrk_dir,
@@ -352,13 +355,12 @@ def main(
     if not os.path.isfile(out_dir + 'hgps.tsv.gz'):
         print('\tCalculating seed HG-pair scores', flush = True)
         seed_score_start = datetime.now()
-        if not os.path.isfile(wrk_dir + 'ome_scores.pickle'):
-            results = phylocalcs.calc_dists(phylo, cooccur_dict, cpus)
-            omes2dist = {x[1]: x[0] for x in results}
-            with open(wrk_dir + 'ome_scores.pickle', 'wb') as out:
+        if not os.path.isfile(wrk_dir + 'omes2tmd.pickle'):
+            omes2dist = phylocalcs.update_dists(phylo, cooccur_dict, cpus)
+            with open(wrk_dir + 'omes2tmd.pickle', 'wb') as out:
                 pickle.dump(omes2dist, out)
         else:
-            with open(wrk_dir + 'ome_scores.pickle', 'rb') as pickin:
+            with open(wrk_dir + 'omes2tmd.pickle', 'rb') as pickin:
                 omes2dist = pickle.load(pickin)
 
         top_hgs = []
@@ -384,7 +386,7 @@ def main(
             for line in top_hgs:
                 out.write('\t'.join([str(x) for x in line]) + '\n')
         print('\t\t' + str(len(top_hgs)) + ' significant HG pairs', flush = True)
-    elif not os.path.isfile(wrk_dir + 'hgx_scores.pickle'): # load previous hg pairs
+    elif not os.path.isfile(wrk_dir + 'hgx2omes.pickle'): # load previous hg pairs
         print('\tLoading previous seed HG pairs', flush = True)
         top_hgs = input_parsing.load_seedScores(out_dir + 'hgps.tsv.gz')
         print('\t\t' + str(len(top_hgs)) + ' significant HG pairs', flush = True)
@@ -394,38 +396,20 @@ def main(
     # begin sifting for HGxs using pairs as seeds for HGx detection
     print('\nIV. Sprouting high order HG combinations (HGx)', flush = True)
     hgx2omes, hgx2loc = hgpairs2hgx.hgpairs2hgx(db, wrk_dir, top_hgs,
-                                                gene2hg, 
-                                                ome2i, omes2dist, phylo, 
+                                                gene2hg, ome2i, phylo, 
                                                 plusminus, cpus) 
     ome_combos = set([tuple(sorted(list(x))) for x in list(hgx2omes.values())])
-    if not os.path.isfile(wrk_dir + 'hgx_scores.pickle'):
-        hgx2i, i2hgx, hgx_cooccur_dict = generate_nulls.form_cooccur_dict(
-            hgx2omes
-            ) # create hgx data structures
 
-        print('\tCalculating HGx microsynteny distances', flush = True)
-        clus_score_start = datetime.now()
-        clus_obs = len(hgx2omes)
-        print('\t\t' + str(clus_obs) + ' observed HGx', flush = True)
+    print('\tCalculating HGx microsynteny distances', flush = True)
+    hgx_start = datetime.now()
+    hgx_obs = len(hgx2omes)
+    print('\t\t' + str(hgx_obs) + ' observed HGx', flush = True)
 
-        # calculate HGx microsynteny distances
-        results = phylocalcs.calc_dists(phylo, hgx_cooccur_dict, cpus, omes2dist = omes2dist)
-        hgx2dist = {}
-        omes2dist, top_hgs = {**omes2dist, **{x[1]: x[0] for x in results}}, []
-        with open(wrk_dir + 'ome_scores.pickle', 'wb') as out:
-            pickle.dump(omes2dist, out)
-        for hgx in hgx_cooccur_dict:
-            score = omes2dist[tuple(hgx_cooccur_dict[hgx])]
-            hgx2dist[hgx] = score
-
-        print('\t\t' + str(datetime.now() - clus_score_start), flush = True)
-        with open(wrk_dir + 'hgx_scores.pickle', 'wb') as pickout:
-            pickle.dump(hgx2dist, pickout)
-
-    else: # just load previous hgx scores
-        print('\tLoading previous HGxs', flush = True)
-        with open(wrk_dir + 'hgx_scores.pickle', 'rb') as pickin:
-            hgx2dist = pickle.load(pickin)
+    # calculate HGx microsynteny distances
+    omes2dist = phylocalcs.update_dists(phylo, hgx2omes, cpus, omes2dist = omes2dist)
+    with open(wrk_dir + 'omes2tmd.pickle', 'wb') as out:
+        pickle.dump(omes2dist, out)
+    print('\t\t' + str(datetime.now() - hgx_start), flush = True)
 
 
     calc_hgx_p = False
@@ -471,12 +455,10 @@ def main(
     # should I move into absolute space? it may just be better for comparing
     # datasets in the future and some algorithm is going to pick up that gene clusters
     # are in some absolute microsynteny distance, so long as its not normalized. 
-#    max_dist = max(hgx2dist.values())
- #   min_dist = min(hgx2dist.values())
 
-    i2hgx, hgx2i, thgx2dist, count = {}, {}, {}, 0
-    for hgx, dist in hgx2dist.items():
-        omes = hgx2omes[hgx]
+    i2hgx, hgx2i, hgx2dist, count = {}, {}, {}, 0
+    for hgx, omes in hgx2omes.items():
+        dist = omes2dist[omes]
         parts = set(ome2partition[x] for x in omes)
         if None in parts:
             parts = parts.remove(None)
@@ -484,21 +466,20 @@ def main(
                 continue
         bord_score = min([bord_scores_list[i][len(hgx)] for i in list(parts)])
         if dist >= bord_score:
-             thgx2dist[hgx] = dist
+             hgx2dist[hgx] = dist
              i2hgx[count], hgx2i[hgx] = hgx, count
              count += 1
              # apply the border threshold for ALL pre-grouped hgxs
 
     print(
-        '\t\t' + str(len(hgx2dist)) + ' HGx pass border threshold', 
+        '\t\t' + str(len(hgxs)) + ' HGx pass border threshold', 
         flush = True
         )
-    hgx2dist = thgx2dist
     hgx2gbc, omes2patch = {}, {}
     hgx_dir = wrk_dir + 'hgx/'
     print('\nV. Calling gene clusters from HGxs', flush = True)
     print('\tOutputting HG fastas', flush = True)
-    hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgx2dist, db, hg2gene, cpus = cpus)
+    hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgxs, db, hg2gene, cpus = cpus)
     if not os.path.isfile(wrk_dir + 'gcfs.pickle'): # need to add this to
     # log parsing
         # Group hgxs
@@ -511,20 +492,18 @@ def main(
         gcfs, gcf_hgxs, gcf_omes, omes2dist = hgx2gcfs.classify_gcfs(
             hgx2loc, db, gene2hg, i2hgx, hgx2i,
             phylo, bord_scores_list, ome2i,
-            hgx2omes, hg_dir, hgx_dir, wrk_dir, ome2partition, #hgx2dist,
+            hgx2omes, hg_dir, hgx_dir, wrk_dir, ome2partition,
             omes2dist = omes2dist, clusplusminus = plusminus, 
             inflation = inflation, min_gcf_id = min_gcf_id,
             min_omes = 2, sensitive = sensitive_gcf, cpus = cpus
             )
         with open(wrk_dir + 'gcfs.pickle', 'wb') as pickout:
             pickle.dump([gcfs, gcf_omes, gcf_hgxs], pickout)
-        with open(wrk_dir + 'ome_scores.pickle', 'wb') as pickout:
+        with open(wrk_dir + 'omes2tmd.pickle', 'wb') as pickout:
             pickle.dump(omes2dist, pickout)
     else: # or just load old data
         with open(wrk_dir + 'gcfs.pickle', 'rb') as raw:
             gcfs, gcf_omes, gcf_hgxs = pickle.load(raw)
-
-    omes2dist = phylocalcs.update_dists(phylo, gcf_dict, omes2dost = omes2dist, cpus = cpus)
 
     todel = []
     for i, omes in enumerate(gcf_omes):
@@ -579,7 +558,7 @@ def main(
     if any(x > 0 for x in [coevo_thresh, patch_thresh, id_perc, pos_perc]):
         print('\tApplying thresholds', flush = True)
         print('\t\t' + str(len(gcfs)) + ' gcfs before', flush = True)
-        # edit gcfs, hgx2dist
+        # edit gcfs
  #       newOgx2dist, newGCFs, newGCFOmes, newGCFHGxs = {}, [], [], []
         newGCFs, newGCFOmes, newGCFHGxs = [], [], []
         for i0, gcf in enumerate(gcfs):
