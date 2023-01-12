@@ -11,7 +11,7 @@ from orthocluster.orthocluster.lib import phylocalcs
 from orthocluster.orthocluster.lib.input_parsing import compileCDS
 
 def Hash4nulls(
-    gff_path, gene2hg, max_size, plusminus
+    gff_path, gene2hg, max_size, plusminus, ome = None
     ):
 
     gff_list = gff2list(gff_path) # open here for decreased serialization
@@ -44,7 +44,7 @@ def Hash4nulls(
         **{k: set(v) for k,v in sml_sizes.items()},
         **{k: set(v) for k,v in lrg_sizes.items()}
         } # make them unique sets of combinations
-    return nulls
+    return ome, nulls
 
 
 def form_cooccur_dict(cooccur_dict):
@@ -58,6 +58,36 @@ def form_cooccur_dict(cooccur_dict):
         hgx2i[hgx] = i
 
     return i2hgx, hgx2i, cooccur_dict
+
+
+def gen_null_dict_omes(combo_dict, sample = 10000, omes = []):
+    """combo_dict = {ome: [(OG0...OGn)]}"""
+ 
+    ome_set = set(omes) 
+    nulls = []
+    for ome in omes:
+        combos = combo_dict[ome]
+        nulls.extend(list(combos)) # extend all combos to the null
+     
+    try: # sample
+        null_list = random.sample(nulls, sample)
+    except ValueError:
+        print('\t\t\t\tWARNING: requested null sample greater than HGx size', flush = True)
+        null_list = nulls
+                                            
+    cooccur_dict = {}                       
+    for null in null_list: # for combo      
+        cooccur_dict[null] = []             
+        for ome, combos in combo_dict.items():
+            if null in combos:
+                cooccur_dict[null].append(ome)
+    
+    cooccur_dict = {x: tuple(cooccur_dict[x]) for x in cooccur_dict}
+    # {(OG0,OGn): [omei0...]}
+
+    return cooccur_dict
+
+
 
 
 def gen_null_dict(combo_dict, sample = 10000):
@@ -161,7 +191,6 @@ def gen_pair_nulls(phylo, ome2i, wrk_dir, nul_dir, seed_perc, ome2pairs,
         ome2partition = {i: 0 for i in ome2i.values()}
 
 
-
     # create null distribution for orthogroup pairs
     final_partition = len(partition_omes) - 1 
     pair_nulls = []
@@ -179,11 +208,14 @@ def gen_pair_nulls(phylo, ome2i, wrk_dir, nul_dir, seed_perc, ome2pairs,
             with open(f'{nul_dir}2.null.{i}.txt', 'w') as out:
                 out.write('\n'.join([str(i0) for i0 in pair_null]))
             pair_nulls.append(pair_null)
-        with open(wrk_dir + 'ome_scores.pickle', 'wb') as out:
+        with open(wrk_dir + 'omes2tmd.pickle', 'wb') as out:
                 pickle.dump(omes2dist, out)
     else: # or just load what is available
-        with open(wrk_dir + 'ome_scores.pickle', 'rb') as raw:
-            omes2dist = pickle.load(raw)
+        if os.path.isfile(wrk_dir + 'omes2tmd.pickle'):
+            with open(wrk_dir + 'omes2tmd.pickle', 'rb') as raw:
+                omes2dist = pickle.load(raw)
+        else:
+            omes2dist = {}
         for i, omes in enumerate(partition_omes):
             with open(f'{nul_dir}2.null.{i}.txt', 'r') as raw:
                pair_nulls.append([float(x.rstrip()) for x in raw])
@@ -200,11 +232,11 @@ def load_hgx_nulls(max_clus_size, nul_dir, hgx_perc, clus_perc, partition_num):
 
     hgxBordPercs, hgxClusPercs = {}, {}
     for size in range(3, max_clus_size + 1):
-        nullSizes = []
+        print(f'{nul_dir}{size}.null.{partition_num}.txt')
         with open(f'{nul_dir}{size}.null.{partition_num}.txt', 'r') as raw:
-            for line in raw:
-                nullSizes.append(float(line.rstrip()))
+            nullSizes = [float(x.rstrip()) for x in raw]
         nullSizes.sort()
+        print(max(nullSizes), min(nullSizes), len(nullSizes))
         hgxBordPercs[size] = nullSizes[round(hgx_perc * len(nullSizes) + .5)]
         hgxClusPercs[size] = nullSizes[round(clus_perc * len(nullSizes) + .5)]
 
@@ -213,7 +245,7 @@ def load_hgx_nulls(max_clus_size, nul_dir, hgx_perc, clus_perc, partition_num):
 
 def gen_hgx_nulls(
     gffs, gene2hg, max_clus_size, plusminus, phylo,
-    hgx_perc, clus_perc, nul_dir, partition_num,
+    hgx_perc, clus_perc, nul_dir, partition_omes,
     omes2dist = {}, samples = 10000, cpus = 1
     ): # NEED to adjust; this currently uses way too much memory
     """Generates a null distribution of randomly sampled HGxs for each 
@@ -222,44 +254,40 @@ def gen_hgx_nulls(
     Outputs a dictionary of the minimum values for each size HGx
     based on the inputted percentiles. {# of OGs: minimum value}"""
 
-    print('\t\t\tParsing for random samples', flush = True)
+    print('\t\t\tRandomly sampling HGxs', flush = True)
     hash_null_cmds = [
-        (x, gene2hg, max_clus_size, plusminus,) \
-        for x in gffs
+        (x, gene2hg, max_clus_size, plusminus, i) \
+        for x, i in gffs.items()
         ]
     with mp.get_context('fork').Pool(processes = cpus) as pool:
         hashRes = pool.starmap(Hash4nulls, hash_null_cmds)
         # hashRes = [({size: [HGx]})...] by ome
 
-    print('\t\t\tCalculating microsyteny distances of random samples\n\t\tHGx size:', flush = True)
-    hgxBordPercs, hgxClusPercs = {}, {}
-    print('\t\t\t', end = '')
+    print('\tCalculating random sample TMD', flush = True)
+    hgxBordPercs, hgxClusPercs = defaultdict(dict), defaultdict(dict)
+    size_dict = {i: v[size] for i, v in hashRes}
+    size_dict = {k: size_dict[k] for k in sorted(size_dict.keys())}
     for size in range(3, max_clus_size + 1): # for all observed sizes
-        print(str(size), flush = True, end = ' ')
-        size_dict = {i: v[size] for i, v in enumerate(hashRes)}
-        # spoof i keys, size_dict values 
-        hgx2i, i2hgx, null_dict = gen_null_dict(size_dict, samples)
-        oldLen = len(null_dict)
-        null_dict = {k: v for k, v in null_dict.items() if len(v) > 1} # 0 will n t compute
-        distRes = phylocalcs.calc_dists(phylo, null_dict, omes2dist = omes2dist, cpus = cpus)
-        omes2dist, scores = {
-            **omes2dist, **{x[1]: x[0] for x in distRes}
-            }, []
-        
-        nullSizes = []
-        with open(f'{nul_dir}{size}.null.{partition_num}.txt', 'w') as out:
-            for omes in list(null_dict.values()):
-                nullSizes.append(omes2dist[omes])
-                out.write(str(omes2dist[omes]) + '\n') 
-            out.write('\n'.join([str(0) for x in range(oldLen-len(null_dict))]))
-            # account for missing values
-
-        # sort to apply percentile threshold for each size HGx and for both the
-        # border percentile and cluster percentile
-        nullSizes.sort()
-        hgxBordPercs[size] = nullSizes[round(hgx_perc * len(nullSizes) + .5)]
-        hgxClusPercs[size] = nullSizes[round(clus_perc * len(nullSizes) + .5)]
-
+        print(f'\t\tHGx size {size}', flush = True)
+        for i, omes in enumerate(partition_omes):
+            print(f'\t\t\tLineage {i}', flush = True)
+            null_dict = gen_null_dict_omes(size_dict, samples, omes)
+            null_dict = {k: v for k, v in null_dict.items() if len(v) > 1} # 0 will n t compute
+            omes2dist = phylocalcs.update_dists(phylo, null_dict, omes2dist = omes2dist, cpus = cpus)
+            nullSizes = []
+            with open(f'{nul_dir}{size}.null.{i}.txt', 'w') as out:
+                for omes in list(null_dict.values()):
+                    nullSizes.append(omes2dist[omes])
+                    out.write(str(omes2dist[omes]) + '\n') 
+                out.write('\n'.join([str(0) for x in range(oldLen-len(null_dict))]))
+                # account for missing values
+    
+            # sort to apply percentile threshold for each size HGx and for both the
+            # border percentile and cluster percentile
+            nullSizes.sort()
+            hgxBordPercs[i][size] = nullSizes[round(hgx_perc * len(nullSizes) + .5)]
+            hgxClusPercs[i][size] = nullSizes[round(clus_perc * len(nullSizes) + .5)]
+    
     return hgxBordPercs, hgxClusPercs
 
 
@@ -269,19 +297,22 @@ def partitions2hgx_nulls(db, partition_omes, i2ome, gene2hg, max_hgx_size,
     bordScores_list, clusScores_list = [], []
     final_partition = len(partition_omes) - 1
     print('\tPreparing HGx nulls', flush = True)
-    for i, omes in enumerate(partition_omes):
-        if len(partition_omes) > 1:
-            print(f'\tLineage {i}', flush = True)
-        if not os.path.isfile(f'{nul_dir}{max_hgx_size}.null.{i}.txt'):
-            bordScores, clusScores = gen_hgx_nulls(
-                [db[i2ome[k]]['gff3'] for k in omes],
-                gene2hg, max_hgx_size, plusminus, phylo,
-                hgx_perc, clus_perc, nul_dir, i,
-                omes2dist, samples = samples, cpus = cpus
-                )
-        else:
+    if not os.path.isfile(f'{nul_dir}{max_hgx_size}.{final_partition}.txt'):
+        bordScores, clusScores = gen_hgx_nulls(
+            {db[k]['gff3']: k for k in list(db.keys())},
+            gene2hg, max_hgx_size, plusminus, phylo,
+            hgx_perc, clus_perc, nul_dir, partition_omes,
+            omes2dist, samples = samples, cpus = cpus
+            )
+    else:
+        for i, omes in enumerate(partition_omes):
             bordScores, clusScores = load_hgx_nulls(max_hgx_size, nul_dir, hgx_perc,
                                                     clus_perc, i)
+        for k,v in bordScores.items():
+            if not v:
+                print(f'\t\tWARNING: all HGx >= {k} pass')
+                break 
         bordScores_list.append(bordScores)
         clusScores_list.append(clusScores)
+
     return bordScores_list, clusScores_list
