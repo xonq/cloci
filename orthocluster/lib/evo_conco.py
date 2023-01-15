@@ -286,7 +286,8 @@ def run_blast(hgx2loc, db, hg_dir, hgx_dir, diamond = 'diamond', printexit = Fal
         print(f'\tBuilding {len(db_cmds)} diamond dbs', flush = True)
         multisub(db_cmds, verbose = 2, processes = cpus)
         print(f'\tAligning {len(dmnd_cmds)} HGs', flush = True)
-        multisub(dmnd_cmds, verbose = 2, processes = cpus)
+        multisub(dmnd_cmds, verbose = 2, processes = cpus,
+                 injectable = True)
 
 
 
