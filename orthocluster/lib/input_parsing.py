@@ -1,14 +1,16 @@
 # NEED delete omes2tmd if tree changes
 
+import re
 import os
 import sys
 import gzip
+import shutil
 import hashlib
 from cogent3 import PhyloNode, load_tree
 from collections import defaultdict
 from itertools import combinations
 from mycotools.lib.biotools import gff2list
-from mycotools.lib.kontools import format_path, eprint
+from mycotools.lib.kontools import format_path, eprint, collect_files
 
 
 def init_log(
@@ -22,8 +24,11 @@ def init_log(
                 + f'hg_file\t{log_dict["hg_file"]}\n' \
                 + f'plusminus\t{log_dict["plusminus"]}\n' \
                 + f'hgp_percentile\t{log_dict["hgp_percentile"]}\n' \
-                + f'gcf_percentile\t{log_dict["gcf_percentile"]}\n' \
                 + f'hgx_percentile\t{log_dict["hgx_percentile"]}\n' \
+                + f'gcf_percentile\t{log_dict["gcf_percentile"]}\n' \
+                + f'gcf_id\t{log_dict["gcf_id"]}\n' \
+                + f'orig_gcf_id\t{log_dict["gcf_id"]}\n' \
+                + f'inflation\t{log_dict["inflation"]}\n' \
                 + f'id_percent\t{log_dict["id_percent"]}\n' \
                 + f'pos_percent\t{log_dict["pos_percent"]}\n' \
                 + f'patch_threshold\t{log_dict["patch_threshold"]}\n' \
@@ -44,7 +49,7 @@ def read_log(
                    <= round(float(log_dict['gcf_id']) * 100):
                    log_res[key] = True
                 else:
-                   log_dict['org_gcf_id'] = log_dict['gcf_id']
+                   log_dict['orig_gcf_id'] = log_dict['gcf_id']
                    log_res[key] = False
             elif key == 'gcf_id':
                 continue
@@ -55,22 +60,49 @@ def read_log(
     try:
         if not log_res['mtdb']:
             log_res['n50'] = False
+    except KeyError:
+        print('mtdb')
+    try:
         if not log_res['focal_genes']:
             log_res['microsynt_tree'] = False
+    except KeyError:
+        print('focal_genes')
+    try:
         if not log_res['microsynt_constraint']:
             log_res['microsynt_tree'] = False
+    except KeyError:
+        print('microsynt_constraint')
+    try:
         if not log_res['n50']:
             log_res['plusminus'] = False
+    except KeyError:
+        print('n50')
+    try:
         if not log_res['plusminus']:
             log_res['null_samples'] = False
+    except KeyError:
+        print('plusminus')
+    try:
         if not log_res['null_samples']:
             log_res['hgp_percentile'] = False
+    except KeyError:
+        print('null_samples')
+    try:
         if not log_res['hgp_percentile']:
             log_res['hgx_percentile'] = False
+    except KeyError:
+        print('hgp_percentile')
+    try:
         if not log_res['hgx_percentile']:
             log_res['orig_gcf_id'] = False
+    except KeyError:
+        print('hgx_percentile')
+    try:
         if not log_res['orig_gcf_id']:
             log_res['inflation'] = False
+    except KeyError:
+        print('orig_gcf_id')
+    try:
         if not log_res['inflation']:
             log_res['gcf_percentile'] = False
     except KeyError:
@@ -86,9 +118,8 @@ def rm_old_data(
     log_res, out_dir, wrk_dir
     ):
     if not log_res['null_samples']:
-        nulls = collect_files(wrk_dir + 'null/', 'txt')
-        for null in nulls:
-            os.remove(null)
+        if os.path.isdir(wrk_dir + 'null/'):
+            shutil.rmtree(wrk_dir + 'null/')
     if not log_res['hgp_percentile']:
         seed_file = out_dir + 'hgps.tsv.gz'
         seed_arr = wrk_dir + 'microsynt.npy'
@@ -100,11 +131,22 @@ def rm_old_data(
         ome_pickle = wrk_dir + 'hgx2omes.pickle'
         if os.path.isfile(clus_pickle):
             os.remove(clus_pickle)
-        if os.path.isfile(hgx_pickle):
-            os.remove(hgx_pickle)
+#        if os.path.isfile(hgx_pickle):
+ #           os.remove(hgx_pickle)
         if os.path.isfile(ome_pickle):
             os.remove(ome_pickle)
     if not log_res['hgx_percentile']:
+        # should be able to tell if the percentile is raised (no need to del)
+        skip_files = collect_files(wrk_dir + 'null/', '*')
+        skip_files = [x for x in skip_files \
+                      if os.path.basename(x).startswith('skip.')]
+        for skip_file in skip_files:
+            os.remove(skip_file)
+        if skip_files:
+            done_file = [x for x in skip_files \
+                         if os.path.basename(x).startswith('done.')]
+            if done_file:
+                os.remove(done_file)
         groups = ['group.I', 'group.II', 'group.III']
         clan_data = ['hg.json.gz', 'hgx.json.gz', 'json.gz']
         for file_ in clan_data:
@@ -316,22 +358,26 @@ def load_seedScores(file_):#, seed_thresh):
     return out_hgs
 
 
+def bl_repl(ob):
+    i = float(ob.group(1))
+    return ':' + str(i * 10000) + ob.group(2)
+
+
 def compile_tree(i2ome, tree_path, root = []):
-    phylo = load_tree(tree_path)
+    with open(tree_path, 'r') as raw:
+        nwk = raw.read()
+
+    # need to intelligently determine decimals to add, 
+    # need to output to working directory
+    # we need to increase the branch length for large sample trees
+    # or else floating point precision will collapse aggregate lengths
+    # to 0
+    upd_nwk = re.sub(r':(.+?)([,\)])', bl_repl, nwk)
+    with open(tree_path + '.adj', 'w') as out:
+        out.write(upd_nwk)
+
+    phylo = load_tree(tree_path + '.adj')
     if root:
-      #  if len(root) > 1:
-#            from ete3 import Tree
- #           t = Tree(tree_path)
-  #          ancestor = t.get_common_ancestor(root[0], root[1])
-   #         t.set_outgroup(ancestor)
-    #        with open(tree_path, 'w') as out:
-     #           out.write(t.write())
-      #      phylo = load_tree(tree_path)
-      #      phylo = phylo.rooted_at(
-       #         phylo.get_edge_names(root[0], root[1])[0]
-        #            )
-      
-       # else:
         phylo = phylo.rooted_with_tip(root[0])
 
         phylo.write(tree_path, with_distances = True)
