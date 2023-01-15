@@ -42,7 +42,7 @@ from mycotools.gff2svg import main as gff2svg
 from mycotools.acc2fa import dbmain as acc2fa
 from mycotools import db2microsyntree
 from orthocluster.orthocluster.lib import phylocalcs, evo_conco, \
-     hgx2gcfs, input_parsing, hgpairs2hgx, generate_nulls
+     hgx2gcfs, input_parsing, hgp2hgx, generate_nulls
 from orthocluster.orthocluster.lib.output_data import output_res
 
 
@@ -317,8 +317,6 @@ def main(
     if not tree_path:
         tree_path = f'{out_dir}microsynt.newick'
 
-   
-   
     wrk_dir, nul_dir = input_parsing.init_run(db, out_dir, 
                                               near_single_copy_genes, constraint_path,
                                               tree_path, hg_file, plusminus, 
@@ -351,20 +349,16 @@ def main(
 
     # seed clusters by calcuating total microsynteny distance for 
     # orthogroup pairs
-    print('\nIII. Seeding HG pairs', flush = True) 
+    print('\nIII. Seeding HG pairs (HGp)', flush = True) 
     if not os.path.isfile(out_dir + 'hgps.tsv.gz'):
         print('\tCalculating seed HG-pair scores', flush = True)
         seed_score_start = datetime.now()
-        if not os.path.isfile(wrk_dir + 'omes2tmd.pickle'):
-            omes2dist = phylocalcs.update_dists(phylo, cooccur_dict, cpus)
-            with open(wrk_dir + 'omes2tmd.pickle', 'wb') as out:
-                pickle.dump(omes2dist, out)
-        else:
-            with open(wrk_dir + 'omes2tmd.pickle', 'rb') as pickin:
-                omes2dist = pickle.load(pickin)
+        omes2dist = phylocalcs.update_dists(phylo, cooccur_dict, cpus, omes2dist)
+        with open(wrk_dir + 'omes2tmd.pickle', 'wb') as out:
+            pickle.dump(omes2dist, out)
 
         top_hgs = []
-        for hgpair, omes in cooccur_dict.items():
+        for hgp, omes in cooccur_dict.items():
             score = omes2dist[omes]
             parts = set(ome2partition[x] for x in omes)
             if None in parts:
@@ -374,7 +368,7 @@ def main(
             min_pair_score = min([min_pair_scores[i] for i in list(parts)])
             if score > min_pair_score:
                 top_hgs.append([
-                    hgpair[0], hgpair[1], len(omes), score#, score/ome_dist
+                    hgp[0], hgp[1], len(omes), score#, score/ome_dist
                     ])
 
         # write scores            
@@ -395,7 +389,7 @@ def main(
 
     # begin sifting for HGxs using pairs as seeds for HGx detection
     print('\nIV. Sprouting high order HG combinations (HGx)', flush = True)
-    hgx2omes, hgx2loc = hgpairs2hgx.hgpairs2hgx(db, wrk_dir, top_hgs,
+    hgx2omes, hgx2loc = hgp2hgx.hgp2hgx(db, wrk_dir, top_hgs,
                                                 gene2hg, ome2i, phylo, 
                                                 plusminus, cpus) 
     ome_combos = set([tuple(sorted(list(x))) for x in list(hgx2omes.values())])
@@ -444,7 +438,7 @@ def main(
     # in HGxs    
     max_hgx_size = max([len(x) for x in hgx2omes])
     bord_scores_list, clus_scores_list = generate_nulls.partitions2hgx_nulls(
-                                            db, partition_omes, i2ome, gene2hg,
+                                            db, partition_omes, ome2i, gene2hg,
                                             max_hgx_size, plusminus, hgx_perc, 
                                             clus_perc, nul_dir, omes2dist, 
                                             phylo, samples,
@@ -472,14 +466,17 @@ def main(
              # apply the border threshold for ALL pre-grouped hgxs
 
     print(
-        '\t\t' + str(len(hgxs)) + ' HGx pass border threshold', 
+        '\t\t' + str(len(i2hgx)) + ' HGx pass border threshold', 
         flush = True
         )
+    hgx2omes = {v: hgx2omes[v] for v in i2hgx.values()}
+    hgx2loc = {v: hgx2loc[v] for v in i2hgx.values()}
+
     hgx2gbc, omes2patch = {}, {}
     hgx_dir = wrk_dir + 'hgx/'
     print('\nV. Calling gene clusters from HGxs', flush = True)
     print('\tOutputting HG fastas', flush = True)
-    hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgxs, db, hg2gene, cpus = cpus)
+    hg_dir = hg_fa_mngr(wrk_dir, hg_dir, i2hgx.values(), db, hg2gene, cpus = cpus)
     if not os.path.isfile(wrk_dir + 'gcfs.pickle'): # need to add this to
     # log parsing
         # Group hgxs
