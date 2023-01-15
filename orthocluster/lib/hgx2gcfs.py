@@ -85,7 +85,7 @@ def find_hgx_pairs(gene2hgx, ome, hgx2i, pairsDict, minimum = 2):
         # add each possible hgxpair
         hgx_pairs_raw.extend([x for x in combinations(sorted(hgxs), 2)])
 
-    hgx_pairs_count = [x for x, g in Counter(hgx_pairs_raw).items() \
+    hgx_pairs_count = [hgx2i[x] for x, g in Counter(hgx_pairs_raw).items() \
                        if g > minimum]
     null = [pairsDict[hgxpair].append(ome) for hgxpair in hgx_pairs_count]
     return pairsDict
@@ -275,8 +275,8 @@ def clan_to_gcf_loci_resume(
                         if len(blast_ids[hg]) == gene_len:
                             break
             except FileNotFoundError:
-                 blast_ids = run_gcf_blast(blast_ids, hg_dir, hg, genes, 
-                              gcf_dir, clanI, minid = minid,
+                 blast_ids = run_hgx_blast(blast_ids, hg_dir, hg, genes, 
+                              hgx_dir, clanI, minid = minid,
                               diamond = 'diamond')  
 
     if blast_ids:
@@ -433,7 +433,6 @@ def clan_to_gcf_loci_resume_mp(
         # begin appending to temporary writing output
         with open(f'{finished_file}.w', 'a') as out:
             for i0 in range(adj_arr.shape[0]):
-                print(i0, flush = True)
                 row = adj_arr[i0, :]
                 overlap_loci = [x for x in np.where(row > 0)[0] if x > i0]
                 loc0, hgL0 = loci[i0], hgLoci[i0]
