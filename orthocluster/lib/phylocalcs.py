@@ -5,7 +5,7 @@ from mycotools.lib.kontools import eprint
 def addPatch(phylo, omes_set):
     """recursively add branches without the trait to the missing total"""
     
-    total = 0 
+    total = 0
     for sphylo in phylo:
         subOmes = [str(x)[:str(x).find(':')] for x in sphylo.tips(True)]
         if all(
@@ -31,19 +31,31 @@ def calc_patchiness(phylo, omes):
     except AttributeError: # 1 ome
         eprint('\t\t' + ','.join([str(x) for x in omes]) + ' raised a tip not found error', flush = True)
         print(phylo)
-    totalDist = mrca.total_descending_branch_length()
-    subDist = addPatch(mrca, omes_set)
-    return tuple([int(x) for x in omes]), subDist/totalDist
+
+    mrca_omes = set(x.name for x in mrca.iter_tips())
+    if mrca_omes == omes_set:
+        return tuple([int(x) for x in omes]), 1
+    else:
+        totalDist = mrca.total_descending_branch_length()
+        subDist = addPatch(mrca, omes_set)
+        return tuple([int(x) for x in omes]), subDist/totalDist
 
 
 def calc_branch_len(phylo, omes):
     """calculate descending branch length from cogent3 tree"""
     # need to verify wtf descending branch length v total of supplied nodes is
     omes = [str(x) for x in omes]
-    try:    
-        return addPatch(phylo.lowest_common_ancestor(
-            omes
-            ), set(omes)), tuple([int(i) for i in omes])
+    omes_set = set(omes)
+    try:
+        mrca = phylo.lowest_common_ancestor(omes)
+        mrca_omes = set(x.name for x in mrca.iter_tips())
+        if mrca_omes == omes_set:
+            return mrca.total_descending_branch_length(), \
+                   tuple([int(i) for i in omes])
+        else:
+            return addPatch(phylo.lowest_common_ancestor(
+                omes
+                ), set(omes)), tuple([int(i) for i in omes])
     except ValueError:
         eprint('\t\t' + ','.join([str(x) for x in omes]) + ' raised a tip not found error', flush = True)
         return 0, tuple([int(i) for i in omes])
