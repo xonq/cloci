@@ -4,6 +4,7 @@ import shutil
 import random
 import pickle
 import multiprocessing as mp
+from tqdm import tqdm
 from cogent3 import PhyloNode
 from itertools import combinations
 from collections import defaultdict, Counter
@@ -262,6 +263,7 @@ def load_null(nul_f):
     nullSizes.sort()
     return nullSizes
 
+
 def load_hgx_nulls(max_clus_size, nul_dir, hgx_perc, clus_perc, partition_num):
 
     hgxBordPercs, hgxClusPercs = {}, {}
@@ -334,7 +336,8 @@ def gen_hgx_nulls(
                 for x, i in gffs.items()
                 ]
             with mp.get_context('fork').Pool(processes = cpus) as pool:
-                hashRes = pool.starmap(hash_4_nulls_bysize, hash_null_cmds)
+                hashRes = pool.starmap(hash_4_nulls_bysize, 
+                                       tqdm(hash_null_cmds, total = len(hash_null_cmds)))
             size_dict = {ome: nulls for ome, nulls in hashRes}
             size_dict = {k: size_dict[k] for k in sorted(size_dict.keys())}
         for i0, omes in enumerate(partition_omes):
