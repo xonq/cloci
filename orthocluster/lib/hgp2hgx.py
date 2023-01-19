@@ -1,13 +1,21 @@
 import os
 import re
+import sys
 import shutil
 import pickle
 import numpy as np
 import multiprocessing as mp
 from ast import literal_eval
+from tqdm import tqdm
 from datetime import datetime
 from collections import defaultdict
 from scipy import sparse
+from numba import njit
+from numba.core.errors import NumbaDeprecationWarning, NumbaPendingDeprecationWarning
+import warnings
+
+warnings.simplefilter('ignore', category=NumbaDeprecationWarning)
+warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
 from itertools import combinations, chain
 from mycotools.lib.biotools import gff2list
 from mycotools.lib.kontools import write_json, collect_files, read_json
@@ -72,6 +80,7 @@ def hash_protohgxs(gff_path, hgp_dict, gene2hg, clusplusminus = 10):
 
     return dict(protohgx)
 
+
 def merge_protos(protohgx_res):
     """combine protohgx results from each organism"""
 
@@ -83,127 +92,116 @@ def merge_protos(protohgx_res):
             protohgx2omes[hgp].extend(loc_d)
             for loc in loc_d:
                 hgps2hgall[hgp].extend(list(loc[0]))
+                    
             # {(hg0, hg1)}: [[{hgy, hgz}, seq], ...]
-
     hgp2hgs = {hgp: {v: i \
                      for i, v in enumerate(sorted(set(hgs)))} \
                for hgp, hgs in hgps2hgall.items()}
 
-    return dict(protohgx2omes), hgp2hgs
+    return {k: tuple(v) for k,v in protohgx2omes.items()}, hgp2hgs
 
 
-def gen_clusters(loc0, loc1, hgp_set):
-
-    ome0 = loc0[1][:loc0[1].find('_')] # extract ome from gene acc
-    ome1 = loc1[1][:loc1[1].find('_')]
-    if ome0 != ome1:
-        loc0vloc1 = loc0[0].intersection(loc1[0])
-        if loc0vloc1 != hgp_set: #if there are more overlapping hgs
-            hgx = tuple(sorted(list(loc0vloc1))) # sort the loci (not by
-            return hgx, ome0, ome1, loc0[1], loc1[1]
-
-def gen_clusters_arr(loci, hgs2i, clan_arr, ome2i):
-
+@njit
+def gen_clusters_arr(loci, i2hg, clan_arr):
+    """input is an HGp's 2D array of loci represented as a array of HGs
+    presence absence.
+    identify rows with > 2 overlapping HGs by multiplying the inputted
+    2D np.array against its transposed self.
+    if the overlapping loci are from different omes, report their
+    overlapping HGs by pairwise loci summation and extracting coordinates
+    with HG == 2 - indicating overlap.
+    output these overlapping HGs (HGx), omes, and loci anchor genes""" 
     output = []
-    clan_arr = clan_arr.toarray() # to dense
-    i2hg = [k for k, v in hgs2i.items()]
   #  adj_arr = clan_arr @ clan_arr.transpose() # sparse
-    adj_arr = np.matmul(clan_arr, clan_arr.T) # dense
+    adj_arr = clan_arr @ clan_arr.T # dense
     for i0 in range(adj_arr.shape[0]):
         row = adj_arr[i0, :]
         row0 = clan_arr[i0, :]
-        loc0 = loci[i0][1]
+        loc0 = loci[i0]
         ome0 = loc0[:loc0.find('_')]
         # identify loci with > 2 overlapping hgs
-        prep = row > 2
+#        prep = row > 2 # sparse
 #        overlap_loci = [x for x in sparse.find(prep)[0]] # sparse
         overlap_loci = [x for x in np.where(row > 2)[0] if x > i0] # dense
         for i1 in overlap_loci:
-            loc1 = loci[i1][1]
+            loc1 = loci[i1]
             ome1 = loc1[:loc1.find('_')]
             if ome0 != ome1:
                 row1 = clan_arr[i1, :]
                 row_sum = row0 + row1
-    #            where = row_sum == 2
-   #             hgx = tuple([i2hg[x] for x in sparse.find(where)[0]])
-                hgx = tuple([i2hg[x] \
-                             for x in np.where(row_sum == 2)[0]]) # dense
-                output.append([hgx, (ome2i[ome0], ome2i[ome1]), (loc0, loc1)])
-
+   #             hgx = tuple([i2hg[x] for x in sparse.find(where)[0]]) # sparse
+                hgx = [i2hg[x] for x in np.where(row_sum == 2)[0]] # dense
+                output.append((hgx, loc0, loc1))
     return output
 
-
-def formulate_hgx_dict_solo(cmd, hgx2omes, hgx2loc, ome2i):
-
-    for i, res in enumerate(gen_clusters_arr(*cmd)):
-        if res:
-            for comb_len in range(3, len(res[0]) + 1):
-                hgx = res[0]
-                hgx2omes[hgx] = hgx2omes[hgx].union({
-                     ome2i[res[1]], ome2i[res[2]]
-                     })
-                hgx2loc[hgx] = hgx2loc[hgx].union({res[3], res[4]})
-
-    return hgx2omes, hgx2loc
-
-
-def add2hgxdicts(Q, rQ):
-    hgx2omes, hgx2loc = defaultdict(set), defaultdict(set)
-    x = True
-    while x:
-        x = Q.get()
-        if x:
-            mhgx, i0, i1, g1, g2 = x
-            hgx2omes[mhgx].update((
-                i0, i1
-                ))
-            hgx2loc[mhgx].update((
-                g1, g2
-                ))
-    rQ.put([hgx2omes, hgx2loc])
 
 
 def literal_load(f):
     d = read_json(f)
-    return {literal_eval(k): literal_eval(v) for k, v in d.items()}
+    return {literal_eval(k): tuple(v) for k, v in d.items()}
 
 
-def load_prehgx(wrk_dir, suffix = ''):
-    h2o = literal_load(f'{wrk_dir}prehgx2omes{suffix}.json.gz')
-    h2l = literal_load(f'{wrk_dir}prehgx2loc{suffix}.json.gz')
-    with open(f'{wrk_dir}prehgx{suffix}.txt', 'r') as raw:
-        phgps = [x.rstrip().replace('(','').replace(')','').replace(',','').split() \
-                for x in raw if x.rstrip()]
-    hgps = [(int(x[0]), int(x[1])) for x in phgps]
-    return defaultdict(set, h2o), defaultdict(set, h2l), hgps
+def load_prehgx(wrk_dir, ome2i):
+    h2l = defaultdict(list)
+    pre_files = [os.path.basename(x) for x in collect_files(wrk_dir, 'txt')]
+    preh_fs = [x for x in pre_files \
+               if x.startswith('prehgx2data')]
+    for preh_f in tqdm(preh_fs, total = len(preh_fs)):
+        with open(f'{wrk_dir}{preh_f}', 'r') as raw:
+            for line in raw:
+                d = line.rstrip().split()
+                try:
+                    hgx = tuple((int(x) for x in d[0].split(',')))
+                    gs = d[1].split(',')
+                    h2l[hgx].extend(gs)
+                except:
+                    continue
+
+        h2l = {k: list(set(v)) for k, v in h2l.items()}
+        h2o = {k: set(ome2i[y[:y.find('_')]] for y in v) \
+               for k, v in h2l.items()}
+
+    return h2o, h2l
 
 
-def write_prehgx(hgx2omes, hgx2loc, hgps, wrk_dir, suffix):
-    write_json({str(k): str(v) for k,v in hgx2omes.items()}, 
-               f'{wrk_dir}prehgx2omes{suffix}.json.tmp.gz')
-    write_json({str(k): str(v) for k,v in hgx2loc.items()}, 
-               f'{wrk_dir}prehgx2loc{suffix}.json.tmp.gz')
-    shutil.move(f'{wrk_dir}prehgx2omes{suffix}.json.tmp.gz', 
-                f'{wrk_dir}prehgx2omes{suffix}.json.gz')
-    shutil.move(f'{wrk_dir}prehgx2loc{suffix}.json.tmp.gz', 
-                f'{wrk_dir}prehgx2loc{suffix}.json.gz')
-    with open(f'{wrk_dir}prehgx{suffix}.txt', 'a') as out:
-        out.write('\n'.join([str(x) for x in hgps]) + '\n')
+def hgx2mngr(Q, wrk_dir, suffix):
+    """Receive from gen_clusters and formulate_clus_dict shared Manager Queue
+    Output the data to drive storage for parsing and collection later"""
+    x = True
+    hgp_file = f'{wrk_dir}prehgx.{suffix}.txt'
+    dat_file = f'{wrk_dir}prehgx2data.{suffix}.txt'
+    with open(hgp_file, 'a') as hgp_out, open(dat_file, 'a') as dat_out:
+        while x:
+            x = Q.get()
+            if x:
+                for mhgx, g0, g1 in x[1]:
+                    out_str = ','.join([str(x) for x in mhgx])
+                    out_str += f' {g0},{g1}\n'
+                    dat_out.write(out_str)
+    
+                hgp = x[0]
+                hgp_out.write(f'{hgp[0]} {hgp[1]}' + '\n')
+                hgp_out.flush()
+                dat_out.flush()
+    Q.put(None)
 
-def formulate_hgx_dicts(gen_clus_cmds, hgx2omes, hgx2loc, prehgx, wrk_dir, suffix = '', cpus = 1):
 
-    with mp.get_context('fork').Pool(processes = cpus) as pool:
-        clus_res = pool.starmap(gen_clusters_arr, gen_clus_cmds)
-    clus_res = chain(*clus_res)
-    for res in clus_res:
-        hgx, iS, gs = res
-        hgx2omes[hgx].update(iS)
-        hgx2loc[hgx].update(gs)
+def formulate_hgx_dicts(hgp, loci, hgs2i, Q):
+    hgp_set = set(hgp)
+    # make a matrix to identify overlap hgs v loci
+    # loci must a be sorted by hgs
+    clan_arr = np.zeros([len(loci), len(hgs2i)],
+                        dtype = np.int8)
+    for i, loc in enumerate(loci):
+        hg_loc = np.array(list([hgs2i[x] for x in loc[0]]))
+        clan_arr[i, hg_loc] = 1
+    loci = [x[1] for x in loci]
+    i2hg = np.array([k for k, v in hgs2i.items()])
+    output = gen_clusters_arr(loci, i2hg, clan_arr.astype(float))
+#                output.append([hgx, (ome0, ome1), (loc0, loc1)])
+    Q.put((hgp, tuple((tuple(x[0]), x[1], x[2],) \
+           for x in output),))
 
-    proc = mp.Process(target=write_prehgx, args=[hgx2omes, hgx2loc, prehgx, wrk_dir, suffix])
-    proc.start()
-
-    return hgx2omes, hgx2loc, proc
 
 def par_rm(hgx, hgx2omes):
 
@@ -250,7 +248,8 @@ def rm_subsets(hgx2omes, hgx2loc, cpus = 1):
 
 #    hgx2omes, hgx2loc = add_subsets(hgx2omes, hgx2loc)
     max_len = len(list(hgx2omes.keys())[0])
-    for hgx_len in reversed(range(4, max_len + 1)):
+    for hgx_len in tqdm(reversed(range(4, max_len + 1)),
+                        total = max_len + 1 - 4):
         i2hgx = list(hgx2omes.keys())
         rm_cmds = [[hgx, hgx2omes] for hgx in i2hgx if len(hgx) == hgx_len]
         with mp.get_context('fork').Pool(processes = cpus) as pool:
@@ -277,108 +276,83 @@ def id_hgx(db, hgp_dict, gene2hg, ome2i, wrk_dir, cpus, clusplusminus = 10):
     for gff in gffs: # prepare for protohgx hashing by organism
         hash_protohgx_cmds.append((gff, hgp_dict, gene2hg, clusplusminus,))
     with mp.get_context('fork').Pool(processes = cpus) as pool:
-        protohgx_res = pool.starmap(hash_protohgxs, hash_protohgx_cmds)
+        protohgx_res = pool.starmap(hash_protohgxs, 
+                                    tqdm(hash_protohgx_cmds,
+                                         total = len(hash_protohgx_cmds)))
     pool.join()
                 
     print('\t\tForming proto-HGxs', flush = True)
     protohgx2omes, hgp2hgs = merge_protos(protohgx_res) # merge mp results
             
     print('\t\tIdentifying HGxs', flush = True)
-    print(f'\t\t\t{len(protohgx2omes)} to run', flush = True)
     count, ite, proc = 0, 1, None
-                    
-    # generate dictionaries of crude predicted hgxs
-    gen_clus_cmds, prehgxs = [], []
-    hgx2omes, hgx2loc = defaultdict(set), defaultdict(set)
-    # need at least two cpus at this point
-#    if cpus == 2:
-     #   d_cpu = 1
-    #    m_cpu = 1
-   # elif cpus == 3:
-  #      d_cpu = 1
- #       m_cpu = 2
-#    else:
-    #    m_cpu = round(0.7*cpus)
-   #     d_cpu = cpus - m_cpu
-  #  Q = mp.Manager().Queue()
- #   rQ = mp.Manager().Queue()
-#    procs = [mp.Process(target=add2hgxdicts, args=[Q, rQ]) for i in range(d_cpu)]
-#    for proc in procs:
- #       proc.start()
-    # load checkpoint if available
-    if os.path.isfile(wrk_dir + 'prehgx.txt'):
+    
+    pre_files = [os.path.basename(x) for x in collect_files(wrk_dir, 'txt')]
+    if any(x.startswith('prehgx') for x in pre_files):
         print('\t\t\tLoading checkpoint', flush = True)
-        pre_files = [os.path.basename(x) for x in collect_files(wrk_dir, 'txt')]
-        preh_fs = [re.search(r'prehgx(\d*)\.txt', x)[1]
-                   for x in pre_files \
-                   if re.search(r'prehgx\d*\.txt', x) is not None]
-        try:
-            sx = max([int(x) for x in preh_fs \
-                      if x and os.path.isfile(f'{wrk_dir}prehgx2loc{x}.json.gz')])
-        except ValueError:
-            sx = ''
-
-        hgx2omes, hgx2loc, ran_hgp = load_prehgx(wrk_dir, sx)
-        for hgp in ran_hgp:
+        preh_fs = [x for x in pre_files if x.startswith('prehgx.')]
+        sxs = [int(re.search(r'prehgx\.(\d+)\.txt', x)[1]) for x in preh_fs]
+        sx = max(sxs)
+        hgps = []
+        for preh_f in preh_fs:
+            with open(f'{wrk_dir}{preh_f}', 'r') as raw:
+                for line in raw:
+                    d = line.rstrip().split()
+                    if len(d) > 1:
+                        hgps.append((int(d[0]), int(d[1]),))
+        hgps = list(set(hgps))
+        for hgp in hgps:
             if hgp in protohgx2omes:
                 del protohgx2omes[hgp]
-
-        print(f'\t\t\t{len(protohgx2omes)} to run', flush = True)
-
-        if sx:
-            sx += 1
-        else:
-            sx = 1
-
-        with open(f'{wrk_dir}prehgx{sx}.txt', 'w') as out:
-            out.write('\n'.join([str(x) for x in ran_hgp]))
     else:
-        sx = ''
+        sx = -1
 
+    if protohgx2omes:
+#        prog = mp.Process(target=progress_report, args=(wrk_dir, 0, start_len))
+ #       prog.start()
+        # could make this intelligent via a test
+        if cpus == 1:
+            eprint('ERROR: need more than one CPU', flush = True)
+        if cpus == 2:
+            c_cpus = 1
+            w_cpus = 1
+        elif cpus < 3:
+            w_cpus = 1
+            c_cpus = cpus - 1
+        else:
+            w_cpus = round(cpus/3)
+            c_cpus = cpus - w_cpus
+    
+        Q = mp.Manager().Queue()
+        procs = []
+        for i in range(w_cpus):
+            sx += 1
+            procs.append(mp.Process(target=hgx2mngr, args=(Q, wrk_dir, sx)))
+            procs[-1].start()
 
-    for hgp, loci in protohgx2omes.items():
-        hgp_set = set(hgp)
-        hgs2i = hgp2hgs[hgp]
-        # make a matrix to identify overlap hgs v loci
-        # loci must a be sorted by hgs
-        clan_arr = np.zeros([len(loci), len(hgs2i)],
-                            dtype = np.int8)
-        for i, loc in enumerate(loci):
-            hg_loc = np.array(list([hgs2i[x] for x in loc[0]]))
-            clan_arr[i, hg_loc] = 1
-        count += 1
-        gen_clus_cmds.append([loci, hgs2i, sparse.csr_matrix(clan_arr), ome2i]) # sparse
-        prehgxs.append(hgp)
-#        gen_clus_cmds.append([loci, hgs2i, clan_arr, ome2i]) # dense
+        params = ((hgp, loci, hgp2hgs[hgp], Q) for hgp, loci in protohgx2omes.items()) 
+        with mp.Pool(processes = c_cpus) as pool:
+            pool.starmap(formulate_hgx_dicts, tqdm(params, total = len(protohgx2omes)))
+        Q.put(None)
+        for proc in procs:
+            proc.join()
+        Q.get()
 
-        if count > 5000 * ite:
-            ite += 1
-            print('\t\t\t' + str(count), flush = True)
-            if proc:
-                proc.join()
-            hgx2omes, hgx2loc, proc = formulate_hgx_dicts(
-                gen_clus_cmds, hgx2omes, hgx2loc, prehgxs, wrk_dir, cpus = cpus, suffix = sx
-                )               
-            gen_clus_cmds, prehgxs = [], []
-                            
-    # run the last set of commands
-    if proc:
-        proc.join()
-    hgx2omes, hgx2loc, proc = formulate_hgx_dicts(
-        gen_clus_cmds, hgx2omes, hgx2loc, prehgxs, wrk_dir, cpus = cpus, suffix = sx
-        )
-    proc.join()
+   # print('joining', flush = True)
+  #  prog.join()
+    print('\t\tReading results', flush = True)
+    hgx2omes, hgx2loc = load_prehgx(wrk_dir, ome2i)
 
     print('\t\tRemoving subset HGxs', flush = True)
     hgx2omes, hgx2loc = rm_subsets(hgx2omes, hgx2loc, cpus)
-    hgx2omes = {x: tuple(sorted(list(hgx2omes[x]))) for x in hgx2omes}
+    hgx2omes = {x: tuple(sorted(hgx2omes[x])) for x in hgx2omes}
 
     return hgx2omes, hgx2loc
 
 
 def hgp2hgx(db, wrk_dir, top_hgs, gene2hg, ome2i, 
                 phylo, plusminus = 3, cpus = 1):
-    if not os.path.isfile(wrk_dir + 'hgx2omes.json.gz'):
+    if not os.path.isfile(wrk_dir + 'hgx2loc.pickle'):
         hgp_dict = form_hgpDict(top_hgs)
         print('\tForming HGxs', flush = True)
         form_clus_start = datetime.now()
@@ -386,16 +360,16 @@ def hgp2hgx(db, wrk_dir, top_hgs, gene2hg, ome2i,
             db, hgp_dict, gene2hg,  
             ome2i, wrk_dir, cpus, clusplusminus = plusminus
             )
-        write_json({str(k): str(v) for k, v in hgx2loc.items()},
-                   f'{wrk_dir}hgx2loc.json.tmp.gz')
-#        with open(wrk_dir + 'hgx2loc.json.tmp.gz', 'wb') as pickout:
- #           write(hgx2loc, pickout)
-        write_json({str(k): str(v) for k, v in hgx2omes.items()},
-                   f'{wrk_dir}hgx2omes.json.tmp.gz')
-        shutil.move(f'{wrk_dir}hgx2loc.json.tmp.gz', 
-                    f'{wrk_dir}hgx2loc.json.gz')
-        shutil.move(f'{wrk_dir}hgx2omes.json.tmp.gz',
-                    f'{wrk_dir}hgx2omes.json.gz')
+#        write_json({str(k): list(v) for k, v in hgx2loc.items()},
+ #                  f'{wrk_dir}hgx2loc.json.tmp.gz')
+        with open(wrk_dir + 'hgx2loc.pickle', 'wb') as pickout:
+            pickle.dump(hgx2loc, pickout)
+ #       write_json({str(k): list(v) for k, v in hgx2omes.items()},
+  #                 f'{wrk_dir}hgx2omes.json.tmp.gz')
+   #     shutil.move(f'{wrk_dir}hgx2loc.json.tmp.gz', 
+    #                f'{wrk_dir}hgx2loc.json.gz')
+     #   shutil.move(f'{wrk_dir}hgx2omes.json.tmp.gz',
+      #              f'{wrk_dir}hgx2omes.json.gz')
 #        with open(wrk_dir + 'hgx2omes.pickle', 'wb') as pickout:
  #           pickle.dump(hgx2omes, pickout)
         formHGxTime = datetime.now() - form_clus_start
@@ -406,11 +380,13 @@ def hgp2hgx(db, wrk_dir, top_hgs, gene2hg, ome2i,
         print('\t\t' + str(formHGxTime), flush = True)
     
     else: # or just load available structures 
-        hgx2loc = literal_load(f'{wrk_dir}hgx2loc.json.gz')
-        hgx2omes = literal_load(f'{wrk_dir}hgx2omes.json.gz')
-#        with open(wrk_dir + 'hgx2loc.pickle', 'rb') as pickin:
- #           hgx2loc = pickle.load(pickin)
-  #      with open(wrk_dir + 'hgx2omes.pickle', 'rb') as pickin:
-   #         hgx2omes = pickle.load(pickin)
+#        hgx2loc = literal_load(f'{wrk_dir}hgx2loc.json.gz')
+ #       hgx2omes = literal_load(f'{wrk_dir}hgx2omes.json.gz')
+        with open(wrk_dir + 'hgx2loc.pickle', 'rb') as pickin:
+            hgx2loc = pickle.load(pickin)
+        hgx2omes = {k: tuple(sorted(set(ome2i[y[:y.find('_')]] for y in v))) \
+                    for k, v in hgx2loc.items()}
+#        with open(wrk_dir + 'hgx2omes.pickle', 'rb') as pickin:
+ #           hgx2omes = pickle.load(pickin)
 
     return hgx2omes, hgx2loc
