@@ -34,7 +34,7 @@ def calc_patchiness(phylo, omes):
 
     mrca_omes = set(x.name for x in mrca.iter_tips())
     if mrca_omes == omes_set:
-        return tuple([int(x) for x in omes]), 1
+        return tuple([int(x) for x in omes]), 0
     else:
         totalDist = mrca.total_descending_branch_length()
         subDist = addPatch(mrca, omes_set)
@@ -49,19 +49,15 @@ def calc_branch_len(phylo, omes):
     try:
         mrca = phylo.lowest_common_ancestor(omes)
         mrca_omes = set(x.name for x in mrca.iter_tips())
-        if mrca_omes == omes_set:
-            return mrca.total_descending_branch_length(), \
-                   tuple([int(i) for i in omes])
-        else:
-            return addPatch(phylo.lowest_common_ancestor(
-                omes
-                ), set(omes)), tuple([int(i) for i in omes])
+        tmd = mrca.total_descending_branch_length() \
+            - addPatch(phylo.lowest_common_ancestor(omes),
+                       omes_set)
+        return tmd, tuple([int(i) for i in omes])
     except ValueError:
         eprint('\t\t' + ','.join([str(x) for x in omes]) + ' raised a tip not found error', flush = True)
         return 0, tuple([int(i) for i in omes])
     except AttributeError:
         print(omes, '\n', phylo)
-
 
 
 def calc_dists(phylo, cooccur_dict, cpus = 1, omes2dist = {}):
