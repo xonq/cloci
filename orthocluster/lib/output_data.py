@@ -5,6 +5,8 @@ import shutil
 import subprocess
 import multiprocessing as mp
 import plotly.graph_objects as go
+from math import log
+from tqdm import tqdm
 from collections import defaultdict
 from plotly.subplots import make_subplots
 from mycotools.acc2gff import grabGffAcc
@@ -382,13 +384,14 @@ def grabClus(genes_list, gff_path, prot_path, ome, ome_dir, gene2hg, pfamRes = {
 #    return ome, clus_gffs, clus_fas, svg_dict
 
 
-
 def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, gcf_hgxs,
          omes2dist, hgx2omes2gbc, omes2patch, hgx2omes2id,
          hgx2omes2pos, hgx2loc, gene2hg, plusminus, ome2i,
          hgx2i, pfam_path = None, dnds_dict = {}, cpus = 1):
     print('\tWriting cluster scores', flush = True)
-    gcf_output, done, maxval = [], set(), max(hgx2dist.values())
+    omes2dist = {k: log(v) for k, v in omes2dist.items() if v}
+    maxval = max(omes2dist.values()) # max observed, even of those truncated/removed
+    gcf_output, done = [], set()
     for gcf, modHGx2omes in enumerate(gcfs):
         for hgx, omes in modHGx2omes.items():
             hgx_id = hgx2i[hgx]
@@ -398,21 +401,25 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
                 continue
             gcf_output.append([
                 ','.join([str(x) for x in hgx]), hgx_id,
-                gcf, hgx2dist[hgx]/maxval,
+                gcf, (maxval - log(hgx2dist[hgx]))/maxval,
                 ','.join([i2ome[x] for x in hgx2omes[hgx]])
                 ]) # HGxs at this stage are not segregated into groups
     gcf_output = sorted(gcf_output, key = lambda x: x[3], reverse = True)
     with gzip.open(out_dir + 'hgxs.tsv.gz', 'wt') as out:
-        out.write('#hgs\thgx_id\tgcf\tdistance\tomes')#\tpatchiness\tomes')
+        out.write('#hgs\thgx_id\tgcf\tnrm_log_tmd\tomes')#\tpatchiness\tomes')
         for entry in gcf_output:
             out.write('\n' + '\t'.join([str(x) for x in entry]))
 
+    
     kern_output, top_hgxs = [], []
     for i, ogc in enumerate(gcf_hgxs):
         omesc = gcf_omes[i]
+        if omesc not in omes2patch:
+            print(omesc, 'not in patch', flush = True)
+            continue
         kern_output.append([
             ','.join([str(x) for x in ogc]), i,
-            omes2dist[omesc]/maxval, omes2patch[omesc], 
+            (maxval - log(omes2dist[omesc]))/maxval, omes2patch[omesc], 
             hgx2omes2gbc[ogc][omesc],
             hgx2omes2id[ogc][omesc], hgx2omes2pos[ogc][omesc],
             ','.join([str(i2ome[x]) for x in omesc])#,
@@ -425,7 +432,7 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
     kern_output = sorted(kern_output, key = lambda x: x[4], reverse = True)
 
     with gzip.open(out_dir + 'gcfs.tsv.gz', 'wt') as out:
-        out.write('#hgs\tgcf\tdistance\tpatchiness' \
+        out.write('#hgs\tgcf\tnrm_log_tmd\tpatchiness' \
                 + '\tgbc\t%id\t%pos\tomes') #+ \
             #'selection_coef\tmean_dnds\tog_dnds\t' + \
          #   'total_dist'
@@ -441,7 +448,7 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
 
     for entry in kern_output:
         labels.append(
-            ['Clan:', str(entry[1]) + ' | Omes: ' + entry[-1] + ' | OGs: ' + str(entry[0])]
+            ['GCF:', str(entry[1]) + ' | Omes: ' + entry[-1] + ' | HGs: ' + str(entry[0])]
             )
         axes[0].append(entry[4])
         axes[1].append(entry[3])
@@ -451,15 +458,15 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
             axes[4].append(entry[7])
     print('\tOutputting scatter plots', flush = True)
     axes_labels = [
-        'Distribution Patchiness', 'Gene coevolution', 'Microsynteny Distance' #,
+        'Distribution Patchiness', 'Gene BLAST Congruence', 'Log Microsynteny Distance' #,
 #        'Selection Coefficient', 'Mean dN/dS'
         ]
     if dnds_dict:
         axes_labels.extend(['Selection Coefficient', 'Mean dN/dS'])
     fig = mk_subplots(labels, axes, axes_labels, alpha = 0.6)
-    fig.write_html(out_dir + 'scores.scatters.html')
+    fig.write_html(out_dir + 'metrics.html')
     fig = mk_3d(labels, axes[:3], axes_labels[:3], alpha = 0.7)
-    fig.write_html(out_dir + 'kernel.scatter.html')
+    fig.write_html(out_dir + 'gcfs.html')
 
     print('\tCompiling clusters from annotations', flush = True)
     sig_clus = extrct_sig_clus(
@@ -476,7 +483,9 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
         out_file = ome_dir + ome + '/info.out'
         write_clus_cmds.append([sig_clus[ome], ome, out_file, gff, gene2hg, plusminus])
     with mp.get_context('fork').Pool(processes = cpus) as pool:
-        out_genes = pool.starmap(write_clusters, write_clus_cmds)
+        out_genes = pool.starmap(write_clusters, 
+                                 tqdm(write_clus_cmds, 
+                                      total = len(write_clus_cmds)))
     pool.join()
     genes = {x[0]: x[1] for x in out_genes if x[1]}
 
