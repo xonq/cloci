@@ -6,10 +6,13 @@ import sys
 import gzip
 import shutil
 import hashlib
+import multiprocessing as mp
+from tqdm import tqdm
 from cogent3 import PhyloNode, load_tree
 from collections import defaultdict
 from itertools import combinations
-from mycotools.lib.biotools import gff2list
+from mycotools.acc2fa import dbmain as acc2fa
+from mycotools.lib.biotools import gff2list, dict2fa
 from mycotools.lib.kontools import format_path, eprint, collect_files
 
 
@@ -27,6 +30,7 @@ def init_log(
                 + f'hgx_percentile\t{log_dict["hgx_percentile"]}\n' \
                 + f'gcf_percentile\t{log_dict["gcf_percentile"]}\n' \
                 + f'gcf_id\t{log_dict["gcf_id"]}\n' \
+                + f'gcf_sim\t{log_dict["gcf_sim"]}\n' \
                 + f'orig_gcf_id\t{log_dict["gcf_id"]}\n' \
                 + f'inflation\t{log_dict["inflation"]}\n' \
                 + f'id_percent\t{log_dict["id_percent"]}\n' \
@@ -98,6 +102,11 @@ def read_log(
     except KeyError:
         print('hgx_percentile')
     try:
+        if not log_res['gcf_sim']:
+            log_res['orig_gcf_id'] = False
+    except KeyError:
+        print('gcf similarity')
+    try:
         if not log_res['orig_gcf_id']:
             log_res['inflation'] = False
     except KeyError:
@@ -111,7 +120,6 @@ def read_log(
         sys.exit(149)
 
     return log_res
-
 
 
 def rm_old_data(
@@ -172,7 +180,8 @@ def rm_old_data(
         clus_file = out_dir + 'gcfs.tsv.gz'
         hgx_files = ['hgx2omes2gbc.full.pickle',
                      'hgx2omes2id.full.pickle',
-                     'hgx2omes2pos.pickle']
+                     'hgx2omes2pos.pickle',
+                     'hgx/clusOGs.pickle']
 #        patch_pickle = wrk_dir + 'patchiness.full.pickle'
         ome_dir = wrk_dir + 'ome/'
         hmm_dir = wrk_dir + 'hmm/'
@@ -358,25 +367,11 @@ def load_seedScores(file_):#, seed_thresh):
     return out_hgs
 
 
-def bl_repl(ob):
-    i = float(ob.group(1))
-    return ':' + str(i * 10000) + ob.group(2)
-
-
 def compile_tree(i2ome, tree_path, root = []):
     with open(tree_path, 'r') as raw:
         nwk = raw.read()
 
-    # need to intelligently determine decimals to add, 
-    # need to output to working directory
-    # we need to increase the branch length for large sample trees
-    # or else floating point precision will collapse aggregate lengths
-    # to 0
-    upd_nwk = re.sub(r':(.+?)([,\)])', bl_repl, nwk)
-    with open(tree_path + '.adj', 'w') as out:
-        out.write(upd_nwk)
-
-    phylo = load_tree(tree_path + '.adj')
+    phylo = load_tree(tree_path)
     if root:
         phylo = phylo.rooted_with_tip(root[0])
 
@@ -386,10 +381,85 @@ def compile_tree(i2ome, tree_path, root = []):
     return phylo
 
 
+def output_hg_fas(db, genes, hg_file):
+    fa_str = dict2fa(acc2fa(
+                db, genes, error = False, spacer = '\t\t',
+                coord_check = False
+                ))
+    with open(hg_file + '.tmp', 'w') as out:
+        out.write(fa_str)
+    os.rename(hg_file + '.tmp', hg_file)
+
+
+def cp_files(f0, f1):
+    shutil.copy(f0, f1)
+
+def symlink_files(f0, f1):
+    os.symlink(f0, f1)
+
+
+def hg_fa_mngr(wrk_dir, hg_dir, hgs,
+               db, hg2gene,
+               cpus = 1):
+    new_hg_dir = wrk_dir + 'hg/'
+    if not os.path.isdir(new_hg_dir):
+        os.mkdir(new_hg_dir)
+    # extract only used HGs
+    hg_files = set([int(os.path.basename(x[:-4])) \
+                    for x in collect_files(new_hg_dir, 'faa')])
+    missing_hgs = sorted(set(hgs).difference(hg_files))
+
+    if not hg_dir:
+        with mp.Pool(processes = cpus) as pool:
+            pool.starmap(output_hg_fas,
+                         tqdm(((db, hg2gene[hg], f'{new_hg_dir}{hg}.faa') \
+                         for hg in missing_hgs), total = len(missing_hgs)))
+    else: # predetermined hg input
+        hg_fa_cmds = []
+        orthofinder = False
+        if not os.path.isfile(f'{hg_dir}{hgs[0]}.faa'):
+             digits = len(str(hgs[0]))
+             zeros = 7 - digits
+             if os.path.isfile(f'{hg_dir}OG{"0" * zeros}{hgs[0]}.fa'):
+                 orthofinder = True
+                 ext = '.fa'
+             elif os.path.isfile(f'{hg_dir}{hgs[0]}.fa'):
+                 ext = '.fa'
+             elif os.path.isfile(f'{hg_dir}{hgs[0]}.fasta'):
+                 ext = '.faa'
+        else:
+             raise FileNotFoundError('HG fastas missing')
+
+        if orthofinder:
+             for hg in missing_hgs:
+                 digits = len(str(hg))
+                 zeros = 7 - digits
+                 hg_file = (f'{hg_dir}OG{"0" * zeros}{hg}.fa')
+                 hg_fa_cmds.append((hg_file, f'{new_hg_dir}{hg}.faa'))
+        else:
+            hg_fa_cmds = [(f'{hg_dir}{hg}{ext}', f'{new_hg_dir}{hg}.faa') \
+                          for hg in missing_hgs]
+        copy_hgs = False
+        try:
+            os.symlink(hg_fa_cmds[0][0], hg_fa_cmds[0][1])
+            del hg_fa_cmds[0]
+        except:
+            copy_hgs = True
+
+        if copy_hgs:
+            with mp.Pool(processes = cpus) as pool:
+                pool.starmap(cp_files, hg_fa_cmds)
+        else:
+            with mp.Pool(processes = cpus) as pool:
+                pool.starmap(symlink_files, hg_fa_cmds)
+
+    return new_hg_dir
+
+
 def init_run(db, out_dir, near_single_copy_genes, constraint_path,
              tree_path, hg_file, plusminus, seed_perc, clus_perc,
              hgx_perc, id_perc, pos_perc, patch_thresh, coevo_thresh,
-             samples, n50thresh, flag, min_gcf_id, inflation):
+             samples, n50thresh, flag, min_gcf_id, inflation, simfun):
     wrk_dir = out_dir + 'working/'
     if not os.path.isdir(wrk_dir):
         os.mkdir(wrk_dir)
@@ -409,7 +479,7 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
         'microsynt_tree': tree_path,
         'hg_file': hg_file, 'plusminus': plusminus,
         'hgp_percentile': seed_perc, 'hgx_percentile': hgx_perc, 
-        'orig_gcf_id': None, 'gcf_id': min_gcf_id,
+        'orig_gcf_id': None, 'gcf_id': min_gcf_id, 'gcf_sim': simfun,
         'gcf_percentile': clus_perc, 'id_percent': id_perc,
         'pos_percent': pos_perc, 'patch_threshold': patch_thresh,
         'coevo_threshold': coevo_thresh, 'inflation': inflation,
