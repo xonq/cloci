@@ -3,12 +3,13 @@ import sys
 import pickle
 import subprocess
 import multiprocessing as mp
+from tqdm import tqdm
 from itertools import chain
 from collections import defaultdict
 from mycotools.acc2fa import dbmain as acc2fa
 from mycotools.lib.biotools import gff2list
-from mycotools.lib.kontools import multisub, tardir, collect_files
-from orthocluster.orthocluster.lib.input_parsing import compileCDS2
+from mycotools.lib.kontools import multisub, tardir, collect_files, checkdir
+from orthocluster.orthocluster.lib.input_parsing import compileCDS2, hg_fa_mngr
 
 
 def retroactive_grab_hgx_genes(
@@ -92,12 +93,16 @@ def hgx2omes2gbc_calc(
         # open the blast results
             geneInfo = defaultdict(list)
             for line in raw:
-                q,s,e,i,p = line.rstrip().split('\t')
+                d = line.rstrip().split('\t')
+                if len(d) == 4:
+                    q,s,i,p = d
+                elif len(d) == 5:
+                    q,s,e,i,p = d
                 if q in hgx_genes:
-                    geneInfo[q].append((s, float(e), float(i), float(p)))
+                    geneInfo[q].append((s, float(i), float(p)))
                     # dict(geneInfo) = {query: [(sbj, evalue, id, pos)]}
         geneInfo = {
-            k: sorted(v, key = lambda x: x[2], reverse = True) \
+            k: sorted(v, key = lambda x: x[1], reverse = True) \
             for k,v in geneInfo.items()
             } # sort each query by percent ID (should maybe have a coverage filter)
 
@@ -114,13 +119,13 @@ def hgx2omes2gbc_calc(
             # while all cluster homologs aren't accounted for and there remain hits
             if gene not in geneInfo:
                 continue
-            while True:
+            while geneInfo[gene]:
                 sbj_gene = geneInfo[gene][0][0]
                 sbj_ome = sbj_gene[:sbj_gene.find('_')]
  #               if sbj_ome == ome: # same ome, could be recent paralog
                 if sbj_gene in hgx_genes and sbj_ome != ome:
                     # grab the hit positives and identity
-                    res[og][ome][1][sbj_gene] = tuple(geneInfo[gene][0][2:])
+                    res[og][ome][1][sbj_gene] = tuple(geneInfo[gene][0][1:])
                     hits.add(sbj_gene)
                     if not hgx_genes.difference(hits):
                         break
@@ -171,8 +176,11 @@ def hgx2omes2gbc_calc(
         gcf_min_id += sum([x[0] for x in ome_dict.values()])
         gcf_min_pos += sum([x[1] for x in ome_dict.values()])
         total += len(ome_dict)
-    gcf_min_id /= total
-    gcf_min_pos /= total
+    try:
+        gcf_min_id /= total
+        gcf_min_pos /= total
+    except ZeroDivisionError:
+        gcf_min_id, gcf_min_pos = 0, 0
 
     return hgx, omesI, gbcScore, gcf_min_id, gcf_min_pos
 
@@ -205,7 +213,8 @@ def gbc_mngr(
 
         print('\tAssimilating GCF loci', flush = True)
         with mp.get_context('fork').Pool(processes = cpus) as pool:
-            clus_hgs_prep = pool.starmap(retroactive_grab_hgx_genes, hgxGene_cmds)
+            clus_hgs_prep = pool.starmap(retroactive_grab_hgx_genes, 
+                                         tqdm(hgxGene_cmds, total = len(hgxGene_cmds)))
         with open(hgx_dir + 'clusOGs.pickle', 'wb') as out:
             pickle.dump(clus_hgs_prep, out)
     else:
@@ -270,8 +279,9 @@ def prep_blast_cmds(db, hgs, hg_dir, hgx_dir, minid = 30, diamond = 'diamond'):
     return cmds1, cmds2
 
 
-def run_blast(hgx2loc, db, hg_dir, hgx_dir, diamond = 'diamond', printexit = False, cpus = 1):
-    hgs = sorted(set(chain(*list(hgx2loc.keys()))))
+def run_blast(hgs, db, hg_dir, hgx_dir, 
+              diamond = 'diamond', printexit = False, cpus = 1):
+#    hgs = sorted(set(chain(*list(hgx2loc.keys()))))
     db_cmds, dmnd_cmds = prep_blast_cmds(db, hgs, hg_dir, hgx_dir, diamond = 'diamond')
     if printexit and dmnd_cmds:
         print('\tPreparing diamond commands and exiting', flush = True)
@@ -299,8 +309,11 @@ def gbc_main(
     moduleOmes = None, cpus = 1, printexit = False
     ):
 
-
-    run_blast(hgx2loc, db, hg_dir, hgx_dir, cpus = cpus,
+    hgs = list(chain(*list(hgx2loc.keys())))
+    hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgs, 
+                        db, hg2gene, cpus = cpus)
+    run_blast(hgs, db, hg_dir, 
+              hgx_dir, cpus = cpus,
               diamond = 'diamond', printexit = printexit)
 
     hgs_list = []
