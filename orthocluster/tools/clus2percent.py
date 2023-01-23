@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 
 import os, sys, argparse, multiprocessing as mp
-from mycotools.lib.kontools import formatPath, collect_files
+from mycotools.lib.kontools import format_path, collect_files
 from mycotools.lib.dbtools import mtdb, masterDB
 
 def CalcMeanMedian(genesPerClus):
@@ -164,10 +164,10 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--cpu', default = 1, type = int)
     args = parser.parse_args()
 
-    db = mtdb(formatPath(args.db))
-    o2c_dir = formatPath(args.og2clus)
+    db = mtdb(format_path(args.db))
+    o2c_dir = format_path(args.og2clus)
     if args.antismash:
-        as_dir = formatPath(args.antismash)
+        as_dir = format_path(args.antismash)
     else:
         as_dir = None
 
