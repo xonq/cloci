@@ -300,7 +300,6 @@ def run_blast(hgs, db, hg_dir, hgx_dir,
                  injectable = True)
 
 
-
 def gbc_main(
     hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
     blastp, db, gene2hg, plusminus, hg2gene,
@@ -309,20 +308,19 @@ def gbc_main(
     moduleOmes = None, cpus = 1, printexit = False
     ):
 
-    hgs = list(chain(*list(hgx2loc.keys())))
-    hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgs, 
-                        db, hg2gene, cpus = cpus)
-    run_blast(hgs, db, hg_dir, 
-              hgx_dir, cpus = cpus,
-              diamond = 'diamond', printexit = printexit)
-
-    hgs_list = []
-    for hgx in hgx2loc:
-        hgs_list.extend(list(hgx))
-    hgs = set(hgs_list)
     if not os.path.isfile(wrk_dir + old_path):
         if not checkdir(hgx_dir, unzip = True, rm = True):
             os.mkdir(hgx_dir)
+
+        
+        hgs = list(chain(*moduleHGxs))
+        hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgs, 
+                            db, hg2gene, cpus = cpus,
+                            low_mem = True)
+        run_blast(hgs, db, hg_dir, 
+                  hgx_dir, cpus = cpus,
+                  diamond = 'diamond', printexit = printexit)
+    
         d2gbc, d2id_, d2pos = gbc_mngr(
             list(hgs), list(ome2i.keys()), hgx_dir, hgx2loc,
             db, gene2hg, plusminus, hg2gene, modules,
