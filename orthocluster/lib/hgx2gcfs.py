@@ -11,7 +11,8 @@ from itertools import combinations, chain
 from scipy.sparse import lil_matrix, csr_matrix
 from collections import defaultdict, Counter
 from mycotools.lib.biotools import gff2list
-from mycotools.lib.kontools import write_json, read_json, collect_files
+from mycotools.lib.kontools import write_json, read_json, collect_files, \
+                                   checkdir
 from orthocluster.orthocluster.lib import input_parsing, phylocalcs, evo_conco
 
 def hash_hgx(gff_path, ome, hgx_genes, gene2hg, clusplusminus):
@@ -252,7 +253,10 @@ def clan_to_gcf_sim(
                 i0 = ti0 + max_complete
                 row = adj_arr[ti0, :]
                 overlap_loci = [x for x in np.where(row > min_overlap)[0] if x > ti0]
-                loc0, hgL0 = loci[i0], hgLoci[i0]
+                try:
+                    loc0, hgL0 = loci[i0], hgLoci[i0]
+                except IndexError:
+                    continue
                 sHGl0 = set([x for x in hgL0 if x is not None])
                 for ti1 in overlap_loci:
                     i1 = ti1 + max_complete
@@ -277,12 +281,11 @@ def run_hgx_blast(blast_ids, hg_dir, hg, genes,
     hg_file = f'{hg_dir}{hg}.faa'
     fileBase = hgx_dir + str(hg)
     if not os.path.isfile(fileBase + '.out'):
-        if not os.path.isfile(fileBase + '.dmnd'):
-            makeDBcmd = subprocess.call([
-                diamond, 'makedb', '--in', hg_file, 
-                '--db', fileBase + '.dmnd', '--threads', str(2)
-                ], stdout = subprocess.DEVNULL)#,
-    #            stderr = subprocess.DEVNULL)
+#        if not os.path.isfile(fileBase + '.dmnd'):
+        makeDBcmd = subprocess.call([
+            diamond, 'makedb', '--in', hg_file, 
+            '--db', fileBase + '.dmnd', '--threads', str(2)
+            ], stdout = subprocess.DEVNULL)# just remake the database
         if not os.path.isfile(fileBase + '.out'):
             dmndBlast = subprocess.call([diamond, 'blastp', '--query', 
                 hg_file, '--db', fileBase, '--threads', str(2), 
@@ -433,6 +436,9 @@ def classify_gcfs(
     minid = 30, cpus = 1, diamond = 'diamond',
     min_gcf_id = 0.3, simfun = overlap, printexit = False
     ):
+
+    if not checkdir(hgx_dir, unzip = True, rm = True):
+        os.mkdir(hgx_dir)
 
     groupI = wrk_dir + 'group.I.pickle'
     groupII = wrk_dir + 'group.II.pickle'
@@ -599,8 +605,8 @@ def classify_gcfs(
         os.mkdir(gcf_dir)
 
     print('\t\tOutputting HG fastas', flush = True)
-    hgs_prep = sorted(set(chain(list(chain(*list(clanHGloci.values()))))))
-    hgs = [x for x in hgs_prep if x is not None]
+    hgs_prep = set(chain(*list(chain(*list(clanHGloci.values())))))
+    hgs = sorted([x for x in hgs_prep if x is not None])
     hg_dir = input_parsing.hg_fa_mngr(wrk_dir, hg_dir, 
                              hgs, db, hg2gene, cpus = cpus)
     evo_conco.run_blast(hgs, db, hg_dir, hgx_dir, cpus = cpus,
@@ -636,6 +642,11 @@ def classify_gcfs(
         W = mp.Process(target = write_adj_matrix, 
                        args = (adj_mtr, gcf_dir, min_gcf_id))
         W.start()
+        # this will sometimes hang and I don't know why,
+        # if it does hang and the user is sure it is,
+        # then they can create an empty file `done.sadj.tmp` in the
+        # working/gcf/ directory. Once `working/gcf/loci.adj` is present
+        # then the user should rerun the script
         with mp.get_context('spawn').Pool(processes = cpus - 1) as pool:
             pool.starmap(clan_to_gcf_sim, tqdm(cmds, total = len(cmds)))
         with open(f'{gcf_dir}done.sadj.tmp', 'w') as out:
