@@ -12,7 +12,7 @@ from cogent3 import PhyloNode, load_tree
 from collections import defaultdict
 from itertools import combinations
 from mycotools.acc2fa import dbmain as acc2fa
-from mycotools.lib.biotools import gff2list, dict2fa
+from mycotools.lib.biotools import gff2list, dict2fa, fa2dict
 from mycotools.lib.kontools import format_path, eprint, collect_files
 
 
@@ -381,6 +381,13 @@ def compile_tree(i2ome, tree_path, root = []):
     return phylo
 
 
+def write_hg_fa(hg_file, big_dict, genes):
+    fa_str = dict2fa({k: big_dict[k] for k in genes})
+    with open(f'{hg_file}.tmp', 'w') as out:
+        out.write(fa_str)
+    os.rename(f'{hg_file}.tmp', hg_file)
+
+
 def output_hg_fas(db, genes, hg_file):
     fa_str = dict2fa(acc2fa(
                 db, genes, error = False, spacer = '\t\t',
@@ -398,9 +405,24 @@ def symlink_files(f0, f1):
     os.symlink(f0, f1)
 
 
+def big_acc2fa(db, hg_dir, hgs, hg2gene, cpus = 1):
+    big_fa = {}
+    with mp.Pool(processes = cpus) as pool:
+        fa_dicts = pool.map(fa2dict, 
+                            tqdm((row['faa'] for row in db.values()), 
+                            total = len(db)))
+    for res in fa_dicts:
+        big_fa = {**big_fa, **res}
+    big_dict = mp.Manager().dict(big_fa)
+    with mp.Pool(processes = cpus) as pool:
+        pool.starmap(write_hg_fa, tqdm(((f'{hg_dir}{hg}.faa',
+                                         big_dict, hg2gene[hg]) \
+                                         for hg in hgs),
+                                       total = len(hgs)))
+
+    
 def hg_fa_mngr(wrk_dir, hg_dir, hgs,
-               db, hg2gene,
-               cpus = 1):
+               db, hg2gene, cpus = 1, low_mem = False):
     new_hg_dir = wrk_dir + 'hg/'
     if not os.path.isdir(new_hg_dir):
         os.mkdir(new_hg_dir)
@@ -409,11 +431,17 @@ def hg_fa_mngr(wrk_dir, hg_dir, hgs,
                     for x in collect_files(new_hg_dir, 'faa')])
     missing_hgs = sorted(set(hgs).difference(hg_files))
 
+    if not missing_hgs:
+        return new_hg_dir
+
     if not hg_dir:
-        with mp.Pool(processes = cpus) as pool:
-            pool.starmap(output_hg_fas,
-                         tqdm(((db, hg2gene[hg], f'{new_hg_dir}{hg}.faa') \
-                         for hg in missing_hgs), total = len(missing_hgs)))
+        if low_mem: # this process is way too slow
+            with mp.Pool(processes = cpus) as pool:
+                pool.starmap(output_hg_fas,
+                             tqdm(((db, hg2gene[hg], f'{new_hg_dir}{hg}.faa') \
+                             for hg in missing_hgs), total = len(missing_hgs)))
+        else:
+            big_acc2fa(db, new_hg_dir, hgs, hg2gene, cpus)
     else: # predetermined hg input
         hg_fa_cmds = []
         orthofinder = False
