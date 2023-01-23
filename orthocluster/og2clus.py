@@ -35,7 +35,7 @@ from datetime import datetime
 from collections import defaultdict
 from mycotools.lib.kontools import \
     intro, outro, format_path, collect_files, \
-    findExecs, checkdir, eprint
+    findExecs, eprint
 from mycotools.lib.biotools import \
     gff2list
 from mycotools.lib.dbtools import mtdb, masterDB
@@ -288,7 +288,7 @@ def main(
                     continue
             # choose the minimum threshold [liberal]
             min_pair_score = min([min_pair_scores[i] for i in list(parts)])
-            if score > min_pair_score:
+            if score >= min_pair_score:
                 top_hgs.append([
                     hgp[0], hgp[1], len(omes), score#, score/ome_dist
                     ])
@@ -394,16 +394,13 @@ def main(
         )
     hgx2omes = {v: hgx2omes[v] for v in i2hgx.values()}
     hgx2loc = {v: hgx2loc[v] for v in i2hgx.values()}
+    hgx_dir = f'{wrk_dir}hgx/'
 
-    hgx2gbc, omes2patch = {}, {}
-    hgx_dir = wrk_dir + 'hgx/'
+
     print('\nV. Calling gene clusters from HGxs', flush = True)
     if not os.path.isfile(wrk_dir + 'gcfs.pickle'): # need to add this to
     # log parsing
         # Group hgxs
-        if not checkdir(hgx_dir, unzip = True, rm = True):
-            os.mkdir(hgx_dir)
-    
         gcfs, gcf_hgxs, gcf_omes, omes2dist = hgx2gcfs.classify_gcfs(
             hgx2loc, db, gene2hg, i2hgx, hgx2i, phylo, bord_scores_list, 
             ome2i, hgx2omes, hg_dir, hgx_dir, wrk_dir, ome2partition, hg2gene, 
@@ -447,18 +444,15 @@ def main(
 
 
     runOmes = [
-        omes for omes in gcf_omes \
-        if omes not in omes2patch
+        omes for omes in gcf_omes
         ] # omes without patchiness scores
     runHGxs = [
-        hgx for i, hgx in enumerate(gcf_hgxs) \
-        if gcf_omes[i] not in omes2patch
+        hgx for i, hgx in enumerate(gcf_hgxs)
         ] # hgxs without patchiness scores
     print('\nVI. Quantifying GCF patchiness', flush = True)
-    omes2patch = {**patch_main(
-        phylo, runOmes, wrk_dir,
-        old_path = 'patchiness.full.pickle', cpus = cpus
-        ), **omes2patch} # could make more efficient by skipping redos
+    omes2patch = patch_main(phylo, runOmes, wrk_dir,
+                            old_path = 'patchiness.full.pickle', 
+                            cpus = cpus) # could make more efficient by skipping redos
 
 
     print('\nVII. Quantifying GCF gene BLAST concordance (GBC)', flush = True)
