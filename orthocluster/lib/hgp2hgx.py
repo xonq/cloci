@@ -135,7 +135,6 @@ def gen_clusters_arr(loci, i2hg, clan_arr):
     return output
 
 
-
 def literal_load(f):
     d = read_json(f)
     return {literal_eval(k): tuple(v) for k, v in d.items()}
@@ -215,7 +214,8 @@ def par_rm(hgx, hgx2omes):
                         if hgx2omes[comb] == hgx2omes[t_combs[i]]:
                             todel.append(comb)
                             break
-                    t_combs.append(set_comb)
+                    t_combs.append(comb)
+                    t_combs_sets.append(set_comb)
     
     return todel
 
