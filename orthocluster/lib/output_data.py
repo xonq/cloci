@@ -74,6 +74,12 @@ def mk_3d(labels, axes, axes_labels, alpha = 0.6):
         text = labels, showlegend = False
         )
     )
+    fig.update_layout(scene = dict(
+                    xaxis_title=axes_labels[0],
+                    yaxis_title=axes_labels[1],
+                    zaxis_title=axes_labels[2]))#,
+#                    width=700,
+ #                   margin=dict(r=20, b=10, l=10, t=10))
 
     return fig
 
@@ -86,14 +92,14 @@ def extrct_sig_clus(
         
     sig_clus = defaultdict(dict)
     for top in top_hgxs:
-        hgx, clan, omeIs = top[0], top[1], top[2]
+        hgx, gcf, omeIs = top[0], top[1], top[2]
         for gene in hgx2loc[hgx]:
             ome = gene[:gene.find('_')]
             if ome2i[ome] in omeIs:
                 if gene not in sig_clus[ome]:            
-                    sig_clus[ome][gene] = [[set(hgx), clan]]
+                    sig_clus[ome][gene] = [[set(hgx), gcf]]
                 else:
-                    sig_clus[ome][gene].append([set(hgx), clan])
+                    sig_clus[ome][gene].append([set(hgx), gcf])
     
     return dict(sig_clus)
 
@@ -217,13 +223,13 @@ def write_clusters(ome_sig_clus, ome, out_file, gff_path, gene2hg, clusplusminus
 
     out_genes = []
     with open(out_file, 'w') as out:
-        out.write('#name\thgs\tgenes\tclans\n')
+        out.write('#name\thgs\tgenes\tgcfs\n')
         for clus in clus_out:
             clus[2] = sorted(clus[2])
             hgs = ','.join([str(x) for x in clus[0]]) # og1,og2,...ogn
             genes = ','.join(clus[1]) # prot1,prot2,prot3,...protn
-            clans= ';'.join([str(x) for x in list(clus[2])])
-            out.write(clus[4] + '\t' + hgs + '\t' + genes + '\t' + clans + '\n')
+            gcfs= ';'.join([str(x) for x in list(clus[2])])
+            out.write(clus[4] + '\t' + hgs + '\t' + genes + '\t' + gcfs + '\n')
             out_genes.append(clus[1])
 
     return ome, out_genes
@@ -372,7 +378,7 @@ def grabClus(genes_list, gff_path, prot_path, ome, ome_dir, gene2hg, pfamRes = {
             out.write(dict2fa(clus_fas[-1]))
 
     with open(ome_dir + ome + '/info.out.tmp', 'w') as out:
-        out.write('#name\thgs\tgenes\thgx_clans\tpfams\n')
+        out.write('#name\thgs\tgenes\tgcfs\tpfams\n')
         with open(ome_dir + ome + '/info.out', 'r') as raw:
             for line in raw:
                 if not line.startswith('#'):
@@ -391,17 +397,22 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
     print('\tWriting cluster scores', flush = True)
     omes2dist = {k: log(v) for k, v in omes2dist.items() if v}
     maxval = max(omes2dist.values()) # max observed, even of those truncated/removed
+    minval = min(omes2dist.values())
+    denom = maxval - minval
     gcf_output, done = [], set()
     for gcf, modHGx2omes in enumerate(gcfs):
         for hgx, omes in modHGx2omes.items():
             hgx_id = hgx2i[hgx]
+            if hgx2dist[hgx] == 0:
+                print(omes, '0 hgx2dist value', flush = True)
+                continue
             if hgx_id not in done:
                 done.add(hgx_id)
             else:
                 continue
             gcf_output.append([
                 ','.join([str(x) for x in hgx]), hgx_id,
-                gcf, (maxval - log(hgx2dist[hgx]))/maxval,
+                gcf, (log(hgx2dist[hgx]) - minval)/denom,
                 ','.join([i2ome[x] for x in hgx2omes[hgx]])
                 ]) # HGxs at this stage are not segregated into groups
     gcf_output = sorted(gcf_output, key = lambda x: x[3], reverse = True)
@@ -417,9 +428,12 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
         if omesc not in omes2patch:
             print(omesc, 'not in patch', flush = True)
             continue
+        elif omes2dist[omesc] == 0:
+            print(omesc, '0 value', flush = True)
+            continue
         kern_output.append([
             ','.join([str(x) for x in ogc]), i,
-            (maxval - log(omes2dist[omesc]))/maxval, omes2patch[omesc], 
+            (omes2dist[omesc] - minval)/denom, omes2patch[omesc], 
             hgx2omes2gbc[ogc][omesc],
             hgx2omes2id[ogc][omesc], hgx2omes2pos[ogc][omesc],
             ','.join([str(i2ome[x]) for x in omesc])#,
@@ -429,8 +443,7 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
         for shgx, omes in gcfs[i].items():
             top_hgxs.append([shgx, i, set(omes)])
 
-    kern_output = sorted(kern_output, key = lambda x: x[4], reverse = True)
-
+    kern_output = sorted(kern_output, key = lambda x: x[2], reverse = True)
     with gzip.open(out_dir + 'gcfs.tsv.gz', 'wt') as out:
         out.write('#hgs\tgcf\tnrm_log_tmd\tpatchiness' \
                 + '\tgbc\t%id\t%pos\tomes') #+ \
