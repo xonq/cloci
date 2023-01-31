@@ -13,14 +13,14 @@ from collections import defaultdict, Counter
 from mycotools.lib.biotools import gff2list
 from mycotools.lib.kontools import write_json, read_json, collect_files, \
                                    checkdir
-from orthocluster.orthocluster.lib import input_parsing, phylocalcs, evo_conco
+from orthocluster.orthocluster.lib import input_parsing, treecalcs, evo_conco
 
 def hash_hgx(gff_path, ome, hgx_genes, gene2hg, clusplusminus):
     """sliding window of size clusplusminus, identify sequences that may have
     hgs that may be significant, grab their window, and check for a significant
     higher order og combo in the locus"""
         
-    gff_list, gene_dict = gff2list(gff_path), {}
+    gff_list, gene_dict = gff2list(gff_path), defaultdict(list)
     cds_dict = input_parsing.compileCDS(gff_list, os.path.basename(gff_path).replace('.gff3',''))
                 
     hgx_dict = {}   
@@ -38,7 +38,10 @@ def hash_hgx(gff_path, ome, hgx_genes, gene2hg, clusplusminus):
                 for hgx in hgx_genes[seq0]:
                     if hgx not in hgx_dict:
                         hgx_dict[hgx] = {og: [] for og in hgx}
-                    hgx_dict[hgx][og0].append(seq0) # add the sequence to the hgx_dict
+                    try:
+                        hgx_dict[hgx][og0].append(seq0) # add the sequence to the hgx_dict
+                    except KeyError:
+                        pass
                     start, end = None, None
                     for i1, seq1 in enumerate(locus): # for each index and sequence
                     # in the locus
@@ -57,8 +60,6 @@ def hash_hgx(gff_path, ome, hgx_genes, gene2hg, clusplusminus):
                             end = i1 + 1
                             hgx_dict[hgx][og1].append(seq1)
                     for gene in locus[start:end]:
-                        if gene not in gene_dict:
-                            gene_dict[gene] = []
                         gene_dict[gene].append(hgx)
 
     gene_tup = tuple([
@@ -161,7 +162,7 @@ def acquire_clus_gcf_sim_noq(
 
 def clan_to_gcf_sim(
     db, clanI, loci, hgLoci, hg_dir, hgx_dir, gcf_dir, index,
-    minid = 30, mingcfid = 0.15, simfun = overlap
+    minid = 30, mingcfid = 0.15, simfun = overlap, min_overlap = 2
     ):
 
     finished_file = f'{gcf_dir}{clanI}.sadj.tmp'
@@ -191,9 +192,6 @@ def clan_to_gcf_sim(
     else:
         max_complete = 0
 
-    # if the minimum_gcf_id is greater than 33% then 
-    # at least HGx overlaps < 2 can be eliminated
-    min_overlap = round((mingcfid * 3) - 0.5)
          
     blast_hash = defaultdict(list)
     # only examine loci that have not been completed
@@ -319,7 +317,7 @@ def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus):
     for scaf in cds_dict:
         for i0, seq0 in enumerate(cds_dict[scaf]):
             if seq0 in ome_sig_clus: # if the og is part of a significant seed
-            # locus
+            # locus [[set(hgx)], i]
                 for sig_clus in ome_sig_clus[seq0]:
                     clan = sig_clus[1]
                     start, end = None, None
@@ -351,12 +349,16 @@ def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus):
     outclanLoci, outclanHGx = defaultdict(list), defaultdict(list)
     for clan, loci in preclanLoci.items():
         while loci: # exhaustively merge overlapping loci
+            # the locus for pairwise comparisons is the first
             loc0, hgxs0, allHGxs = set(loci[0][0]), loci[0][1], loci[0][2]
             locIntersect = None
+            # for all other loci
             for i1, loc1d in enumerate(loci[1:]):
                 loc1, hgxs1, allHGxs1 = set(loc1d[0]), loc1d[1], loc1d[2]
                 locIntersect = loc0.intersection(loc1)
-                if locIntersect: # check for overlap
+                # if any genes overlap between these loci
+                if locIntersect:
+                    # grab the overlap and add it to the end of the loci list
                     newHGx = list(hgxs0)
                     newHGx.extend(list(hgxs1))
                     allHGxs.extend(allHGxs1)
@@ -364,14 +366,13 @@ def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus):
                     break
             if locIntersect: # if there was overlap, delete the overlappers
                 del loci[0]
-                del loci[i1 + 1]
+                del loci[i1] # don't add 1 because we removed the first and i1 relative to 1
             else: # no more overlap for this locus, add to the final output
                 outclanLoci[clan].append(sorted(loc0))
                 outclanHGx[clan].append(tuple(sorted(set(allHGxs))))
 #                outclanHGx[clan].append(tuple(sorted(set(hgxs0))))
                 del loci[0]
 
-# blast each locus OG against itself
     outogLoci = {}
     for clan, loci in outclanLoci.items():
         outogLoci[clan] = []
@@ -430,11 +431,12 @@ def write_adj_matrix(out_file, gcf_dir, min_gcf_id):
 
 def classify_gcfs(
     hgx2loc, db, gene2hg, i2hgx, hgx2i,
-    phylo, bound_scores, ome2i, hgx2omes, hg_dir, hgx_dir,
-    wrk_dir, ome2partition, hg2gene, omes2dist = {}, clusplusminus = 3,
+    phylo, ome2i, hgx2omes, hg_dir, hgx_dir,
+    wrk_dir, ome2partition, bord_scores_list,
+    hg2gene, omes2dist = {}, clusplusminus = 3,
     inflation = 1.5, minimum = 2, min_omes = 2, 
     minid = 30, cpus = 1, diamond = 'diamond',
-    min_gcf_id = 0.3, simfun = overlap, printexit = False
+    min_gcf_id = 0.3, simfun = overlap, printexit = False,
     ):
 
     if not checkdir(hgx_dir, unzip = True, rm = True):
@@ -445,8 +447,8 @@ def classify_gcfs(
 
     if not os.path.isfile(groupI):
         print('\tAggregating HGxs with overlapping loci', flush = True)
-
         hgx_genes = {}
+        # compile a hash that shows the HGx each gene corresponds to
         for hgx in hgx2loc:
             if hgx in hgx2i: # if it passed the border threshold
                 for gene in hgx2loc[hgx]:
@@ -464,8 +466,12 @@ def classify_gcfs(
                 db[ome]['gff3'],
                 ome, hgx_genes[ome], gene2hg, clusplusminus
                 ])
+        # expand the hgx 2 gene hash to include all genes in the locus corresponding
+        # to the hgx
         with mp.get_context('fork').Pool(processes = cpus) as pool:
             gene_tups = pool.starmap(hash_hgx, hashOgx_cmds)
+            pool.close()
+            pool.join()    
 
         gene2hgx, hgx2genes = {}, {}
         for res in gene_tups:
@@ -502,7 +508,7 @@ def classify_gcfs(
             omes_set = set(omes)
             if len(omes_set) > 1: # need at least one ome to calc a branch length
                 pairDict[id_] = tuple(sorted(omes_set))
-        omes2dist = phylocalcs.update_dists(phylo, pairDict, cpus = cpus, omes2dist = omes2dist)
+        omes2dist = treecalcs.update_dists(phylo, pairDict, cpus = cpus, omes2dist = omes2dist)
 
         print('\tClassifying HGx clans and gene cluster families (GCFs)', flush = True)
         # populate a lil_matrix here, then use that network to identify modules
@@ -510,16 +516,8 @@ def classify_gcfs(
         matrix = lil_matrix((len(i2hgx), len(i2hgx)), dtype=bool)
         for idPair, omes in tqdm(pairDict.items(), total = len(pairDict)):
             i0, i1 = idPair[0], idPair[1]
-            nullSize = max([len(i2hgx[x]) for x in idPair])
-            parts = set(ome2partition[x] for x in omes)
-            if None in parts:
-                parts = parts.remove(None)
-                if not parts:
-                    continue
-            bound_score = min([bound_scores[i][nullSize] for i in list(parts)])
-            if omes2dist[omes] >= bound_score:
-                matrix[i0, i1] = True
-                matrix[i1, i0] = True
+            matrix[i0, i1] = True
+            matrix[i1, i0] = True
         print('\t\tIsolating subgraphs (HGx clans)', flush = True)
         network = nx.from_scipy_sparse_matrix(matrix)
         subgraphs = [network.subgraph(c) for c in nx.connected_components(network)]
@@ -539,7 +537,7 @@ def classify_gcfs(
             clanOmes[-1] = tuple(sorted(set(clanOmes[-1])))
             clanHGxs[-1] = tuple(sorted(set(clanHGxs[-1])))
 
-        omes2dist = phylocalcs.update_dists(
+        omes2dist = treecalcs.update_dists(
             phylo, {clanHGxs[i]: omes for i, omes in enumerate(clanOmes)},
             cpus = cpus, omes2dist = omes2dist
             )
@@ -558,6 +556,7 @@ def classify_gcfs(
         ome2clus2extract = defaultdict(dict)
         for i, clan in enumerate(clans):
             for hgx, omes in clan.items():
+                # create a seed hash of the hgx and its seed gene
                 for gene in hgx2loc[hgx]:
                     ome = gene[:gene.find('_')]
                     if gene not in ome2clus2extract[ome]:
@@ -574,6 +573,8 @@ def classify_gcfs(
                                           for ome, clus2extract \
                                           in ome2clus2extract.items()),
                                          total = len(ome2clus2extract)))
+            pool.close()
+            pool.join()
 
         clanLoci = defaultdict(list)
         clanHGx4gcfs = defaultdict(list)
@@ -617,38 +618,37 @@ def classify_gcfs(
     print('\t\t\t' + str(sum([len(v) for v in list(clanLoci.values())])) \
         + ' loci', flush = True)
     print('\t\t\tNOTE: for large datasets, clan 0 will hang progress bar', flush = True)
-
-
     m, adj_mtr = mp.Manager(), gcf_dir + 'loci.adj'
     if cpus < 2:
         cpus = 2
     index, cmds = 0, []
 
 
+    # if the minimum_gcf_id is greater than 33% then 
+    # at least HGx overlaps < 2 can be eliminated
+    min_overlap = round((min_gcf_id * 3) - 0.5)
 
     loci, hgxXloci = {}, {}
     for clanI in clanLoci:
         cmds.append([
             db, clanI, clanLoci[clanI], clanHGloci[clanI],
             hg_dir, hgx_dir, gcf_dir, index, minid, min_gcf_id,
-            simfun
+            simfun, min_overlap
             ])
         for i, locus in enumerate(clanLoci[clanI]):
             loci[index] = clanLoci[clanI][i]
             hgxXloci[index] = clanHGx4gcfs[clanI][i]
             index += 1
 
+
     if not os.path.isfile(adj_mtr):
         W = mp.Process(target = write_adj_matrix, 
                        args = (adj_mtr, gcf_dir, min_gcf_id))
         W.start()
-        # this will sometimes hang and I don't know why,
-        # if it does hang and the user is sure it is,
-        # then they can create an empty file `done.sadj.tmp` in the
-        # working/gcf/ directory. Once `working/gcf/loci.adj` is present
-        # then the user should rerun the script
         with mp.get_context('spawn').Pool(processes = cpus - 1) as pool:
             pool.starmap(clan_to_gcf_sim, tqdm(cmds, total = len(cmds)))
+            pool.close()
+            pool.join()    
         with open(f'{gcf_dir}done.sadj.tmp', 'w') as out:
             pass
         W.join()
@@ -674,27 +674,59 @@ def classify_gcfs(
 
     # list(gcf) = [{hgx: (omes,)}]
     gcfs, gcf_hgxs, gcf_omes = [], [], []
-    for gcf, locIs in enumerate(t_gcfs):
-        gcfs.append(defaultdict(list))
-        gcfHGx, gcfOme_list = [], []
-        for locI in locIs:
-            loc = loci[locI]
-            hgxs = tuple([tuple(hgx) for hgx in hgxXloci[locI]])
-            # really should be done above to make hgxs formatted right
-            omeI = ome2i[loc[0][:loc[0].find('_')]]
-            [gcfs[-1][hgx].append(omeI) for hgx in hgxs]
-            [gcfHGx.extend(hgx) for hgx in hgxs]
-            gcfOme_list.append(omeI)
-        if len(set(gcfOme_list)) > min_omes: # need more than 1
-            gcfs[-1] = {k: sorted(set(v)) for k,v in gcfs[-1].items()}
-            gcf_hgxs.append(tuple(sorted(set(gcfHGx))))
-            gcf_omes.append(tuple(sorted(set(gcfOme_list))))
-        else:
-            del gcfs[-1]
+    with open(f'{gcf_dir}loci.txt', 'w') as out:
+        out.write('#omeI locI pregcf locus\n')
+        for gcf, locIs in enumerate(t_gcfs):
+            gcfs.append(defaultdict(list))
+            gcfOme_list = [] 
+            locs = []
+            for locI in locIs:
+                loc = loci[locI]
+                locs.append((loc, locI))
+                hgxs = tuple([tuple(hgx) for hgx in hgxXloci[locI]])
+                # really should be done above to make hgxs formatted right
+                omeI = ome2i[loc[0][:loc[0].find('_')]]
+                [gcfs[-1][hgx].append(omeI) for hgx in hgxs]
+#                [gcfHGx.extend(hgx) for hgx in hgxs]
+                gcfOme_list.append(omeI)
+            if len(set(gcfOme_list)) > min_omes: # need more than 1
+                gcfs[-1] = {k: sorted(set(v)) for k,v in gcfs[-1].items()}
+#                todel = []
+ #               for hgx, omes in gcfs[-1].items():
+  #                  omes = tuple(sorted(omes))
+   #                 if omes in omes2dist:
+    #                    dist = omes2dist[omes]
+     #               else:
+      #                  dist, omes = treecalcs.calc_branch_len(phylo, omes)
+       #                 omes2dist[omes] = dist
+        #            parts = set(ome2partition[x] for x in omes)
+         #           if None in parts:
+          #              parts = parts.remove(None)
+           #             if not parts:
+            #                continue
+             #       bord_score = min([bord_scores_list[v][len(hgx)] \
+              #                        for v in list(parts)])
+               #     if not dist > bord_score:
+                #        todel.append(hgx)
+               # for hgx in todel:
+                #    del gcfs[-1][hgx]
+                if gcfs[-1]:
+                    gcf_hgxs.append(tuple(sorted(set(chain(*list(gcfs[-1].keys()))))))
+#                gcf_hgxs.append(tuple(sorted(set(gcfHGx))))
+                    gcf_omes.append(tuple(sorted(set(chain(*list(gcfs[-1].values()))))))
+                    pregcf = len(gcfs) - 1
+                    for i, omeI in enumerate(gcfOme_list):
+                        out.write(f'{omeI} {locs[i][1]} {pregcf} {",".join(locs[i][0])}\n')
+    
+                else:
+                    del gcfs[-1]
+#                gcf_omes.append(tuple(sorted(set(gcfOme_list))))
+            else:
+                del gcfs[-1]
 
     print('\t\t\t' + str(len(gcfs)) + ' GCFs w/' \
         + str(sum([len(x) for x in t_gcfs])) + ' unfused clusters', flush = True)
-    omes2dist = phylocalcs.update_dists(
+    omes2dist = treecalcs.update_dists(
         phylo, {gcf_hgxs[i]: omes for i, omes in enumerate(gcf_omes)},
         cpus = cpus, omes2dist = omes2dist
         )
