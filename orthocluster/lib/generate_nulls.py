@@ -10,7 +10,7 @@ from itertools import combinations
 from collections import defaultdict, Counter
 from mycotools.lib.biotools import gff2list
 from mycotools.lib.kontools import eprint, collect_files
-from orthocluster.orthocluster.lib import phylocalcs
+from orthocluster.orthocluster.lib import treecalcs
 from orthocluster.orthocluster.lib.input_parsing import compileCDS
 
 def hash_4_nulls_bysize(
@@ -191,7 +191,7 @@ def gen_nulls(pairs, phylo, omes = [], samples = 10000, cpus = 1):
     null_dict, reps = gen_null_dict_omes(pairs, samples, omes = omes)
     oldLen = len(null_dict)
     null_dict = {k: v for k, v in null_dict.items() if len(v) > 1}
-    results = phylocalcs.calc_dists(phylo, null_dict, cpus = cpus)
+    results = treecalcs.calc_dists(phylo, null_dict, cpus = cpus)
     omes2dist, pair_scores = {x[1]: x[0] for x in results}, []
     for k in null_dict:
         pair_scores.append(omes2dist[null_dict[k]])
@@ -206,8 +206,10 @@ def gen_nulls(pairs, phylo, omes = [], samples = 10000, cpus = 1):
 
 def gen_pair_nulls(phylo, ome2i, wrk_dir, nul_dir, seed_perc, ome2pairs,
                    i2ome, samples = 1000, partition_file = None, cpus = 1):
+    if not os.path.isdir(nul_dir):
+        os.mkdir(nul_dir)
     if partition_file:
-        print('\tPartitioning tree for null distributions', flush = True)
+        print('\tPartitioning null distributions', flush = True)
         partition_omes = load_partitions(partition_file, ome2i)
         ome2partition = {}
         for k, omes in enumerate(partition_omes):
@@ -338,6 +340,8 @@ def gen_hgx_nulls(
             with mp.get_context('fork').Pool(processes = cpus) as pool:
                 hashRes = pool.starmap(hash_4_nulls_bysize, 
                                        tqdm(hash_null_cmds, total = len(hash_null_cmds)))
+                pool.close()
+                pool.join() 
             size_dict = {ome: nulls for ome, nulls in hashRes}
             size_dict = {k: size_dict[k] for k in sorted(size_dict.keys())}
         for i0, omes in enumerate(partition_omes):
@@ -352,7 +356,7 @@ def gen_hgx_nulls(
                 nullSizes = load_null(f'{nul_dir}{size}.null.{i0}.txt')
             else:
                 null_dict, reps = gen_null_dict_omes(size_dict, samples, omes)
-                omes2dist = phylocalcs.update_dists(phylo, null_dict, 
+                omes2dist = treecalcs.update_dists(phylo, null_dict, 
                                                     omes2dist = omes2dist, cpus = cpus)
                 nullSizes = []
                 with open(f'{nul_dir}{size}.null.{i0}.txt.tmp', 'w') as out:
@@ -362,9 +366,14 @@ def gen_hgx_nulls(
                     count = 0
                     for k, v in reps.items():
                         for i1 in range(v - 1):
-                            out.write(str(omes2dist[null_dict[k]]) + '\n')
+                            t_dist = omes2dist[null_dict[k]]
+                            out.write(str(t_dist) + '\n')
                             count += 1
-                    out.write('\n'.join([str(0) for x in range(samples-len(null_dict)-count)]))
+                            nullSizes.append(t_dist)
+                    print(samples - len(null_dict) - count)
+                    z_vals = range(samples - len(null_dict) - count)
+                    out.write('\n'.join([str(0) for x in z_vals]))
+                    nullSizes.extend([0 for x in z_vals])
                     # account for missing values
                 shutil.move(f'{nul_dir}{size}.null.{i0}.txt.tmp',
                             f'{nul_dir}{size}.null.{i0}.txt')
