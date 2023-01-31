@@ -76,7 +76,7 @@ def run_make_dmnddb(db, diamond, hgx_dir, og, genes):
     makeDBcmd.wait()
 
 
-def hgx2omes2gbc_calc(
+def hgx2omes2gcc_calc(
     hgx, omesI, omes, hgxDict, hgx_dir
     ):
     # hgxDict = {og: set(gene1, gene2)}
@@ -163,12 +163,13 @@ def hgx2omes2gbc_calc(
         # average score of each og (perhaps needs to be weighted by presence)
         # sum of percent top hits that're in GCF adjusted number of ogs appear
         # in) averaged over number of omes
-        gbcScore = 0
+        gccScore = 0
         ome_av = [sum(v.values())/len(v) for ome, v in omeScores.items()]
-        gbcScore = sum(ome_av)/len(omeScores)
+        gccScore = sum(ome_av)/len(omeScores)
     except ZeroDivisionError:
-        print(f'\t{hgx} {ome_av}')
-        gbcScore = 0
+        # why is this happening?
+#        print(f'\t{hgx} {ome_av}')
+        gccScore = 0
 
     # average minimum identity / minimum positive; for each gene homolog group
     gcf_min_id, gcf_min_pos, total = 0, 0, 0
@@ -182,23 +183,27 @@ def hgx2omes2gbc_calc(
     except ZeroDivisionError:
         gcf_min_id, gcf_min_pos = 0, 0
 
-    return hgx, omesI, gbcScore, gcf_min_id, gcf_min_pos
+    return hgx, omesI, gccScore, gcf_min_id, gcf_min_pos
 
 
-def gbc_mngr(
+def gcc_mngr(
     hgs, omes, hgx_dir, hgx2loc,
     db, gene2hg, clusplusminus, hg2gene, modules,
-    moduleOmes, moduleHGxs, ome2i, cpus = 1
+    moduleOmes, moduleHGxs, ome2i, 
+    d2gcc, d2id_, d2pos, cpus = 1
     ):
 
     i2ome = {v: k for k, v in ome2i.items()}
-    if not os.path.isfile(hgx_dir + 'clusOGs.pickle'):
+    if not os.path.isfile(hgx_dir + '../clusOGs.pickle'):
         hgxGene_cmds = []
         ome_locs = {ome: defaultdict(list) for ome in omes}
 
         for i, hgx2omes in enumerate(modules):
             modHGx = moduleHGxs[i]
             for hgx, omes in hgx2omes.items():
+                if hgx in d2gcc:
+                    if omes in d2gcc[hgx]:
+                        continue
                 omes_set = set(omes)
                 for seq in hgx2loc[hgx]:
                     ome = seq[:seq.find('_')]
@@ -215,10 +220,12 @@ def gbc_mngr(
         with mp.get_context('fork').Pool(processes = cpus) as pool:
             clus_hgs_prep = pool.starmap(retroactive_grab_hgx_genes, 
                                          tqdm(hgxGene_cmds, total = len(hgxGene_cmds)))
-        with open(hgx_dir + 'clusOGs.pickle', 'wb') as out:
+            pool.close()
+            pool.join()
+        with open(hgx_dir + '../clusOGs.pickle', 'wb') as out:
             pickle.dump(clus_hgs_prep, out)
     else:
-        with open(hgx_dir + 'clusOGs.pickle', 'rb') as raw:
+        with open(hgx_dir + '../clusOGs.pickle', 'rb') as raw:
             clus_hgs_prep = pickle.load(raw)
 
     clus_hgs = {i: (modHGx, defaultdict(list),) \
@@ -236,25 +243,27 @@ def gbc_mngr(
         } # make sets from it
     # {clanI: [hgx, {og: set(seqs)}}
 
-    print('\tCalculating gene blast congruence (GBC) scores', flush = True)
+    print('\tCalculating gene cluster committment (GCC) and minimum mean identity (MMI)', flush = True)
     with mp.get_context('fork').Pool(processes = cpus) as pool:
-        gbc_res = pool.starmap(
-            hgx2omes2gbc_calc,
+        gcc_res = pool.starmap(
+            hgx2omes2gcc_calc,
             ([moduleHGxs[clanI], moduleOmes[clanI],
             [i2ome[i] for i in moduleOmes[clanI]],
             d[1], hgx_dir] \
              for clanI, d in clus_hgs.items())
             )
+        pool.close()
+        pool.join()
 
-    hgx2omes2gbc = defaultdict(dict)
+    hgx2omes2gcc = defaultdict(dict)
     hgx2omes2id = defaultdict(dict)
     hgx2omes2pos = defaultdict(dict)
-    for hgx, omes, score, id_, pos in gbc_res:
-        hgx2omes2gbc[hgx][omes] = score
+    for hgx, omes, score, id_, pos in gcc_res:
+        hgx2omes2gcc[hgx][omes] = score
         hgx2omes2id[hgx][omes] = id_
         hgx2omes2pos[hgx][omes] = pos
 
-    return hgx2omes2gbc, hgx2omes2id, hgx2omes2pos
+    return hgx2omes2gcc, hgx2omes2id, hgx2omes2pos
 
 
 def prep_blast_cmds(db, hgs, hg_dir, hgx_dir, minid = 30, diamond = 'diamond'):
@@ -289,7 +298,7 @@ def run_blast(hgs, db, hg_dir, hgx_dir,
             out.write('\n'.join([' '.join(x) for x in db_cmds]))
         with open(hgx_dir + '../../srch.sh', 'w') as out:
             out.write('\n'.join([' '.join(x) for x in dmnd_cmds]))
-        print('\nGBC commands outputted to `<OUTPUT>/*.sh` ' \
+        print('\nDiamond commands outputted to `<OUTPUT>/*.sh` ' \
             + 'Run `makedb.sh` first', flush = True)
         sys.exit(0)
     elif dmnd_cmds:
@@ -300,47 +309,50 @@ def run_blast(hgs, db, hg_dir, hgx_dir,
                  injectable = True)
 
 
-def gbc_main(
+def gcc_main(
     hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
     blastp, db, gene2hg, plusminus, hg2gene,
-    old_path = 'hgx2gbc.pickle',
+    old_path = 'hgx2omes2gcc.pickle',
     modules = None, moduleHGxs = None,
     moduleOmes = None, cpus = 1, printexit = False
     ):
 
-    if not os.path.isfile(wrk_dir + old_path):
-        if not checkdir(hgx_dir, unzip = True, rm = True):
-            os.mkdir(hgx_dir)
 
-        
-        hgs = list(chain(*moduleHGxs))
-        hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgs, 
-                            db, hg2gene, cpus = cpus,
-                            low_mem = True)
-        run_blast(hgs, db, hg_dir, 
-                  hgx_dir, cpus = cpus,
-                  diamond = 'diamond', printexit = printexit)
-    
-        d2gbc, d2id_, d2pos = gbc_mngr(
-            list(hgs), list(ome2i.keys()), hgx_dir, hgx2loc,
-            db, gene2hg, plusminus, hg2gene, modules,
-            moduleOmes, moduleHGxs, ome2i, cpus = cpus
-            )
-        hgx_dirTar = mp.Process(target=tardir, args=(hgx_dir, True))
-        hgx_dirTar.start() # when to join ...
-        with open(wrk_dir + 'hgx2omes2gbc.full.pickle', 'wb') as pickout:
-            pickle.dump(d2gbc, pickout)
-        with open(wrk_dir + 'hgx2omes2id.full.pickle', 'wb') as pickout:
-            pickle.dump(d2id_, pickout)
-        with open(wrk_dir + 'hgx2omes2pos.full.pickle', 'wb') as pickout:
-            pickle.dump(d2pos, pickout)
-    else:
+    if not checkdir(hgx_dir, unzip = True, rm = True):
+        os.mkdir(hgx_dir)
+
+    if os.path.isfile(wrk_dir + old_path):
         print('\tLoading previous coevolution results', flush = True)
-        with open(wrk_dir + 'hgx2omes2gbc.full.pickle', 'rb') as pickin:
-            d2gbc = pickle.load(pickin)
+        with open(wrk_dir + 'hgx2omes2gcc.full.pickle', 'rb') as pickin:
+            d2gcc = pickle.load(pickin)
         with open(wrk_dir + 'hgx2omes2id.full.pickle', 'rb') as pickin:
             d2id_ = pickle.load(pickin)
         with open(wrk_dir + 'hgx2omes2pos.full.pickle', 'rb') as pickin:
             d2pos = pickle.load(pickin)
+    else:
+        d2gcc, d2id_, d2pos = {}, {}, {}
+    
+    hgs = list(chain(*moduleHGxs))
+    hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgs, 
+                        db, hg2gene, cpus = cpus,
+                        low_mem = True)
+    run_blast(hgs, db, hg_dir, 
+              hgx_dir, cpus = cpus,
+              diamond = 'diamond', printexit = printexit)
 
-    return d2gbc, d2id_, d2pos
+    d2gcc, d2id_, d2pos = gcc_mngr(
+        list(hgs), list(ome2i.keys()), hgx_dir, hgx2loc,
+        db, gene2hg, plusminus, hg2gene, modules,
+        moduleOmes, moduleHGxs, ome2i, 
+        d2gcc, d2id_, d2pos, cpus = cpus
+        )
+    hgx_dirTar = mp.Process(target=tardir, args=(hgx_dir, True))
+    hgx_dirTar.start() # when to join ...
+    with open(wrk_dir + 'hgx2omes2gcc.full.pickle', 'wb') as pickout:
+        pickle.dump(d2gcc, pickout)
+    with open(wrk_dir + 'hgx2omes2id.full.pickle', 'wb') as pickout:
+        pickle.dump(d2id_, pickout)
+    with open(wrk_dir + 'hgx2omes2pos.full.pickle', 'wb') as pickout:
+        pickle.dump(d2pos, pickout)
+
+    return d2gcc, d2id_, d2pos
