@@ -391,7 +391,7 @@ def grabClus(genes_list, gff_path, prot_path, ome, ome_dir, gene2hg, pfamRes = {
 
 
 def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, gcf_hgxs,
-         omes2dist, hgx2omes2gbc, omes2patch, hgx2omes2id,
+         omes2dist, hgx2omes2gcc, omes2patch, hgx2omes2id,
          hgx2omes2pos, hgx2loc, gene2hg, plusminus, ome2i,
          hgx2i, pfam_path = None, dnds_dict = {}, cpus = 1):
     print('\tWriting cluster scores', flush = True)
@@ -434,7 +434,7 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
         kern_output.append([
             ','.join([str(x) for x in ogc]), i,
             (omes2dist[omesc] - minval)/denom, omes2patch[omesc], 
-            hgx2omes2gbc[ogc][omesc],
+            hgx2omes2gcc[ogc][omesc],
             hgx2omes2id[ogc][omesc], hgx2omes2pos[ogc][omesc],
             ','.join([str(i2ome[x]) for x in omesc])#,
      #        dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
@@ -446,7 +446,7 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
     kern_output = sorted(kern_output, key = lambda x: x[2], reverse = True)
     with gzip.open(out_dir + 'gcfs.tsv.gz', 'wt') as out:
         out.write('#hgs\tgcf\tnrm_log_tmd\tpatchiness' \
-                + '\tgbc\t%id\t%pos\tomes') #+ \
+                + '\tgcc\tmmi\tmmp\tomes') #+ \
             #'selection_coef\tmean_dnds\tog_dnds\t' + \
          #   'total_dist'
 #            )
@@ -499,7 +499,8 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
         out_genes = pool.starmap(write_clusters, 
                                  tqdm(write_clus_cmds, 
                                       total = len(write_clus_cmds)))
-    pool.join()
+        pool.close()
+        pool.join()
     genes = {x[0]: x[1] for x in out_genes if x[1]}
 
 #    hgx_dirTar.join()
@@ -534,5 +535,6 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
 
     with mp.get_context('fork').Pool(processes = cpus) as pool:
         clus_info = pool.starmap(grabClus, grabClus_cmds)
-    pool.join()
+        pool.close()
+        pool.join()
 
