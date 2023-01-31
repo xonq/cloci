@@ -220,6 +220,7 @@ def dnds_main(db, ome2i, gcfs, hgx_dir, i2ome, hx2omes, gene2hg, plusminus):
     print('\tCalculating dn/ds', flush = True)
     with mp.get_context('fork').Pool(processes = cpus) as pool:
         dnds_res = pool.map(calc_dnds, maffts)
-    pool.join()
+        pool.close()
+        pool.join()
 
     hgx2dnds = parse_dnds(dnds_res)
