@@ -41,6 +41,37 @@ def calc_patchiness(phylo, omes):
         return tuple([int(x) for x in omes]), subDist/totalDist
 
 
+def patch_main(
+    phylo, hgxs, wrk_dir,
+    old_path = 'patchiness.scores.pickle', cpus = 1
+    ):
+
+    if os.path.isfile(wrk_dir + old_path):
+        print('\tLoading previous patchiness results', flush = True)
+        with open(wrk_dir + old_path, 'rb') as in_pick:
+            omes2patch = pickle.load(in_pick)
+    else:
+        omes2patch = {}
+
+    clusOmes = set([
+        tuple([str(x) for x in y]) for y in hgxs \
+               if y not in omes2patch
+        ])
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
+        patch_res = pool.starmap(
+            calc_patchiness, tqdm([(phylo, x) for x in clusOmes],
+                                             total = len(clusOmes))
+            )
+        pool.close()
+        pool.join()
+    omes2patch = {ome_tup: patchiness for ome_tup, patchiness in patch_res}
+    with open(wrk_dir + old_path, 'wb') as out:
+        pickle.dump(omes2patch, out)
+
+    return omes2patch
+
+
+
 def calc_branch_len(phylo, omes):
     """calculate descending branch length from cogent3 tree"""
     # need to verify wtf descending branch length v total of supplied nodes is
@@ -68,6 +99,8 @@ def calc_dists(phylo, cooccur_dict, cpus = 1, omes2dist = {}):
             [(phylo, x,) for x in list(set(cooccur_dict.values())) \
             if x not in omes2dist]
             )
+        pool.close()
+        pool.join()
     
     return results 
 
