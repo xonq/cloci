@@ -19,19 +19,17 @@ warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
 from itertools import combinations, chain
 from mycotools.lib.biotools import gff2list
 from mycotools.lib.kontools import write_json, collect_files, read_json
-from orthocluster.orthocluster.lib import phylocalcs
+from orthocluster.orthocluster.lib import treecalcs
 from orthocluster.orthocluster.lib.input_parsing import compileCDS
 
 def form_hgpDict(out_hgs):
-    
-    hgs = set([int(x[0]) for x in out_hgs]) # make a set of the first og in an
-    # og-pair
-    hgs = hgs.union(set([int(x[1]) for x in out_hgs])) # add in the second og
-    hgp_dict = {x: set() for x in hgs} # prepare the keys to bypass `if`'s
-    for i in out_hgs:
-        hgp_dict[int(i[0])].add(int(i[1])) # {og0: set(og1, ..., ogn), } or 
+
+    hgs = sorted(set(chain(*out_hgs)))
+    hgp_dict = defaultdict(set)
+    for hg0, hg1 in out_hgs:
+        hgp_dict[hg0].add(hg1) # {og0: set(og1, ..., ogn), } or 
         # {og0: set(og0, og1, ..., ogn)}    
-        hgp_dict[int(i[1])].add(int(i[0]))
+        hgp_dict[hg1].add(hg0)
                                             
     return hgp_dict
 
@@ -93,7 +91,7 @@ def merge_protos(protohgx_res):
             for loc in loc_d:
                 hgps2hgall[hgp].extend(list(loc[0]))
                     
-            # {(hg0, hg1)}: [[{hgy, hgz}, seq], ...]
+            # {(hg0, hg1)}: {hg: i}}
     hgp2hgs = {hgp: {v: i \
                      for i, v in enumerate(sorted(set(hgs)))} \
                for hgp, hgs in hgps2hgall.items()}
@@ -102,7 +100,7 @@ def merge_protos(protohgx_res):
 
 
 @njit
-def gen_clusters_arr(loci, i2hg, clan_arr):
+def gen_clusters_arr(loci, i2hg, clan_arr, check):
     """input is an HGp's 2D array of loci represented as a array of HGs
     presence absence.
     identify rows with > 2 overlapping HGs by multiplying the inputted
@@ -113,31 +111,42 @@ def gen_clusters_arr(loci, i2hg, clan_arr):
     output these overlapping HGs (HGx), omes, and loci anchor genes""" 
     output = []
   #  adj_arr = clan_arr @ clan_arr.transpose() # sparse
-    adj_arr = clan_arr @ clan_arr.T # dense
-    for i0 in range(adj_arr.shape[0]):
-        row = adj_arr[i0, :]
-        row0 = clan_arr[i0, :]
-        loc0 = loci[i0]
-        ome0 = loc0[:loc0.find('_')]
-        # identify loci with > 2 overlapping hgs
-#        prep = row > 2 # sparse
-#        overlap_loci = [x for x in sparse.find(prep)[0]] # sparse
+    # e.g. hgs x loc     loc x hgs      loc x loc
+    # [[1, 0, 1, 1],   [[1, 1, 1],    [[3, 3, 2],
+    #  [1, 1, 1, 1], @  [0, 1, 1],  =  [3, 4, 3],
+    #  [1, 1, 0, 1]]    [1, 1, 0],     [2, 3, 3]]
+    #                   [1, 1, 1]]
+    
+    #  clan_arr         clan_arr.T      adj_arr
+
+    # so in this example, loc 0 has an hgx (overlap > 2) with loc 0 and 1
+    # loc 1 hgx with loc 0, 1, 2; and loc 2 an hgx with loc 1, 2
+
+    # removing same locus and redundant overlap, there is thus a shared hgx
+
+
+    adj_arr = clan_arr @ clan_arr.T # dense identify overlap
+    for i0 in range(adj_arr.shape[0]): # for each row
+        row = adj_arr[i0, :] # overlap row
+        row0 = clan_arr[i0, :] # hg representation of locus
+        loc0 = loci[i0] # the actual locus 
+        ome0 = loc0[:loc0.find('_')] # the ome corresponding with the locus
+
+        # these are loci coordinates non-self and non-redundant w/> 2 overlap
         overlap_loci = [x for x in np.where(row > 2)[0] if x > i0] # dense
+
+        # for each of these overlaps
         for i1 in overlap_loci:
             loc1 = loci[i1]
             ome1 = loc1[:loc1.find('_')]
             if ome0 != ome1:
                 row1 = clan_arr[i1, :]
                 row_sum = row0 + row1
-   #             hgx = tuple([i2hg[x] for x in sparse.find(where)[0]]) # sparse
-                hgx = [i2hg[x] for x in np.where(row_sum == 2)[0]] # dense
+                # if the sum of the row is 2, it indicates there is overlap
+                # at that particular HG
+                hgx = [i2hg[x] for x in np.where(row_sum >= 2)[0]] # dense
                 output.append((hgx, loc0, loc1))
     return output
-
-
-def literal_load(f):
-    d = read_json(f)
-    return {literal_eval(k): tuple(v) for k, v in d.items()}
 
 
 def load_prehgx(wrk_dir, ome2i):
@@ -149,16 +158,13 @@ def load_prehgx(wrk_dir, ome2i):
         with open(f'{wrk_dir}{preh_f}', 'r') as raw:
             for line in raw:
                 d = line.rstrip().split()
-                try:
-                    hgx = tuple((int(x) for x in d[0].split(',')))
-                    gs = d[1].split(',')
-                    h2l[hgx].extend(gs)
-                except:
-                    continue
+                hgx = tuple((int(x) for x in d[0].split(',')))
+                gs = d[1].split(',')
+                h2l[hgx].extend(gs)
 
-        h2l = {k: list(set(v)) for k, v in h2l.items()}
-        h2o = {k: set(ome2i[y[:y.find('_')]] for y in v) \
-               for k, v in h2l.items()}
+    h2l = {k: tuple(sorted(set(v))) for k, v in h2l.items()}
+    h2o = {k: tuple(sorted(set(ome2i[y[:y.find('_')]] for y in v))) \
+           for k, v in h2l.items()}
 
     return h2o, h2l
 
@@ -195,8 +201,14 @@ def formulate_hgx_dicts(hgp, loci, hgs2i, Q):
         hg_loc = np.array(list([hgs2i[x] for x in loc[0]]))
         clan_arr[i, hg_loc] = 1
     loci = [x[1] for x in loci]
+
+#    if len(set(hgs2i.keys()).intersection({10, 1025, 6380, 10267, 12567, 63630})) > 2:
+ #       print(loci, flush = True)
+    check = False
+    if hgp in {(10, 10267), (10, 12567), (10267, 12567), (1025, 63630), (10, 63630)}:
+        check = True
     i2hg = np.array([k for k, v in hgs2i.items()])
-    output = gen_clusters_arr(loci, i2hg, clan_arr.astype(float))
+    output = gen_clusters_arr(loci, i2hg, clan_arr.astype(float), check)
 #                output.append([hgx, (ome0, ome1), (loc0, loc1)])
     Q.put((hgp, tuple((tuple(x[0]), x[1], x[2],) \
            for x in output),))
@@ -204,19 +216,26 @@ def formulate_hgx_dicts(hgp, loci, hgs2i, Q):
 
 def par_rm(hgx, hgx2omes):
 
+#    check_set, out_p = {10, 1025, 6380, 10267, 12567, 63630}, False
     t_comb_sets, t_combs, todel = [set(hgx)], [hgx], []
+    # for each length of combinations possible
     for comb_len in reversed(range(3, len(hgx))):
+        # for each combination at that length
         for comb in combinations(hgx, comb_len):
+            # if this combination already exists 
             if comb in hgx2omes:
+                # get the set of this subhgx and check if its a subset
                 set_comb = set(comb)
                 for i, set_hgx in enumerate(t_comb_sets):
+                    # if it is a subset
                     if set_comb < set_hgx:
+                        # and if it has the same omes as the superset
                         if hgx2omes[comb] == hgx2omes[t_combs[i]]:
                             todel.append(comb)
                             break
                     t_combs.append(comb)
                     t_combs_sets.append(set_comb)
-    
+
     return todel
 
 
@@ -247,13 +266,15 @@ def add_subsets(hgx2omes, hgx2loc):
 def rm_subsets(hgx2omes, hgx2loc, cpus = 1):
 
 #    hgx2omes, hgx2loc = add_subsets(hgx2omes, hgx2loc)
-    max_len = len(list(hgx2omes.keys())[0])
+    max_len = max((len(x) for x in list(hgx2omes.keys())))
     for hgx_len in tqdm(reversed(range(4, max_len + 1)),
                         total = max_len + 1 - 4):
         i2hgx = list(hgx2omes.keys())
         rm_cmds = [[hgx, hgx2omes] for hgx in i2hgx if len(hgx) == hgx_len]
         with mp.get_context('fork').Pool(processes = cpus) as pool:
             todels = pool.starmap(par_rm, rm_cmds)
+            pool.close()
+            pool.join()
         
         for todel in todels:
             for hgx in todel:
@@ -279,7 +300,8 @@ def id_hgx(db, hgp_dict, gene2hg, ome2i, wrk_dir, cpus, clusplusminus = 10):
         protohgx_res = pool.starmap(hash_protohgxs, 
                                     tqdm(hash_protohgx_cmds,
                                          total = len(hash_protohgx_cmds)))
-    pool.join()
+        pool.close()
+        pool.join()
                 
     print('\t\tForming proto-HGxs', flush = True)
     protohgx2omes, hgp2hgs = merge_protos(protohgx_res) # merge mp results
@@ -294,7 +316,7 @@ def id_hgx(db, hgp_dict, gene2hg, ome2i, wrk_dir, cpus, clusplusminus = 10):
         sxs = [int(re.search(r'prehgx\.(\d+)\.txt', x)[1]) for x in preh_fs]
         sx = max(sxs)
         hgps = []
-        for preh_f in preh_fs:
+        for preh_f in tqdm(preh_fs, total = len(preh_fs)):
             with open(f'{wrk_dir}{preh_f}', 'r') as raw:
                 for line in raw:
                     d = line.rstrip().split()
@@ -333,6 +355,9 @@ def id_hgx(db, hgp_dict, gene2hg, ome2i, wrk_dir, cpus, clusplusminus = 10):
         params = ((hgp, loci, hgp2hgs[hgp], Q) for hgp, loci in protohgx2omes.items()) 
         with mp.Pool(processes = c_cpus) as pool:
             pool.starmap(formulate_hgx_dicts, tqdm(params, total = len(protohgx2omes)))
+            pool.close()
+            pool.join()
+                
         Q.put(None)
         for proc in procs:
             proc.join()
@@ -343,9 +368,9 @@ def id_hgx(db, hgp_dict, gene2hg, ome2i, wrk_dir, cpus, clusplusminus = 10):
     print('\t\tReading results', flush = True)
     hgx2omes, hgx2loc = load_prehgx(wrk_dir, ome2i)
 
-    print('\t\tRemoving subset HGxs', flush = True)
-    hgx2omes, hgx2loc = rm_subsets(hgx2omes, hgx2loc, cpus)
-    hgx2omes = {x: tuple(sorted(hgx2omes[x])) for x in hgx2omes}
+ #   print('\t\tRemoving subset HGxs', flush = True)
+#    hgx2omes, hgx2loc = rm_subsets(hgx2omes, hgx2loc, cpus)
+ #   hgx2omes = {x: tuple(sorted(hgx2omes[x])) for x in hgx2omes}
 
     return hgx2omes, hgx2loc
 
