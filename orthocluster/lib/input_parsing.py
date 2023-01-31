@@ -57,6 +57,9 @@ def read_log(
                    log_res[key] = False
             elif key == 'gcf_id':
                 continue
+            elif key == 'gcf_sim':
+                if res.lower() != str(log_dict[key]).lower():
+                    log_res[key] = False
             elif res != str(log_dict[key]):
                 log_res[key] = False
             else:
@@ -125,6 +128,8 @@ def read_log(
 def rm_old_data(
     log_res, out_dir, wrk_dir
     ):
+
+    todel, tosave, save_dir = [], [], None
     if not log_res['null_samples']:
         if os.path.isdir(wrk_dir + 'null/'):
             shutil.rmtree(wrk_dir + 'null/')
@@ -132,17 +137,12 @@ def rm_old_data(
         seed_file = out_dir + 'hgps.tsv.gz'
         seed_arr = wrk_dir + 'microsynt.npy'
         if os.path.isfile(seed_file):
-            os.remove(seed_file)
+            tosave.append(seed_file)
         if os.path.isfile(seed_arr):
             os.remove(seed_arr)
         clus_pickle = wrk_dir + 'hgx2loc.pickle'
-        ome_pickle = wrk_dir + 'hgx2omes.pickle'
         if os.path.isfile(clus_pickle):
             os.remove(clus_pickle)
-#        if os.path.isfile(hgx_pickle):
- #           os.remove(hgx_pickle)
-        if os.path.isfile(ome_pickle):
-            os.remove(ome_pickle)
     if not log_res['hgx_percentile']:
         # should be able to tell if the percentile is raised (no need to del)
         skip_files = collect_files(wrk_dir + 'null/', '*')
@@ -155,6 +155,9 @@ def rm_old_data(
                          if os.path.basename(x).startswith('done.')]
             if done_file:
                 os.remove(done_file)
+        gcf_dir = wrk_dir + 'gcf/'
+        if os.path.isdir(gcf_dir):
+            todel.append(gcf_dir)
         groups = ['group.I', 'group.II', 'group.III']
         clan_data = ['hg.json.gz', 'hgx.json.gz', 'json.gz']
         for file_ in clan_data:
@@ -170,7 +173,14 @@ def rm_old_data(
         adj_rows.extend(collect_files(gcf_dir, 'tmp'))
         row_file = wrk_dir + 'gcf/loci.adj'
         if os.path.isfile(row_file):
-            os.remove(row_file)
+            todel.append(row_file)
+        hgx_files = ['hgx2omes2gcc.full.pickle',
+                     'hgx2omes2id.full.pickle',
+                     'hgx2omes2pos.full.pickle']
+        for file_ in hgx_files:
+            if os.path.isfile(f'{wrk_dir}{file_}'):
+                os.remove(f'{wrk_dir}{file_}')
+
     if not log_res['inflation']:
         gcfs_file = f'{wrk_dir}gcfs.pickle'
         if os.path.isfile(gcfs_file):
@@ -178,26 +188,50 @@ def rm_old_data(
     if not log_res['gcf_percentile']:
         kern_file = out_dir + 'hgxs.tsv.gz'
         clus_file = out_dir + 'gcfs.tsv.gz'
-        hgx_files = ['hgx2omes2gbc.full.pickle',
-                     'hgx2omes2id.full.pickle',
-                     'hgx2omes2pos.pickle',
-                     'hgx/clusOGs.pickle']
-#        patch_pickle = wrk_dir + 'patchiness.full.pickle'
-        ome_dir = wrk_dir + 'ome/'
+        ome_dir = out_dir + 'ome/'
         hmm_dir = wrk_dir + 'hmm/'
-        if os.path.isfile(kern_file):
-            os.remove(kern_file)
-        if os.path.isfile(clus_file):
-            os.remove(clus_file)
         if os.path.isdir(ome_dir):
-            shutil.rmtree(ome_dir)
+            count = 0
+            save_dir = f'{out_dir}run{count}/'
+            while os.path.isdir(save_dir):
+                count += 1
+                save_dir = f'{out_dir}run{count}/'
+            os.mkdir(save_dir)
+            os.mkdir(save_dir + 'working/')
+            os.mkdir(save_dir + 'working/gcf/')
+            shutil.move(ome_dir, save_dir)
+            if os.path.isfile(kern_file):
+                shutil.move(kern_file, save_dir + os.path.basename(kern_file))
+            if os.path.isfile(clus_file):
+                shutil.move(clus_file, save_dir + os.path.basename(clus_file))
+            if os.path.isfile(out_dir + 'gcfs.html'):
+                shutil.move(out_dir + 'gcfs.html', save_dir + 'gcfs.html')
+            if os.path.isfile(out_dir + 'metrics.html'):
+                shutil.move(out_dir + 'metrics.html', save_dir + 'metrics.html')
+            shutil.move(out_dir + 'log.txt', save_dir + 'log.txt')
+            for f in collect_files(f'{wrk_dir}gcf/', '*'):
+                shutil.copy(f, f'{save_dir}working/gcf/{os.path.basename(f)}')
+        else:
+            if os.path.isfile(kern_file):
+                os.remove(kern_file)
+            if os.path.isfile(clus_file):
+                os.remove(clus_file)
+    
         if os.path.isdir(hmm_dir):
             shutil.rmtree(hmm_dir)
-        for file_ in hgx_files:
-            if os.path.isfile(f'{wrk_dir}{file_}'):
-                os.remove(f'{wrk_dir}{file_}')
-#        if os.path.isfile(patch_pickle):
- #           os.remove(patch_pickle)
+        clusOG_f = f'{wrk_dir}clusOGs.pickle'
+        if os.path.isfile(clusOG_f):
+            os.remove(clusOG_f)
+
+    if save_dir:
+        for f in tosave:
+            shutil.move(f, save_dir + os.path.basename(f))
+    for f in todel:
+        if os.path.isdir(f):
+            shutil.rmtree(f)
+        elif os.path.isfile(f):
+            os.remove(f)
+
     if not log_res['hg_file']:
         shutil.rmtree(wrk_dir)
         os.mkdir(wrk_dir)
@@ -360,9 +394,8 @@ def load_seedScores(file_):#, seed_thresh):
     with gzip.open(file_, 'rt') as raw:
         for line in raw:
             if not line.startswith('#'):
-                data = [x.rstrip() for x in line.split('\t')]
-#                if float(data[3]) > seed_thresh:
-                out_hgs.append(line.split('\t'))
+                d = line.rstrip().split()
+                out_hgs.append((int(d[0]), int(d[1])))
     
     return out_hgs
 
@@ -411,6 +444,8 @@ def big_acc2fa(db, hg_dir, hgs, hg2gene, cpus = 1):
         fa_dicts = pool.map(fa2dict, 
                             tqdm((row['faa'] for row in db.values()), 
                             total = len(db)))
+        pool.close()
+        pool.join()
     for res in fa_dicts:
         big_fa = {**big_fa, **res}
     big_dict = mp.Manager().dict(big_fa)
@@ -419,6 +454,8 @@ def big_acc2fa(db, hg_dir, hgs, hg2gene, cpus = 1):
                                          big_dict, hg2gene[hg]) \
                                          for hg in hgs),
                                        total = len(hgs)))
+        pool.close()
+        pool.join()
 
     
 def hg_fa_mngr(wrk_dir, hg_dir, hgs,
@@ -440,6 +477,8 @@ def hg_fa_mngr(wrk_dir, hg_dir, hgs,
                 pool.starmap(output_hg_fas,
                              tqdm(((db, hg2gene[hg], f'{new_hg_dir}{hg}.faa') \
                              for hg in missing_hgs), total = len(missing_hgs)))
+                pool.close()
+                pool.join()
         else:
             big_acc2fa(db, new_hg_dir, hgs, hg2gene, cpus)
     else: # predetermined hg input
@@ -477,10 +516,13 @@ def hg_fa_mngr(wrk_dir, hg_dir, hgs,
         if copy_hgs:
             with mp.Pool(processes = cpus) as pool:
                 pool.starmap(cp_files, hg_fa_cmds)
+                pool.close()
+                pool.join()
         else:
             with mp.Pool(processes = cpus) as pool:
                 pool.starmap(symlink_files, hg_fa_cmds)
-
+                pool.close()
+                pool.join()
     return new_hg_dir
 
 
