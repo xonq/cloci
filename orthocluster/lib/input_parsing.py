@@ -36,7 +36,7 @@ def init_log(
                 + f'id_percent\t{log_dict["id_percent"]}\n' \
                 + f'pos_percent\t{log_dict["pos_percent"]}\n' \
                 + f'patch_threshold\t{log_dict["patch_threshold"]}\n' \
-                + f'coevo_threshold\t{log_dict["coevo_threshold"]}\n' \
+                + f'gcc_threshold\t{log_dict["gcc_threshold"]}\n' \
                 + f'null_samples\t{log_dict["null_samples"]}\n' \
                 + f'n50\t{log_dict["n50"]}')
 
@@ -253,7 +253,7 @@ def log_check(log_dict, log_path, out_dir, wrk_dir, flag = True):
             init_log(log_path, log_dict)
         else:
             failed = set([x for x, v in log_res.items() if not v])
-            for skip in ['patch_threshold', 'coevo_threshold',
+            for skip in ['patch_threshold', 'gcc_threshold',
                          'pos_percent', 'id_percent']:
                 if skip in failed:
                     failed.remove(skip)
@@ -528,7 +528,7 @@ def hg_fa_mngr(wrk_dir, hg_dir, hgs,
 
 def init_run(db, out_dir, near_single_copy_genes, constraint_path,
              tree_path, hg_file, plusminus, seed_perc, clus_perc,
-             hgx_perc, id_perc, pos_perc, patch_thresh, coevo_thresh,
+             hgx_perc, id_perc, pos_perc, patch_thresh, gcc_thresh,
              samples, n50thresh, flag, min_gcf_id, inflation, simfun):
     wrk_dir = out_dir + 'working/'
     if not os.path.isdir(wrk_dir):
@@ -552,7 +552,7 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
         'orig_gcf_id': None, 'gcf_id': min_gcf_id, 'gcf_sim': simfun,
         'gcf_percentile': clus_perc, 'id_percent': id_perc,
         'pos_percent': pos_perc, 'patch_threshold': patch_thresh,
-        'coevo_threshold': coevo_thresh, 'inflation': inflation,
+        'gcc_threshold': gcc_thresh, 'inflation': inflation,
         'null_samples': samples, 'n50': n50thresh}
 
     log_res = log_check(log_dict, log_path, out_dir, wrk_dir, flag)
