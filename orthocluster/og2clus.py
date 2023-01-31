@@ -1,22 +1,14 @@
 #! /usr/bin/env python3
 
-#NEED to implement GCC network analysis from loci.adj
-#NEED GBC threshold
-#NEED a coverage filter for the diamond searches
-#NEED to make gbc_mngr split different families with the same GCF
+#NEED to make gcc_mngr split different families with the same GCF
 #NEED to allow hard threshold for microsynteny distance
 #NEED locus-based GCF hypergeometric average
-#NEED to accept an alternative OG input
-#NEED to update logging and intelligent resuming
-    # md5sum for database integrity
-    # inflation parameter
-    # minimum gcf id
-#NEED TO OUTPUT FAMILY TO info.out
 #NEED TO ADD PERCENTILE TO OUTPUT
 #NEED to implement gff2svg
 #NEED to output to gbk
 #NEED to delete excess when checkpoints are reached
     # implement tarring effectively
+    # microsynteny array is expensive
 
 import os
 import re
@@ -41,7 +33,7 @@ from mycotools.lib.biotools import \
 from mycotools.lib.dbtools import mtdb, masterDB
 from mycotools.gff2svg import main as gff2svg
 from mycotools import db2microsyntree
-from orthocluster.orthocluster.lib import phylocalcs, evo_conco, \
+from orthocluster.orthocluster.lib import treecalcs, evo_conco, \
      hgx2gcfs, input_parsing, hgp2hgx, generate_nulls
 from orthocluster.orthocluster.lib.output_data import output_res
 
@@ -117,6 +109,8 @@ def combo_prob_mngr(
     # run og-by-og, then accumulate via hgx at the end
     with mp.get_context('fork').Pool(processes = cpus) as pool: # will fail on Windows
         hypergeoRes = pool.starmap(est_combo_probs, cmds)
+        pool.close()
+        pool.join()
 
     comparisons = len(hgx2omes) # for Bonferroni correction
     hgx2pval = {}
@@ -184,31 +178,31 @@ def runGFF2SVG(ome_dir, regex = r'Pfam=[^;]+'):
         gff2svg(gff2list(gff), svg_path, prod_comp = regex, types = types)
 
 
-def patch_main(
-    phylo, hgxs, wrk_dir, 
-    old_path = 'patchiness.scores.pickle', cpus = 1
-    ):
+def threshold_hgx(hgx2omes, hgx2loc, omes2dist, 
+                  ome2partition, bord_scores_list):
+    i2hgx, hgx2i, hgx2dist, count = {}, {}, {}, 0
+    for hgx, omes in hgx2omes.items():
+        dist = omes2dist[omes]
+        parts = set(ome2partition[x] for x in omes)
+        if None in parts:
+            parts = parts.remove(None)
+            if not parts:
+                continue
+        # choose the minimum threshold [liberal]
+        bord_score = min([bord_scores_list[i][len(hgx)] for i in list(parts)])
+        if dist > bord_score:
+             hgx2dist[hgx] = dist
+             i2hgx[count], hgx2i[hgx] = hgx, count
+             count += 1
+             # apply the border threshold for ALL pre-grouped hgxs
 
-    if not os.path.isfile(wrk_dir + old_path):
-        clusOmes = set([
-            tuple([str(x) for x in y]) for y in hgxs
-            ])
-        with mp.get_context('fork').Pool(processes = cpus) as pool:
-            patch_res = pool.starmap(
-                phylocalcs.calc_patchiness, tqdm([(phylo, x) for x in clusOmes],
-                                                 total = len(clusOmes))
-                )
-        pool.join()
-        omes2patch = {ome_tup: patchiness for ome_tup, patchiness in patch_res}
-        with open(wrk_dir + old_path, 'wb') as out:
-            pickle.dump(omes2patch, out)
-
-    else:
-        print('\tLoading previous patchiness results', flush = True)
-        with open(wrk_dir + old_path, 'rb') as in_pick:
-            omes2patch = pickle.load(in_pick)
- 
-    return omes2patch
+    print(
+        '\t\t' + str(len(i2hgx)) + ' HGx pass border threshold', 
+        flush = True
+        )
+    hgx2omes = {v: hgx2omes[v] for v in i2hgx.values()}
+    hgx2loc = {v: hgx2loc[v] for v in i2hgx.values()}
+    return hgx2omes, hgx2loc, hgx2dist, i2hgx, hgx2i
 
 
 def main(
@@ -219,7 +213,7 @@ def main(
     min_gcf_id = 0.3, simfun = hgx2gcfs.overlap,
     constraint_path = None, blastp = 'blastp',
     run_dnds = False, cpus = 1, n50thresh = None, 
-    root = None, coevo_thresh = 0, patch_thresh = 0,
+    root = None, gcc_thresh = 0, patch_thresh = 0,
     method = 'mmseqs easy-cluster',
     printexit = False, flag = True, partition_file = None,
     near_single_copy_genes = [], tree_path = None, 
@@ -229,9 +223,9 @@ def main(
     The general workflow:
     log management -> input data parsing -> orthogroup pair identification ->
     microsynteny distance thresholding -> HGx formation ->
-    microsynteny distance border thresholding -> HGx grouping ->
+    microsynteny distance border thresholding -> HGx-GCF grouping ->
     microsynteny distance cluster thresholding -> patchiness calculation ->
-    coevolution calculation -> optional dN/dS calculations ->
+    gcc calculation -> optional dN/dS calculations ->
     HGx data output -> cluster retrieving -> data output
     """
     db = db.set_index()
@@ -243,7 +237,7 @@ def main(
                                               tree_path, hg_file, plusminus, 
                                               hgp_perc, clus_perc,
                                               hgx_perc, id_perc, pos_perc, 
-                                              patch_thresh, coevo_thresh,
+                                              patch_thresh, gcc_thresh,
                                               samples, n50thresh, flag,
                                               min_gcf_id, inflation, sim)
 
@@ -274,7 +268,7 @@ def main(
     if not os.path.isfile(out_dir + 'hgps.tsv.gz'):
         print('\tCalculating seed HG-pair scores', flush = True)
         seed_score_start = datetime.now()
-        omes2dist = phylocalcs.update_dists(phylo, cooccur_dict, cpus, omes2dist)
+        omes2dist = treecalcs.update_dists(phylo, cooccur_dict, cpus, omes2dist)
         with open(wrk_dir + 'omes2tmd.pickle', 'wb') as out:
             pickle.dump(omes2dist, out)
 
@@ -302,6 +296,7 @@ def main(
             for line in top_hgs:
                 out.write('\t'.join([str(x) for x in line]) + '\n')
         print('\t\t' + str(len(top_hgs)) + ' significant HG pairs', flush = True)
+        top_hgs = [(x[0], x[1]) for x in top_hgs]
     elif not os.path.isfile(wrk_dir + 'hgx2omes.pickle'): # load previous hg pairs
         print('\tLoading previous seed HG pairs', flush = True)
         top_hgs = input_parsing.load_seedScores(out_dir + 'hgps.tsv.gz')
@@ -322,7 +317,7 @@ def main(
     print('\t\t' + str(hgx_obs) + ' observed HGx', flush = True)
 
     # calculate HGx microsynteny distances
-    omes2dist = phylocalcs.update_dists(phylo, hgx2omes, cpus, omes2dist = omes2dist)
+    omes2dist = treecalcs.update_dists(phylo, hgx2omes, cpus, omes2dist = omes2dist)
     with open(wrk_dir + 'omes2tmd.pickle', 'wb') as out:
         pickle.dump(omes2dist, out)
     print('\t\t' + str(datetime.now() - hgx_start), flush = True)
@@ -372,28 +367,10 @@ def main(
     # datasets in the future and some algorithm is going to pick up that gene clusters
     # are in some absolute microsynteny distance, so long as its not normalized. 
 
-    i2hgx, hgx2i, hgx2dist, count = {}, {}, {}, 0
-    for hgx, omes in hgx2omes.items():
-        dist = omes2dist[omes]
-        parts = set(ome2partition[x] for x in omes)
-        if None in parts:
-            parts = parts.remove(None)
-            if not parts:
-                continue
-        # choose the minimum threshold [liberal]
-        bord_score = min([bord_scores_list[i][len(hgx)] for i in list(parts)])
-        if dist >= bord_score:
-             hgx2dist[hgx] = dist
-             i2hgx[count], hgx2i[hgx] = hgx, count
-             count += 1
-             # apply the border threshold for ALL pre-grouped hgxs
+    hgx2omes, hgx2loc, hgx2dist, i2hgx, hgx2i = threshold_hgx(hgx2omes, hgx2loc,
+                                                    omes2dist, ome2partition, 
+                                                    bord_scores_list)
 
-    print(
-        '\t\t' + str(len(i2hgx)) + ' HGx pass border threshold', 
-        flush = True
-        )
-    hgx2omes = {v: hgx2omes[v] for v in i2hgx.values()}
-    hgx2loc = {v: hgx2loc[v] for v in i2hgx.values()}
     hgx_dir = f'{wrk_dir}hgx/'
 
 
@@ -402,8 +379,9 @@ def main(
     # log parsing
         # Group hgxs
         gcfs, gcf_hgxs, gcf_omes, omes2dist = hgx2gcfs.classify_gcfs(
-            hgx2loc, db, gene2hg, i2hgx, hgx2i, phylo, bord_scores_list, 
-            ome2i, hgx2omes, hg_dir, hgx_dir, wrk_dir, ome2partition, hg2gene, 
+            hgx2loc, db, gene2hg, i2hgx, hgx2i, phylo, 
+            ome2i, hgx2omes, hg_dir, hgx_dir, wrk_dir, ome2partition, 
+            bord_scores_list, hg2gene, 
             omes2dist = omes2dist, clusplusminus = plusminus, 
             inflation = inflation, min_gcf_id = min_gcf_id,
             min_omes = 2, cpus = cpus, simfun = simfun, printexit = printexit
@@ -416,7 +394,7 @@ def main(
         with open(wrk_dir + 'gcfs.pickle', 'rb') as raw:
             gcfs, gcf_omes, gcf_hgxs = pickle.load(raw)
 
-    omes2dist = phylocalcs.update_dists(phylo, {i: omes for i, omes in enumerate(gcf_omes)}, 
+    omes2dist = treecalcs.update_dists(phylo, {i: omes for i, omes in enumerate(gcf_omes)}, 
                                         cpus, omes2dist)
 
     todel = []
@@ -427,12 +405,12 @@ def main(
             parts = parts.remove(None)
             if not parts:
                 continue
-        # get the most threshold corresponding to the minimum sized HGx 
+        # get the threshold corresponding to the maximum sized HGx 
         # in the family, and the minimum lineages' value [liberal]
         max_len = max([len(x) for x in gcfs[i]])
         clus_score = min([clus_scores_list[v][max_len] \
                           for v in list(parts)])
-        if not dist >= clus_score:
+        if not dist > clus_score:
             todel.append(i)
 
     todel.reverse()
@@ -450,13 +428,13 @@ def main(
         hgx for i, hgx in enumerate(gcf_hgxs)
         ] # hgxs without patchiness scores
     print('\nVI. Quantifying GCF patchiness', flush = True)
-    omes2patch = patch_main(phylo, runOmes, wrk_dir,
+    omes2patch = treecalcs.patch_main(phylo, runOmes, wrk_dir,
                             old_path = 'patchiness.full.pickle', 
                             cpus = cpus) # could make more efficient by skipping redos
 
 
-    print('\nVII. Quantifying GCF gene BLAST concordance (GBC)', flush = True)
-    hgx2omes2gbc, hgx2omes2id, hgx2omes2pos = evo_conco.gbc_main(
+    print('\nVII. Quantifying GCF gene committment and intrafamily similarity', flush = True)
+    hgx2omes2gcc, hgx2omes2id, hgx2omes2pos = evo_conco.gcc_main(
                             hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
                             blastp, db, gene2hg, plusminus, hg2gene, 
                             old_path = 'hgx2omes2pos.full.pickle',
@@ -468,16 +446,16 @@ def main(
     hg_dir = f'{wrk_dir}hg/'
 
 
-    if any(x > 0 for x in [coevo_thresh, patch_thresh, id_perc, pos_perc]):
+    if any(x > 0 for x in [gcc_thresh, patch_thresh, id_perc, pos_perc]):
         print('\tApplying thresholds', flush = True)
-        print('\t\t' + str(len(gcfs)) + ' gcfs before', flush = True)
+        print('\t\t' + str(len(gcfs)) + ' GCFs before', flush = True)
         newGCFs, newGCFOmes, newGCFHGxs = [], [], []
         for i0, gcf in enumerate(gcfs):
             check = False # have we added a new list
             ogc = gcf_hgxs[i0]
             omesc = gcf_omes[i0]
             for x, omes in gcf.items():
-                if hgx2omes2gbc[ogc][omesc] >= coevo_thresh \
+                if hgx2omes2gcc[ogc][omesc] >= gcc_thresh \
                     and omes2patch[omesc] >= patch_thresh \
                     and hgx2omes2id[ogc][omesc] >= id_perc \
                     and hgx2omes2id[ogc][omesc] >= pos_perc:
@@ -497,14 +475,14 @@ def main(
     hgx2dnds = {}
     gcf_dict = {i: v for i,v in enumerate(gcf_omes)}
 
-    omes2dist = phylocalcs.update_dists(phylo, 
+    omes2dist = treecalcs.update_dists(phylo, 
                                         {i: v for i, v in enumerate(gcf_omes)}, 
                                         cpus, omes2dist) 
 
     print('\nIIX. Writing and annotating clusters', flush = True)
     output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, 
          i2ome, hgx2omes, out_dir, gcf_hgxs,
-         omes2dist, hgx2omes2gbc, omes2patch, hgx2omes2id,
+         omes2dist, hgx2omes2gcc, omes2patch, hgx2omes2id,
          hgx2omes2pos, hgx2loc, gene2hg, plusminus, ome2i,
          hgx2i, pfam_path = pfam, dnds_dict = {}, cpus = cpus)
 
@@ -583,7 +561,7 @@ if __name__ == '__main__':
     thr_opt.add_argument('-xp', '--hgx_percentile', type = int,
         help = 'Percentile [0 < value < 100] of HGx microsynteny distances. ' \
              + 'Must be less than -cp; DEFAULT: -cp')
-    thr_opt.add_argument('-gp', '--gcf_percentile', type = int, default = 70, 
+    thr_opt.add_argument('-fp', '--gcf_percentile', type = int, default = 70, 
         help = 'Percentile [0 < value < 100] of GCF microsynteny distances. ' \
              + 'DEFAULT: 70')
     thr_opt.add_argument('-ip', '--id_percent', default = 0, type = float,
@@ -593,8 +571,8 @@ if __name__ == '__main__':
     thr_opt.add_argument('-pt', '--patch_threshold', default = 0, type = float,
         help = "Threshold [0 < value < 1] of gene cluster family " \
              + " patchiness scores")
-    thr_opt.add_argument('-ct', '--coevo_threshold', default = 0, type = float, 
-        help = "Threshold [0 < value < 1] of high order HG combinations' coevolution scores")
+    thr_opt.add_argument('-gt', '--gcc_threshold', default = 0, type = float,
+        help = "Threshold [0 < value < 1] of gene cluster committment scores")
 
     run_opt = parser.add_argument_group('Runtime options')
 #    run_opt.add_argument('-s', '--dnds', action = 'store_true', help = 'Run dN/dS calculations')
@@ -673,7 +651,7 @@ if __name__ == '__main__':
         'Inflation': args.inflation,
         'GCF percentile': args.gcf_percentile, 
         'Minimum family %id': args.id_percent, 'Minimum family %pos': args.pos_percent,
-        'Patchiness threshold': args.patch_threshold, 'Coevolution threshold': args.coevo_threshold,
+        'Patchiness threshold': args.patch_threshold, 'GCC threshold': args.gcc_threshold,
         'Null samples': args.null_sample, #'Calculate dN/dS': args.dnds, 
         'Minimum N50': args.n50, # 'Family sensitivity': args.sensitivity,
         'Processors': args.cpus, 'Output directory': args.output_dir,
@@ -739,7 +717,7 @@ if __name__ == '__main__':
         hgx_perc = hgx_perc, pfam = pfam, samples = args.null_sample,
         partition_file = args.null_partitions, #        run_dnds = args.dnds, 
         n50thresh = args.n50, near_single_copy_genes = focal_genes,
-        root = root, coevo_thresh = args.coevo_threshold, 
+        root = root, gcc_thresh = args.gcc_threshold, 
         constraint_path = constraint_path, simfun = simfun,
         patch_thresh = args.patch_threshold, method = method,
         printexit = args.stop, flag = bool(not args.new),
