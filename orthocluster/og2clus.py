@@ -1,5 +1,7 @@
 #! /usr/bin/env python3
 
+#NEED to add tune parameter
+    # update log with inflation following successful tune
 #NEED to make gcc_mngr split different families with the same GCF
 #NEED to allow hard threshold for microsynteny distance
 #NEED locus-based GCF hypergeometric average
@@ -27,7 +29,7 @@ from datetime import datetime
 from collections import defaultdict
 from mycotools.lib.kontools import \
     intro, outro, format_path, collect_files, \
-    findExecs, eprint
+    findExecs, eprint, tardir
 from mycotools.lib.biotools import \
     gff2list
 from mycotools.lib.dbtools import mtdb, masterDB
@@ -205,6 +207,42 @@ def threshold_hgx(hgx2omes, hgx2loc, omes2dist,
     return hgx2omes, hgx2loc, hgx2dist, i2hgx, hgx2i
 
 
+def read_tune_file(tune_file, gene2hg, ome2i):
+    with open(tune_file, 'r') as raw:
+        tune_data = [x.rstrip() for x in raw if not x.startswith('#')]
+    tune = {}
+    for cluster in tune_data:
+        name, rawgenes, rawomes = cluster.split('\t')
+        if name in tune:
+            eprint(f'\nERROR: duplicate entry for {name} in tune file',
+                   flush = True)
+        if ',' in rawgenes:
+            genes = [x.rstrip().lstrip() for x in rawgenes.split(',')]
+        else:
+            genes = [x.rstrip().lstrip() for x in rawgenes.split()]
+        if ',' in rawomes:
+            omes = [x.rstrip().lstrip() for x in rawomes.split(',')]
+        else:
+            omes = [x.rstrip().lstrip() for x in rawomes.split()]
+        try:
+            hgs = [int(i) for i in genes]
+        except ValueError:
+            hgs = []
+            for gene in genes:
+                if gene in gene2hg:
+                    hgs.append(gene)
+        if not hgs:
+            eprint(f'\t\tWARNING: no homology groups in {name}, skipping',
+                   flush = True)
+            continue
+        omes = [ome2i[x] for x in omes]
+        if not omes:
+            eprint(f'\t\tWARNING: no omes in {name}, skipping', flush = True)
+        tune[name] = [tuple(sorted(set(hgs))), 
+                      tuple(sorted(set(omes)))]
+    return tune
+
+
 def main(
     db, hg_file, out_dir, plusminus = 1, hg_dir = None,
     hgp_perc = 0.2, clus_perc = 0.7, hgx_perc = 0.7,
@@ -217,7 +255,7 @@ def main(
     method = 'mmseqs easy-cluster',
     printexit = False, flag = True, partition_file = None,
     near_single_copy_genes = [], tree_path = None, 
-    verbose = False, sim = 'overlap'
+    verbose = False, sim = 'overlap', tune_file = None
     ):
     """
     The general workflow:
@@ -232,14 +270,15 @@ def main(
     if not tree_path:
         tree_path = f'{out_dir}microsynt.newick'
 
-    wrk_dir, nul_dir = input_parsing.init_run(db, out_dir, 
+    wrk_dir, nul_dir, inflation = input_parsing.init_run(db, out_dir, 
                                               near_single_copy_genes, constraint_path,
                                               tree_path, hg_file, plusminus, 
                                               hgp_perc, clus_perc,
                                               hgx_perc, id_perc, pos_perc, 
                                               patch_thresh, gcc_thresh,
                                               samples, n50thresh, flag,
-                                              min_gcf_id, inflation, sim)
+                                              min_gcf_id, inflation, sim, 
+                                              tune_file)
 
 
     ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_dict = \
@@ -249,6 +288,13 @@ def main(
                             near_single_copy_genes = near_single_copy_genes,
                             constraint = constraint_path, verbose = verbose,
                             cpus = cpus)
+
+    if tune_file:
+        print('\tReading tune file', flush = True)
+        tune = read_tune_file(tune_file, gene2hg, ome2i)
+    else:
+        tune = None
+
     print('\tReading microsynteny tree', flush = True)
     phylo = input_parsing.compile_tree(
         i2ome, tree_path, root = root
@@ -381,7 +427,7 @@ def main(
         gcfs, gcf_hgxs, gcf_omes, omes2dist = hgx2gcfs.classify_gcfs(
             hgx2loc, db, gene2hg, i2hgx, hgx2i, phylo, 
             ome2i, hgx2omes, hg_dir, hgx_dir, wrk_dir, ome2partition, 
-            bord_scores_list, hg2gene, 
+            bord_scores_list, hg2gene, tune = tune,
             omes2dist = omes2dist, clusplusminus = plusminus, 
             inflation = inflation, min_gcf_id = min_gcf_id,
             min_omes = 2, cpus = cpus, simfun = simfun, printexit = printexit
@@ -553,6 +599,10 @@ if __name__ == '__main__':
              + 'DEFAULT: 30')
     fam_opt.add_argument('-I', '--inflation', default = 1.5, type = float,
         help = 'MCL inflation during family detection. DEFAULT: 1.5')
+    fam_opt.add_argument('-T', '--tune', 
+        help = 'Tune inflation to subset data of clusters represented ' \
+             + 'in a tab-delimited ' \
+             + 'file "<CLUSTER>\\t<CONSERVED_HGS/GENES>\\t<OMES>"')
    
 
     thr_opt = parser.add_argument_group('Thresholding')
@@ -583,8 +633,18 @@ if __name__ == '__main__':
     run_opt.add_argument('-o', '--output_dir')
     run_opt.add_argument('-n', '--new', action = 'store_true', 
         help = 'Overwrite old run')
+    run_opt.add_argument('--compress', action = 'store_true', help = 'Compress run')
     run_opt.add_argument('--cpus', default = 1, type = int)
     args = parser.parse_args()
+
+    if args.compress:
+        if not args.output_dir:
+            eprint('\nERROR: compression requires -o', flush = True)
+        elif not os.path.isdir(args.output_dir):
+            eprint('\nERROR: -o directory does not exist', flush = True)
+        dirs = [format_path(args.output_dir) + 'working/hgx/']
+        for d in dirs:
+            tardir(d, True)
 
     if args.root:
         if '"' in args.root or "'" in args.root:
@@ -643,12 +703,22 @@ if __name__ == '__main__':
         homogroups = None
         execs.append('mmseqs')
 
+    if args.tune:
+        tune_file = format_path(args.tune)
+        args.inflation = None
+        if not os.path.isfile(tune_file):
+            eprint('\nERROR: -T does not exist', flush = True)
+            sys.exit(103)
+    else:
+        tune_file = None
+        
+
     args_dict = {
         'Homology groups': homogroups, 'Sequence clusters': method, 'MycotoolsDB': args.database, 
         'Microsynteny tree': format_path(args.tree), 'Root': root_txt, 'Pfam DB': args.pfam, 'Window': args.window*2+1,
         'HGp Percentile': args.hgp_percentile, #'Precluster threshold': args.clus_threshold,
         'HGx percentile': args.hgx_percentile, 'Similarity index': sim,
-        'Inflation': args.inflation,
+        'Inflation': args.inflation, 'Tune clusters': tune_file,
         'GCF percentile': args.gcf_percentile, 
         'Minimum family %id': args.id_percent, 'Minimum family %pos': args.pos_percent,
         'Patchiness threshold': args.patch_threshold, 'GCC threshold': args.gcc_threshold,
@@ -722,7 +792,7 @@ if __name__ == '__main__':
         patch_thresh = args.patch_threshold, method = method,
         printexit = args.stop, flag = bool(not args.new),
         min_gcf_id = args.minimum_id / 100, sim = sim, 
-        tree_path = format_path(args.tree)
+        tree_path = format_path(args.tree), tune_file = tune_file
         )
 
     outro(start_time)

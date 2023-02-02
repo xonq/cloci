@@ -8,6 +8,7 @@ import shutil
 import hashlib
 import multiprocessing as mp
 from tqdm import tqdm
+from ast import literal_eval
 from cogent3 import PhyloNode, load_tree
 from collections import defaultdict
 from itertools import combinations
@@ -33,6 +34,7 @@ def init_log(
                 + f'gcf_sim\t{log_dict["gcf_sim"]}\n' \
                 + f'orig_gcf_id\t{log_dict["gcf_id"]}\n' \
                 + f'inflation\t{log_dict["inflation"]}\n' \
+                + f'tuning\t{log_dict["tuning"]}\n' \
                 + f'id_percent\t{log_dict["id_percent"]}\n' \
                 + f'pos_percent\t{log_dict["pos_percent"]}\n' \
                 + f'patch_threshold\t{log_dict["patch_threshold"]}\n' \
@@ -62,8 +64,19 @@ def read_log(
                     log_res[key] = False
             elif res != str(log_dict[key]):
                 log_res[key] = False
+                if key == 'tuning':
+                    log_res['inflation'] = False
             else:
                 log_res[key] = True
+                if key == 'tuning':
+                    if inflation:
+                        log_res['inflation'] = True
+                    else:
+                        log_res['inflation'] = False
+            if key == 'inflation':
+                inflation = literal_eval(res)
+             
+                    
     try:
         if not log_res['mtdb']:
             log_res['n50'] = False
@@ -122,7 +135,7 @@ def read_log(
             '\nIf not rectified, future runs will completely overwrite the current\n')
         sys.exit(149)
 
-    return log_res
+    return log_res, inflation
 
 
 def rm_old_data(
@@ -185,6 +198,8 @@ def rm_old_data(
         gcfs_file = f'{wrk_dir}gcfs.pickle'
         if os.path.isfile(gcfs_file):
             os.remove(gcfs_file)
+        mcl_res = f'{wrk_dir}gcf/loci.clus'
+        tosave.append(mcl_res)
     if not log_res['gcf_percentile']:
         kern_file = out_dir + 'hgxs.tsv.gz'
         clus_file = out_dir + 'gcfs.tsv.gz'
@@ -245,7 +260,7 @@ def log_check(log_dict, log_path, out_dir, wrk_dir, flag = True):
         log_res = {x: False for x in log_dict}
         rm_old_data(log_res, out_dir, wrk_dir)
         init_log(log_path, log_dict)
-    log_res = read_log(log_path, log_dict)
+    log_res, inflation = read_log(log_path, log_dict)
     if any(not log_res[x] for x in log_res):
         if not flag:
             print('\nInitializing new run', flush = True)
@@ -263,7 +278,7 @@ def log_check(log_dict, log_path, out_dir, wrk_dir, flag = True):
                    flush = True)
                 sys.exit(15)
 
-    return log_res
+    return log_res, inflation
 
 
 def compileCDS(gff_list, ome):
@@ -526,10 +541,34 @@ def hg_fa_mngr(wrk_dir, hg_dir, hgs,
     return new_hg_dir
 
 
+def sha_tune_file(tune_file):
+    with open(tune_file, 'r') as raw:
+        tune_data = [x.rstrip() for x in raw if not x.startswith('#')]
+    tune = {}
+    for cluster in tune_data:
+        name, rawgenes, rawomes = cluster.split('\t')
+        if name in tune:
+            eprint(f'\nERROR: duplicate entry for {name} in tune file', 
+                   flush = True)
+        if ',' in rawgenes:
+            genes = [x.rstrip().lstrip() for x in rawgenes.split(',')]
+        else:
+            genes = [x.rstrip().lstrip() for x in rawgenes.split()]
+        if ',' in rawomes:
+            omes = [x.rstrip().lstrip() for x in rawomes.split(',')]
+        else:
+            omes = [x.rstrip().lstrip() for x in rawomes.split()]
+        tune[name] = [tuple(sorted(set(genes))), tuple(sorted(set(omes)))]
+        
+    tune_sha = hashlib.sha256(str(sorted(tune)).encode('utf-8')).hexdigest()
+    return tune_sha
+
+
 def init_run(db, out_dir, near_single_copy_genes, constraint_path,
              tree_path, hg_file, plusminus, seed_perc, clus_perc,
              hgx_perc, id_perc, pos_perc, patch_thresh, gcc_thresh,
-             samples, n50thresh, flag, min_gcf_id, inflation, simfun):
+             samples, n50thresh, flag, min_gcf_id, inflation, simfun,
+             tune_file):
     wrk_dir = out_dir + 'working/'
     if not os.path.isdir(wrk_dir):
         os.mkdir(wrk_dir)
@@ -541,6 +580,12 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
     log_path = out_dir + 'log.txt'
     if not tree_path:
         tree_path = out_dir + 'microsynt.newick'
+
+    if tune_file:
+        tune_sha = sha_tune_file(tune_file)
+    else:
+        tune_sha = None
+
     log_dict = {'mtdb': hashlib.sha256(str(sorted(db.keys())).encode('utf-8')).hexdigest(),
         'focal_genes': hashlib.sha256(','.join(sorted(
                                      near_single_copy_genes
@@ -553,7 +598,8 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
         'gcf_percentile': clus_perc, 'id_percent': id_perc,
         'pos_percent': pos_perc, 'patch_threshold': patch_thresh,
         'gcc_threshold': gcc_thresh, 'inflation': inflation,
+        'tuning': tune_sha,
         'null_samples': samples, 'n50': n50thresh}
 
-    log_res = log_check(log_dict, log_path, out_dir, wrk_dir, flag)
-    return wrk_dir, nul_dir
+    log_res, inflation = log_check(log_dict, log_path, out_dir, wrk_dir, flag)
+    return wrk_dir, nul_dir, inflation

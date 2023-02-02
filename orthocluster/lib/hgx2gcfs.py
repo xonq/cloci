@@ -1,4 +1,5 @@
 import os
+import sys
 import shutil
 import pickle
 import subprocess
@@ -12,7 +13,7 @@ from scipy.sparse import lil_matrix, csr_matrix
 from collections import defaultdict, Counter
 from mycotools.lib.biotools import gff2list
 from mycotools.lib.kontools import write_json, read_json, collect_files, \
-                                   checkdir
+                                   checkdir, eprint
 from orthocluster.orthocluster.lib import input_parsing, treecalcs, evo_conco
 
 def hash_hgx(gff_path, ome, hgx_genes, gene2hg, clusplusminus):
@@ -429,6 +430,86 @@ def write_adj_matrix(out_file, gcf_dir, min_gcf_id):
         os.remove(f)
 
 
+def check_tune(tune, gcf_hgxs, gcf_omes):
+    failed = []
+    for name, data in tune.items():
+        hgx, omes = data[0], data[1]
+        set_hgx = set(hgx)
+        set_omes = set(omes)
+        check = [v for i, v in enumerate(gcf_hgxs) \
+                 if set_hgx.issubset(set(v)) \
+                 and set_omes.issubset(gcf_omes[i])]
+        if check:
+            continue
+        else:
+            failed.append(name)
+    if failed:
+        for name in failed:
+            print(f'\t\t\t{name} was not recovered', flush = True)
+    else:
+        print(f'\t\t\tTuned successfully', flush = True)
+        satisfied = True
+    return satisfied
+
+
+def mcl2gcfs(gcf_dir, loci, hgxXloci, ome2i, inflation, 
+             tune = False, min_omes = 1, cpus = 1):
+    satisfied = False
+    if not os.path.isfile(gcf_dir + 'loci.clus') or tune:
+        print(f'\t\t\tRunning MCL - inflation: {inflation}', flush = True)
+        if cpus > 5:
+            mcl_threads = 10 # cap at 5 processors, ten threads
+        else:
+            mcl_threads = (cpus * 2) - 1
+        MCL(gcf_dir + 'loci.adj', gcf_dir + 'loci.clus',
+            inflation = inflation, threads = mcl_threads)
+        # could add iterative subsample MCL option here
+
+    t_gcfs = []
+    with open(gcf_dir + 'loci.clus', 'r') as raw:
+        for line in raw: # loci indices
+            indices = [int(x) for x in line.rstrip().split()]
+            # singletons won't pass thresholds, disregard them
+            if len(indices) > 1:
+                t_gcfs.append(indices)
+
+    # list(gcf) = [{hgx: (omes,)}]
+    gcfs, gcf_hgxs, gcf_omes = [], [], []
+    with open(f'{gcf_dir}loci.txt', 'w') as out:
+        out.write('#omeI locI pregcf locus\n')
+        for gcf, locIs in enumerate(t_gcfs):
+            gcfs.append(defaultdict(list))
+            gcfOme_list = [] 
+            locs = []
+            for locI in locIs:
+                loc = loci[locI]
+                locs.append((loc, locI))
+                hgxs = tuple([tuple(hgx) for hgx in hgxXloci[locI]])
+                # really should be done above to make hgxs formatted right
+                omeI = ome2i[loc[0][:loc[0].find('_')]]
+                [gcfs[-1][hgx].append(omeI) for hgx in hgxs]
+                gcfOme_list.append(omeI)
+            if len(set(gcfOme_list)) > min_omes: # need more than 1
+                gcfs[-1] = {k: sorted(set(v)) for k,v in gcfs[-1].items()}
+                if gcfs[-1]:
+                    gcf_hgxs.append(tuple(sorted(set(chain(*list(gcfs[-1].keys()))))))
+                    gcf_omes.append(tuple(sorted(set(chain(*list(gcfs[-1].values()))))))
+                    pregcf = len(gcfs) - 1
+                    for i, omeI in enumerate(gcfOme_list):
+                        out.write(f'{omeI} {locs[i][1]} {pregcf} {",".join(locs[i][0])}\n')
+                else:
+                    del gcfs[-1]
+            else:
+                del gcfs[-1]
+
+    failed = []
+    if tune:
+        satisfied = check_tune(tune, gcf_hgxs, gcf_omes)
+    else:
+        satisfied = True
+    return satisfied, gcfs, gcf_hgxs, gcf_omes
+
+
 def classify_gcfs(
     hgx2loc, db, gene2hg, i2hgx, hgx2i,
     phylo, ome2i, hgx2omes, hg_dir, hgx_dir,
@@ -437,6 +518,7 @@ def classify_gcfs(
     inflation = 1.5, minimum = 2, min_omes = 2, 
     minid = 30, cpus = 1, diamond = 'diamond',
     min_gcf_id = 0.3, simfun = overlap, printexit = False,
+    tune = False
     ):
 
     if not checkdir(hgx_dir, unzip = True, rm = True):
@@ -654,78 +736,29 @@ def classify_gcfs(
         W.join()
 
 
-    if not os.path.isfile(gcf_dir + 'loci.clus'):
-        print('\t\t\tRunning MCL', flush = True)
-        if cpus > 5:
-            mcl_threads = 10 # cap at 5 processors, ten threads
+    satisfied = False
+    if tune:
+        inflation = 1.1
+    while not satisfied:
+        if tune:
+            inflation += 0.1
+        if inflation < 3:
+            satisfied, gcfs, gcf_hgxs, gcf_omes = mcl2gcfs(gcf_dir, loci,
+                                                            hgxXloci, ome2i, 
+                                                            inflation, tune,
+                                                            min_omes, cpus)
         else:
-            mcl_threads = (cpus * 2) - 1
-        MCL(gcf_dir + 'loci.adj', gcf_dir + 'loci.clus',
-            inflation = inflation, threads = mcl_threads)
-        # could add iterative subsample MCL option here
+            eprint('\nERROR: tuning failed to recover clusters', flush = True)
+            sys.exit(135)
+    if tune:
+        inf_strp = str(inflation * 10)[:2]
+        inf_str = inf_strp[0] + '.' + inf_strp[1]
+        with open(f'{wrk_dir}../log.txt', 'r') as raw:
+            d = raw.read().replace('inflation\tNone', 'inflation\t' + inf_str)
+        with open(f'{wrk_dir}../log.txt', 'w') as out:
+            out.write(d)
 
-    t_gcfs = []
-    with open(gcf_dir + 'loci.clus', 'r') as raw:
-        for line in raw: # loci indices
-            indices = [int(x) for x in line.rstrip().split()]
-            # singletons won't pass thresholds, disregard them
-            if len(indices) > 1:
-                t_gcfs.append(indices)
-
-    # list(gcf) = [{hgx: (omes,)}]
-    gcfs, gcf_hgxs, gcf_omes = [], [], []
-    with open(f'{gcf_dir}loci.txt', 'w') as out:
-        out.write('#omeI locI pregcf locus\n')
-        for gcf, locIs in enumerate(t_gcfs):
-            gcfs.append(defaultdict(list))
-            gcfOme_list = [] 
-            locs = []
-            for locI in locIs:
-                loc = loci[locI]
-                locs.append((loc, locI))
-                hgxs = tuple([tuple(hgx) for hgx in hgxXloci[locI]])
-                # really should be done above to make hgxs formatted right
-                omeI = ome2i[loc[0][:loc[0].find('_')]]
-                [gcfs[-1][hgx].append(omeI) for hgx in hgxs]
-#                [gcfHGx.extend(hgx) for hgx in hgxs]
-                gcfOme_list.append(omeI)
-            if len(set(gcfOme_list)) > min_omes: # need more than 1
-                gcfs[-1] = {k: sorted(set(v)) for k,v in gcfs[-1].items()}
-#                todel = []
- #               for hgx, omes in gcfs[-1].items():
-  #                  omes = tuple(sorted(omes))
-   #                 if omes in omes2dist:
-    #                    dist = omes2dist[omes]
-     #               else:
-      #                  dist, omes = treecalcs.calc_branch_len(phylo, omes)
-       #                 omes2dist[omes] = dist
-        #            parts = set(ome2partition[x] for x in omes)
-         #           if None in parts:
-          #              parts = parts.remove(None)
-           #             if not parts:
-            #                continue
-             #       bord_score = min([bord_scores_list[v][len(hgx)] \
-              #                        for v in list(parts)])
-               #     if not dist > bord_score:
-                #        todel.append(hgx)
-               # for hgx in todel:
-                #    del gcfs[-1][hgx]
-                if gcfs[-1]:
-                    gcf_hgxs.append(tuple(sorted(set(chain(*list(gcfs[-1].keys()))))))
-#                gcf_hgxs.append(tuple(sorted(set(gcfHGx))))
-                    gcf_omes.append(tuple(sorted(set(chain(*list(gcfs[-1].values()))))))
-                    pregcf = len(gcfs) - 1
-                    for i, omeI in enumerate(gcfOme_list):
-                        out.write(f'{omeI} {locs[i][1]} {pregcf} {",".join(locs[i][0])}\n')
-    
-                else:
-                    del gcfs[-1]
-#                gcf_omes.append(tuple(sorted(set(gcfOme_list))))
-            else:
-                del gcfs[-1]
-
-    print('\t\t\t' + str(len(gcfs)) + ' GCFs w/' \
-        + str(sum([len(x) for x in t_gcfs])) + ' unfused clusters', flush = True)
+    print('\t\t\t' + str(len(gcfs)) + ' GCFs', flush = True)
     omes2dist = treecalcs.update_dists(
         phylo, {gcf_hgxs[i]: omes for i, omes in enumerate(gcf_omes)},
         cpus = cpus, omes2dist = omes2dist
