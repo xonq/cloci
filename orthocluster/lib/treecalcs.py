@@ -1,4 +1,7 @@
+import os
+import pickle
 import multiprocessing as mp
+from tqdm import tqdm
 from cogent3 import PhyloNode
 from mycotools.lib.kontools import eprint
 
@@ -42,7 +45,7 @@ def calc_patchiness(phylo, omes):
 
 
 def patch_main(
-    phylo, hgxs, wrk_dir,
+    phylo, omes, wrk_dir,
     old_path = 'patchiness.scores.pickle', cpus = 1
     ):
 
@@ -54,7 +57,7 @@ def patch_main(
         omes2patch = {}
 
     clusOmes = set([
-        tuple([str(x) for x in y]) for y in hgxs \
+        tuple([str(x) for x in y]) for y in omes \
                if y not in omes2patch
         ])
     with mp.get_context('fork').Pool(processes = cpus) as pool:
@@ -64,7 +67,8 @@ def patch_main(
             )
         pool.close()
         pool.join()
-    omes2patch = {ome_tup: patchiness for ome_tup, patchiness in patch_res}
+    omes2patch = {**omes2patch,
+                  **{ome_tup: patchiness for ome_tup, patchiness in patch_res}}
     with open(wrk_dir + old_path, 'wb') as out:
         pickle.dump(omes2patch, out)
 
