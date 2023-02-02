@@ -202,7 +202,7 @@ def gcc_mngr(
             modHGx = moduleHGxs[i]
             for hgx, omes in hgx2omes.items():
                 if hgx in d2gcc:
-                    if omes in d2gcc[hgx]:
+                    if tuple(omes) in d2gcc[hgx]:
                         continue
                 omes_set = set(omes)
                 for seq in hgx2loc[hgx]:
@@ -346,8 +346,8 @@ def gcc_main(
         moduleOmes, moduleHGxs, ome2i, 
         d2gcc, d2id_, d2pos, cpus = cpus
         )
-    hgx_dirTar = mp.Process(target=tardir, args=(hgx_dir, True))
-    hgx_dirTar.start() # when to join ...
+#    hgx_dirTar = mp.Process(target=tardir, args=(hgx_dir, True))
+ #   hgx_dirTar.start() # when to join ...
     with open(wrk_dir + 'hgx2omes2gcc.full.pickle', 'wb') as pickout:
         pickle.dump(d2gcc, pickout)
     with open(wrk_dir + 'hgx2omes2id.full.pickle', 'wb') as pickout:
