@@ -85,26 +85,30 @@ def form_cooccur_dict(cooccur_dict):
     return i2hgx, hgx2i, cooccur_dict
 
 
-def gen_null_dict_omes(combo_dict, sample = 10000, omes = []):
+def gen_null_dict_omes(db, i2ome, combo_dict, sample = 10000, omes = []):
     """combo_dict = {ome: [(OG0...OGn)]}"""
- 
+
+    # make a list of observed HGx combinations 
     nulls = []
     for ome in omes:
-        combos = combo_dict[ome]
-        nulls.extend(list(combos)) # extend all combos to the null
-     
-    try: # sample
-        null_list = random.sample(nulls, sample)
-    except ValueError:
-        print('\t\t\t\tWARNING: requested null sample greater than HGx size', flush = True)
-        null_list = nulls
-
+        combo_dict[ome] = list(combo_dict[ome])
+        nulls.extend(combo_dict[ome]) # extend all combos to the null
+    
+    # randomly sample while accounting for oversampled spp
+    spp2omes, null_list = defaultdict(list), []
+    [spp2omes[db[i2ome[x]]['taxonomy']['species']].append(x) for x in omes]
+    spp = list(spp2omes.keys())
+    for i in range(sample):
+        rand_sp = random.choice(spp)
+        rand_ome = random.choice(spp2omes[rand_sp])
+        null_list.append(random.choice(combo_dict[rand_ome]))
+        
     reps = {k: v for k, v in Counter(null_list).items() if v > 1}
     null_set = set(null_list)
                                             
     cooccur_dict = defaultdict(list)
     for ome, hgxs in combo_dict.items():
-        intersect = list(hgxs.intersection(null_set))
+        intersect = list(set(hgxs).intersection(null_set))
         for hgx in intersect:
             cooccur_dict[hgx].append(ome)
     
@@ -149,6 +153,18 @@ def gen_null_dict(combo_dict, sample = 10000):
     return hgx2i, i2hgx, cooccur_dict
 
 
+def rank_partition(db, wrk_dir, rank, ome2i, partition_file):
+    lineages = defaultdict(list)
+    for ome, row in db.items():
+        lineage = row['taxonomy'][rank]
+        if lineage:
+            if ome in ome2i:
+                lineages[row['taxonomy'][rank]].append(ome)
+    with open(partition_file, 'w') as out:
+        for lineage, omes in lineages.items():
+            out.write(f'#{lineage}\n{" ".join(omes)}\n')
+
+
 def load_partitions(partition_file, ome2i):
     omes = set(ome2i.keys())
     with open(partition_file, 'r') as raw:
@@ -158,40 +174,20 @@ def load_partitions(partition_file, ome2i):
     return partition_omes
 
 
-def partition_for_nulls(phylo, partition_file, ome2i):
-    partition_omes_prep = load_partitions(partition_file, ome2i)
-    complete_set = {int(x.name) for x in phylo.iter_tips()}
-    check_set = set()
-        
-    partition_omes, ome2partition = [], {}
-    for i, partitions in enumerate(partition_omes_prep):
-        part_phy = phylo.lowest_common_ancestor([str(x) for x in partitions]) # MRCA
-        part_phy_omes = [int(x.name) for x in part_phy.iter_tips()]
-        if set(part_phy_omes).intersection(check_set):
-            eprint('\tWARNINGS: MRCA of partitions overlap: ' \
-                 + str(partitions), flush = True)
-            sys.exit(13)
-        check_set = check_set.union(set(part_phy_omes))
-        partition_phylos.append(part_phy)
-        partition_omes.append(part_phy_omes)
-        ome2partition = {**ome2partition, **{x: i for x in partition_omes[-1]}}
-                
-    diff_list = list(complete_set.difference(check_set))
-    if diff_list:   
-        eprint('\t\tWARNING: omes missing from partitions: ' \
-             + str(','.join([str(x) for x in diff_list])),
-             flush = True)
-        ome2partition = {**ome2partition, **{x: None for x in diff_list}}
-    return partition_phylos, partition_omes, ome2partition
-
-
-def gen_nulls(pairs, phylo, omes = [], samples = 10000, cpus = 1):
+def gen_nulls(db, i2ome, pairs, phylo, omes = [], samples = 10000, 
+              uniq_sp = False, dist_func = treecalcs.calc_tmd,
+              cpus = 1):
     """pairs = {ome: [(OG0,OG1)...]}"""
-            
-    null_dict, reps = gen_null_dict_omes(pairs, samples, omes = omes)
+
+    null_dict, reps = gen_null_dict_omes(db, i2ome, pairs, samples, omes = omes)
     oldLen = len(null_dict)
     null_dict = {k: v for k, v in null_dict.items() if len(v) > 1}
-    results = treecalcs.calc_dists(phylo, null_dict, cpus = cpus)
+    if not uniq_sp:
+        results = treecalcs.calc_dists(phylo, null_dict, cpus = cpus,
+                                       func = dist_func)
+    else:
+        results = treecalcs.calc_dists(phylo, null_dict, cpus = cpus, i2ome = i2ome,
+                                       func = treecalcs.calc_tmd, uniq_sp = uniq_sp)
     omes2dist, pair_scores = {x[1]: x[0] for x in results}, []
     for k in null_dict:
         pair_scores.append(omes2dist[null_dict[k]])
@@ -204,11 +200,16 @@ def gen_nulls(pairs, phylo, omes = [], samples = 10000, cpus = 1):
     return omes2dist, sorted(pair_scores)
 
 
-def gen_pair_nulls(phylo, ome2i, wrk_dir, nul_dir, seed_perc, ome2pairs,
-                   i2ome, samples = 1000, partition_file = None, cpus = 1):
+def gen_pair_nulls(db, phylo, ome2i, wrk_dir, nul_dir, seed_perc, ome2pairs,
+                   i2ome, samples = 1000, partition_file = None, partition_rank = None,
+                   dist_func = treecalcs.calc_tmd, uniq_sp = False, cpus = 1):
     if not os.path.isdir(nul_dir):
         os.mkdir(nul_dir)
-    if partition_file:
+    if partition_file or partition_rank:
+        if partition_rank:
+            partition_file = f'{wrk_dir}{partition_rank}_partitions.txt'
+            if not os.path.isfile(partition_file):
+                rank_partition(db, wrk_dir, partition_rank, ome2i, partition_file)
         print('\tPartitioning null distributions', flush = True)
         partition_omes = load_partitions(partition_file, ome2i)
         ome2partition = {}
@@ -217,13 +218,12 @@ def gen_pair_nulls(phylo, ome2i, wrk_dir, nul_dir, seed_perc, ome2pairs,
                 ome2partition[ome] = k
         missing_omes = set(ome2i.values()).difference(set(ome2partition.keys()))
         ome2partition = {**ome2partition, **{k: None for k in missing_omes}}
-#            partition_for_nulls(phylo, partition_file, ome2i)
     else: # spoof it
         partition_omes = [ome2i.values()]
         ome2partition = {i: 0 for i in ome2i.values()}
 
-    if os.path.isfile(wrk_dir + 'omes2tmd.pickle'):
-        with open(wrk_dir + 'omes2tmd.pickle', 'rb') as raw:
+    if os.path.isfile(wrk_dir + 'omes2dist.pickle'):
+        with open(wrk_dir + 'omes2dist.pickle', 'rb') as raw:
             omes2dist = pickle.load(raw)
 
     # create null distribution for orthogroup pairs
@@ -233,19 +233,21 @@ def gen_pair_nulls(phylo, ome2i, wrk_dir, nul_dir, seed_perc, ome2pairs,
         print('\tGenerating null distributions', flush = True)
         for i, omes in enumerate(partition_omes):
             omes2dist, pair_null = gen_nulls(
-                ome2pairs, phylo,
-                omes, samples = samples, cpus = cpus
+                db, i2ome, ome2pairs, phylo,
+                omes, samples = samples, 
+                dist_func = dist_func, uniq_sp = uniq_sp,
+                cpus = cpus
                 )
             n_f = f'{nul_dir}2.null.{i}.txt'
             with open(f'{n_f}.tmp', 'w') as out:
                 out.write('\n'.join([str(i0) for i0 in pair_null]))
             shutil.move(f'{n_f}.tmp', n_f)
             pair_nulls.append(pair_null)
-        with open(wrk_dir + 'omes2tmd.pickle', 'wb') as out:
+        with open(wrk_dir + 'omes2dist.pickle', 'wb') as out:
             pickle.dump(omes2dist, out)
     else: # or just load what is available
-        if os.path.isfile(wrk_dir + 'omes2tmd.pickle'):
-            with open(wrk_dir + 'omes2tmd.pickle', 'rb') as raw:
+        if os.path.isfile(wrk_dir + 'omes2dist.pickle'):
+            with open(wrk_dir + 'omes2dist.pickle', 'rb') as raw:
                 omes2dist = pickle.load(raw)
         for i, omes in enumerate(partition_omes):
             with open(f'{nul_dir}2.null.{i}.txt', 'r') as raw:
@@ -308,9 +310,10 @@ def parse_skip_files(skip_files):
 
 
 def gen_hgx_nulls(
-    gffs, gene2hg, max_clus_size, plusminus, phylo,
+    db, i2ome, gffs, gene2hg, max_clus_size, plusminus, phylo,
     hgx_perc, clus_perc, nul_dir, partition_omes,
-    omes2dist = {}, skip_i = {}, samples = 10000, cpus = 1
+    omes2dist = {}, skip_i = {}, samples = 10000, 
+    dist_func = treecalcs.calc_tmd, uniq_sp = False, cpus = 1
     ):
     """Generates a null distribution of randomly sampled HGxs for each 
     # of homogroups observed in HGxs. Applies the percentile for each
@@ -355,9 +358,10 @@ def gen_hgx_nulls(
             if os.path.isfile(f'{nul_dir}{size}.null.{i0}.txt'):
                 nullSizes = load_null(f'{nul_dir}{size}.null.{i0}.txt')
             else:
-                null_dict, reps = gen_null_dict_omes(size_dict, samples, omes)
-                omes2dist = treecalcs.update_dists(phylo, null_dict, 
-                                                    omes2dist = omes2dist, cpus = cpus)
+                null_dict, reps = gen_null_dict_omes(db, i2ome, size_dict, samples, omes)
+                omes2dist = treecalcs.update_dists(phylo, null_dict, func = dist_func,
+                                                   uniq_sp = uniq_sp, i2ome = i2ome,
+                                                   omes2dist = omes2dist, cpus = cpus)
                 nullSizes = []
                 with open(f'{nul_dir}{size}.null.{i0}.txt.tmp', 'w') as out:
                     for omes in list(null_dict.values()):
@@ -370,7 +374,6 @@ def gen_hgx_nulls(
                             out.write(str(t_dist) + '\n')
                             count += 1
                             nullSizes.append(t_dist)
-                    print(samples - len(null_dict) - count)
                     z_vals = range(samples - len(null_dict) - count)
                     out.write('\n'.join([str(0) for x in z_vals]))
                     nullSizes.extend([0 for x in z_vals])
@@ -398,9 +401,10 @@ def gen_hgx_nulls(
     return hgxBordPercs, hgxClusPercs
 
 
-def partitions2hgx_nulls(db, partition_omes, ome2i, gene2hg, max_hgx_size,
+def partitions2hgx_nulls(db, partition_omes, ome2i, i2ome, gene2hg, max_hgx_size,
                          plusminus, hgx_perc, clus_perc, nul_dir, omes2dist,
-                         phylo, samples = 1000, cpus = 1):
+                         phylo, samples = 1000, dist_func = treecalcs.calc_tmd,
+                         uniq_sp = False, cpus = 1):
     final_partition = len(partition_omes) - 1
     print('\tPreparing HGx nulls', flush = True)
     files = [os.path.basename(x) for x in collect_files(nul_dir, 'txt')]
@@ -417,11 +421,12 @@ def partitions2hgx_nulls(db, partition_omes, ome2i, gene2hg, max_hgx_size,
         skip_files = [x for x in files if x.startswith('skip.')]
         skip_i = parse_skip_files(skip_files)
         bordScores_list, clusScores_list = gen_hgx_nulls(
-            {db[k]['gff3']: ome2i[k] for k in list(db.keys()) \
+            db, i2ome, {db[k]['gff3']: ome2i[k] for k in list(db.keys()) \
              if k in ome2i},
             gene2hg, max_hgx_size, plusminus, phylo,
             hgx_perc, clus_perc, nul_dir, partition_omes,
-            omes2dist, skip_i, samples = samples, cpus = cpus
+            omes2dist, skip_i, samples = samples, cpus = cpus,
+            dist_func = dist_func, uniq_sp = uniq_sp
             )
 
     return bordScores_list, clusScores_list
