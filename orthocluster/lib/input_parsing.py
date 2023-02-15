@@ -1,4 +1,3 @@
-# NEED delete omes2tmd if tree changes
 
 import re
 import os
@@ -26,6 +25,8 @@ def init_log(
                 + f'microsynt_constraint\t{log_dict["microsynt_constraint"]}\n' \
                 + f'microsynt_tree\t{log_dict["microsynt_tree"]}\n'
                 + f'hg_file\t{log_dict["hg_file"]}\n' \
+                + f'dist_type\t{log_dict["dist_type"]}\n' \
+                + f'uniq_sp\t{log_dict["uniq_sp"]}\n' \
                 + f'plusminus\t{log_dict["plusminus"]}\n' \
                 + f'hgp_percentile\t{log_dict["hgp_percentile"]}\n' \
                 + f'hgx_percentile\t{log_dict["hgx_percentile"]}\n' \
@@ -39,6 +40,7 @@ def init_log(
                 + f'pos_percent\t{log_dict["pos_percent"]}\n' \
                 + f'patch_threshold\t{log_dict["patch_threshold"]}\n' \
                 + f'gcc_threshold\t{log_dict["gcc_threshold"]}\n' \
+                + f'partition\t{log_dict["partition"]}\n' \
                 + f'null_samples\t{log_dict["null_samples"]}\n' \
                 + f'n50\t{log_dict["n50"]}')
 
@@ -65,16 +67,26 @@ def read_log(
             elif res != str(log_dict[key]):
                 log_res[key] = False
                 if key == 'tuning':
-                    log_res['inflation'] = False
+                    # if you're tuning and weren't before
+                    if log_dict['tuning']:
+                        # then the old inflation is irrelevant
+                        log_res['inflation'] = False
+                    # elif you're not tuning, were before, and inflation is the same
+                    elif log_res['inflation']:
+                        log_res['tuning'] = True
             else:
                 log_res[key] = True
-                if key == 'tuning':
+                if key == 'tuning' and log_dict['tuning']:
                     if inflation:
                         log_res['inflation'] = True
                     else:
                         log_res['inflation'] = False
+            # if there's an inflation, tuning is complete
             if key == 'inflation':
-                inflation = literal_eval(res)
+                if log_dict['tuning']:
+                    inflation = literal_eval(res)
+                else: # else the inflation is the inflation in the log_dict
+                    inflation = log_dict['inflation']
              
                     
     try:
@@ -82,6 +94,11 @@ def read_log(
             log_res['n50'] = False
     except KeyError:
         print('mtdb')
+    try:
+        if not log_res['partition']:
+            log_res['null_samples'] = False
+    except KeyError:
+        print('partition')
     try:
         if not log_res['focal_genes']:
             log_res['microsynt_tree'] = False
@@ -97,6 +114,16 @@ def read_log(
             log_res['plusminus'] = False
     except KeyError:
         print('n50')
+    try:
+        if not log_res['dist_type']:
+            log_res['uniq_sp'] = False
+    except KeyError:
+        print('dist_type')
+    try:
+        if not log_res['uniq_sp']:
+            log_res['null_samples'] = False
+    except KeyError:
+        print('uniq_sp')
     try:
         if not log_res['plusminus']:
             log_res['null_samples'] = False
@@ -143,6 +170,9 @@ def rm_old_data(
     ):
 
     todel, tosave, save_dir = [], [], None
+    if not log_res['dist_type'] or not log_res['uniq_sp']:
+        if os.path.isfile(out_dir + 'working/omes2dist.pickle'):
+            os.remove(out_dir + 'working/omes2dist.pickle')
     if not log_res['null_samples']:
         if os.path.isdir(wrk_dir + 'null/'):
             shutil.rmtree(wrk_dir + 'null/')
@@ -201,8 +231,8 @@ def rm_old_data(
         mcl_res = f'{wrk_dir}gcf/loci.clus'
         tosave.append(mcl_res)
     if not log_res['gcf_percentile']:
-        kern_file = out_dir + 'hgxs.tsv.gz'
         clus_file = out_dir + 'gcfs.tsv.gz'
+        kern_file = out_dir + 'hgxs.tsv.gz'
         ome_dir = out_dir + 'ome/'
         hmm_dir = wrk_dir + 'hmm/'
         if os.path.isdir(ome_dir):
@@ -216,7 +246,7 @@ def rm_old_data(
             os.mkdir(save_dir + 'working/gcf/')
             shutil.move(ome_dir, save_dir)
             if os.path.isfile(kern_file):
-                shutil.move(kern_file, save_dir + os.path.basename(kern_file))
+                shutil.copy(kern_file, save_dir + os.path.basename(kern_file))
             if os.path.isfile(clus_file):
                 shutil.move(clus_file, save_dir + os.path.basename(clus_file))
             if os.path.isfile(out_dir + 'gcfs.html'):
@@ -227,8 +257,6 @@ def rm_old_data(
             for f in collect_files(f'{wrk_dir}gcf/', '*'):
                 shutil.copy(f, f'{save_dir}working/gcf/{os.path.basename(f)}')
         else:
-            if os.path.isfile(kern_file):
-                os.remove(kern_file)
             if os.path.isfile(clus_file):
                 os.remove(clus_file)
     
@@ -237,10 +265,15 @@ def rm_old_data(
         clusOG_f = f'{wrk_dir}clusOGs.pickle'
         if os.path.isfile(clusOG_f):
             os.remove(clusOG_f)
+        if os.path.isdir(f'{out_dir}net/'):
+            shutil.move(f'{out_dir}net/', f'{save_dir}net/')
 
     if save_dir:
         for f in tosave:
-            shutil.move(f, save_dir + os.path.basename(f))
+            try:
+                shutil.move(f, save_dir + os.path.basename(f))
+            except FileNotFoundError:
+                continue
     for f in todel:
         if os.path.isdir(f):
             shutil.rmtree(f)
@@ -546,7 +579,11 @@ def sha_tune_file(tune_file):
         tune_data = [x.rstrip() for x in raw if not x.startswith('#')]
     tune = {}
     for cluster in tune_data:
-        name, rawgenes, rawomes = cluster.split('\t')
+        try:
+            name, rawgenes, rawomes, rawfalse = cluster.split('\t')
+        except ValueError:
+            name, rawgenes, rawomes = cluster.split('\t')
+            rawfalse = None
         if name in tune:
             eprint(f'\nERROR: duplicate entry for {name} in tune file', 
                    flush = True)
@@ -558,7 +595,15 @@ def sha_tune_file(tune_file):
             omes = [x.rstrip().lstrip() for x in rawomes.split(',')]
         else:
             omes = [x.rstrip().lstrip() for x in rawomes.split()]
-        tune[name] = [tuple(sorted(set(genes))), tuple(sorted(set(omes)))]
+        if rawfalse:
+            if ',' in rawfalse:
+                false_omes = [x.rstrip().lstrip() for x in rawfalse.split(',')]
+            else:
+                false_omes = [x.rstrip().lstrip() for x in rawfalse.split()]
+        else:
+            false_omes = []
+        tune[name] = [tuple(sorted(set(genes))), tuple(sorted(set(omes))),
+                      tuple(sorted(set(false_omes)))]
         
     tune_sha = hashlib.sha256(str(sorted(tune)).encode('utf-8')).hexdigest()
     return tune_sha
@@ -568,7 +613,7 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
              tree_path, hg_file, plusminus, seed_perc, clus_perc,
              hgx_perc, id_perc, pos_perc, patch_thresh, gcc_thresh,
              samples, n50thresh, flag, min_gcf_id, inflation, simfun,
-             tune_file):
+             tune_file, dist_type, uniq_sp, partition):
     wrk_dir = out_dir + 'working/'
     if not os.path.isdir(wrk_dir):
         os.mkdir(wrk_dir)
@@ -592,13 +637,14 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
                                      )).encode('utf-8')).hexdigest(),
         'microsynt_constraint': format_path(constraint_path),
         'microsynt_tree': tree_path,
-        'hg_file': hg_file, 'plusminus': plusminus,
+        'hg_file': hg_file, 'plusminus': plusminus, 'dist_type': dist_type,
+        'uniq_sp': bool(uniq_sp),
         'hgp_percentile': seed_perc, 'hgx_percentile': hgx_perc, 
-        'orig_gcf_id': None, 'gcf_id': min_gcf_id, 'gcf_sim': simfun,
+        'orig_gcf_id': None, 'gcf_id': min_gcf_id, 'gcf_sim': str(simfun).lower(),
         'gcf_percentile': clus_perc, 'id_percent': id_perc,
         'pos_percent': pos_perc, 'patch_threshold': patch_thresh,
         'gcc_threshold': gcc_thresh, 'inflation': inflation,
-        'tuning': tune_sha,
+        'tuning': tune_sha, 'partition': partition,
         'null_samples': samples, 'n50': n50thresh}
 
     log_res, inflation = log_check(log_dict, log_path, out_dir, wrk_dir, flag)
