@@ -84,7 +84,7 @@ def mk_3d(labels, axes, axes_labels, alpha = 0.6):
     return fig
 
 
-def extrct_sig_clus(
+def extract_sig_clus(
     clus_scores_dict, hgx2loc, top_hgxs, ome2i
     ):
     """Create a hash to seed retrieving clusters based on
@@ -210,9 +210,10 @@ def write_clusters(ome_sig_clus, ome, out_file, gff_path, gene2hg, clusplusminus
             except KeyError: # gene not in an OG/is a singleton
                 clusOGs.append('')
         clus[0] = clusOGs
-        scaf = clus[3][:20]
-        if clus[3] != scaf:
-            scaf = clus[3][:20] + '..'
+        scaf = clus[3]
+#        scaf = clus[3][:20]
+ #       if clus[3] != scaf:
+#            scaf = clus[3][:20] + '..'
         count = 0
         while scaf + '_' + str(count) in scafs:
             count += 1
@@ -393,14 +394,18 @@ def grabClus(genes_list, gff_path, prot_path, ome, ome_dir, gene2hg, pfamRes = {
 def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, gcf_hgxs,
          omes2dist, hgx2omes2gcc, omes2patch, hgx2omes2id,
          hgx2omes2pos, hgx2loc, gene2hg, plusminus, ome2i,
-         hgx2i, pfam_path = None, dnds_dict = {}, cpus = 1):
+         hgx2i, gcf2clan, pfam_path = None, dnds_dict = {}, dist_thresh = 0, cpus = 1):
     print('\tWriting cluster scores', flush = True)
-    omes2dist = {k: log(v) for k, v in omes2dist.items() if v}
-    maxval = max(omes2dist.values()) # max observed, even of those truncated/removed
-    minval = min(omes2dist.values())
-    denom = maxval - minval
-    gcf_output, done = [], set()
-    for gcf, modHGx2omes in enumerate(gcfs):
+    logh2d = {}
+    for modHGx2omes in gcfs.values():
+        for hgx, omes in modHGx2omes.items():
+            logh2d[hgx] = log(hgx2dist[hgx])
+    maxhgxd = max(logh2d.values())
+    minhgxd = min(logh2d.values())
+
+    denom = maxhgxd - minhgxd
+    hgx_output, done = [], set()
+    for gcf, modHGx2omes in gcfs.items():
         for hgx, omes in modHGx2omes.items():
             hgx_id = hgx2i[hgx]
             if hgx2dist[hgx] == 0:
@@ -410,47 +415,48 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
                 done.add(hgx_id)
             else:
                 continue
-            gcf_output.append([
+            hgx_output.append([
                 ','.join([str(x) for x in hgx]), hgx_id,
-                gcf, (log(hgx2dist[hgx]) - minval)/denom,
+                gcf, gcf2clan[gcf], (log(hgx2dist[hgx]) - minhgxd)/denom,
                 ','.join([i2ome[x] for x in hgx2omes[hgx]])
                 ]) # HGxs at this stage are not segregated into groups
-    gcf_output = sorted(gcf_output, key = lambda x: x[3], reverse = True)
+    hgx_output = sorted(hgx_output, key = lambda x: x[3], reverse = True)
     with gzip.open(out_dir + 'hgxs.tsv.gz', 'wt') as out:
-        out.write('#hgs\thgx_id\tgcf\tnrm_log_tmd\tomes')#\tpatchiness\tomes')
-        for entry in gcf_output:
+        out.write('#hgs\thgx_id\tgcf\tclan\tnrm_log_tmd\tomes')#\tpatchiness\tomes')
+        for entry in hgx_output:
             out.write('\n' + '\t'.join([str(x) for x in entry]))
 
+    logg2d = {}
+    for omesc in gcf_omes.values():
+        logg2d[omesc] = log(omes2dist[omesc])
+    maxgcfd = max(logg2d.values()) # max observed, even of those truncated/removed
+    mingcfd = min(logg2d.values())
+    denom = maxgcfd - mingcfd
     
-    kern_output, top_hgxs = [], []
-    for i, ogc in enumerate(gcf_hgxs):
+    gcf_output, top_hgxs = [], []
+    for i, gcf_hgx in gcf_hgxs.items():
         omesc = gcf_omes[i]
-        if omesc not in omes2patch:
-            print(omesc, 'not in patch', flush = True)
-            continue
-        elif omes2dist[omesc] == 0:
-            print(omesc, '0 value', flush = True)
-            continue
-        kern_output.append([
-            ','.join([str(x) for x in ogc]), i,
-            (omes2dist[omesc] - minval)/denom, omes2patch[omesc], 
-            hgx2omes2gcc[ogc][omesc],
-            hgx2omes2id[ogc][omesc], hgx2omes2pos[ogc][omesc],
-            ','.join([str(i2ome[x]) for x in omesc])#,
-     #        dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
-           # omes2dist[omesc]
-            ])
-        for shgx, omes in gcfs[i].items():
-            top_hgxs.append([shgx, i, set(omes)])
+        nml_log_tmd = (logg2d[omesc] - mingcfd)/denom
+        if nml_log_tmd >= dist_thresh:
+            gcf_output.append([
+                ','.join([str(x) for x in gcf_hgx]), i, gcf2clan[i],
+                nml_log_tmd, omes2patch[omesc], 
+                hgx2omes2gcc[gcf_hgx][omesc],
+                hgx2omes2id[gcf_hgx][omesc], hgx2omes2pos[gcf_hgx][omesc],
+                ','.join([str(i2ome[x]) for x in omesc])#,
+         #        dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
+                ])
+            for shgx, omes in gcfs[i].items():
+                top_hgxs.append([shgx, i, set(omes)])
 
-    kern_output = sorted(kern_output, key = lambda x: x[2], reverse = True)
+    gcf_output = sorted(gcf_output, key = lambda x: x[3], reverse = True)
     with gzip.open(out_dir + 'gcfs.tsv.gz', 'wt') as out:
-        out.write('#hgs\tgcf\tnrm_log_tmd\tpatchiness' \
+        out.write('#hgs\tgcf\tclan\tnrm_log_tmd\tpatchiness' \
                 + '\tgcc\tmmi\tmmp\tomes') #+ \
             #'selection_coef\tmean_dnds\tog_dnds\t' + \
          #   'total_dist'
 #            )
-        for entry in kern_output:
+        for entry in gcf_output:
             out.write('\n' + '\t'.join([str(x) for x in entry]))
 
     if dnds_dict:
@@ -459,30 +465,25 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
         axes = [[],[],[]]
     labels = []
 
-    for entry in kern_output:
+    for entry in gcf_output:
         labels.append(
             ['GCF:', str(entry[1]) + ' | Omes: ' + entry[-1] + ' | HGs: ' + str(entry[0])]
             )
-        axes[0].append(entry[4])
-        axes[1].append(entry[3])
-        axes[2].append(entry[2])
-        if dnds_dict:
-            axes[3].append(entry[6])
-            axes[4].append(entry[7])
+        axes[0].append(entry[5])
+        axes[1].append(entry[4])
+        axes[2].append(entry[3])
     print('\tOutputting scatter plots', flush = True)
     axes_labels = [
         'Distribution Patchiness', 'Gene BLAST Congruence', 'Log Microsynteny Distance' #,
-#        'Selection Coefficient', 'Mean dN/dS'
         ]
-    if dnds_dict:
-        axes_labels.extend(['Selection Coefficient', 'Mean dN/dS'])
+
     fig = mk_subplots(labels, axes, axes_labels, alpha = 0.6)
     fig.write_html(out_dir + 'metrics.html')
     fig = mk_3d(labels, axes[:3], axes_labels[:3], alpha = 0.7)
     fig.write_html(out_dir + 'gcfs.html')
 
     print('\tCompiling clusters from annotations', flush = True)
-    sig_clus = extrct_sig_clus(
+    sig_clus = extract_sig_clus(
         hgx2dist, hgx2loc, top_hgxs, ome2i
         )
     write_clus_cmds = []
@@ -537,4 +538,3 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
         clus_info = pool.starmap(grabClus, grabClus_cmds)
         pool.close()
         pool.join()
-
