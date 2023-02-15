@@ -345,7 +345,6 @@ def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus):
                     preclanLoci[clan].append([
                          locus[start:end], hgx, [hgx]
                          ])
-                    # clus_out = [(og0, og1, ... ogn), [prot0, prot1, ... protn])]
 
     outclanLoci, outclanHGx = defaultdict(list), defaultdict(list)
     for clan, loci in preclanLoci.items():
@@ -432,13 +431,16 @@ def write_adj_matrix(out_file, gcf_dir, min_gcf_id):
 
 def check_tune(tune, gcf_hgxs, gcf_omes):
     failed = []
+    satisfied = False
     for name, data in tune.items():
-        hgx, omes = data[0], data[1]
+        hgx, omes, false_omes = data[0], data[1], data[2]
         set_hgx = set(hgx)
         set_omes = set(omes)
+        set_false = set(false_omes)
         check = [v for i, v in enumerate(gcf_hgxs) \
                  if set_hgx.issubset(set(v)) \
-                 and set_omes.issubset(gcf_omes[i])]
+                 and set_omes.issubset(gcf_omes[i]) \
+                 and not set_false.intersection(gcf_omes[i])]
         if check:
             continue
         else:
@@ -453,7 +455,7 @@ def check_tune(tune, gcf_hgxs, gcf_omes):
 
 
 def mcl2gcfs(gcf_dir, loci, hgxXloci, ome2i, inflation, 
-             tune = False, min_omes = 1, cpus = 1):
+             loc2clan, tune = False, min_omes = 1, cpus = 1):
     satisfied = False
     if not os.path.isfile(gcf_dir + 'loci.clus') or tune:
         print(f'\t\t\tRunning MCL - inflation: {inflation}', flush = True)
@@ -474,9 +476,9 @@ def mcl2gcfs(gcf_dir, loci, hgxXloci, ome2i, inflation,
                 t_gcfs.append(indices)
 
     # list(gcf) = [{hgx: (omes,)}]
-    gcfs, gcf_hgxs, gcf_omes = [], [], []
+    gcfs, gcf_hgxs, gcf_omes, gcf2clan = [], [], [], {}
     with open(f'{gcf_dir}loci.txt', 'w') as out:
-        out.write('#omeI locI pregcf locus\n')
+        out.write('#omeI locI clanI pregcf locus\n')
         for gcf, locIs in enumerate(t_gcfs):
             gcfs.append(defaultdict(list))
             gcfOme_list = [] 
@@ -495,8 +497,10 @@ def mcl2gcfs(gcf_dir, loci, hgxXloci, ome2i, inflation,
                     gcf_hgxs.append(tuple(sorted(set(chain(*list(gcfs[-1].keys()))))))
                     gcf_omes.append(tuple(sorted(set(chain(*list(gcfs[-1].values()))))))
                     pregcf = len(gcfs) - 1
+                    gcf2clan[pregcf] = loc2clan[locs[0][1]]
                     for i, omeI in enumerate(gcfOme_list):
-                        out.write(f'{omeI} {locs[i][1]} {pregcf} {",".join(locs[i][0])}\n')
+                        locus, locI = locs[i]
+                        out.write(f'{omeI} {locI} {loc2clan[locI]} {pregcf} {",".join(locus)}\n')
                 else:
                     del gcfs[-1]
             else:
@@ -507,7 +511,15 @@ def mcl2gcfs(gcf_dir, loci, hgxXloci, ome2i, inflation,
         satisfied = check_tune(tune, gcf_hgxs, gcf_omes)
     else:
         satisfied = True
-    return satisfied, gcfs, gcf_hgxs, gcf_omes
+
+    list_gcf2clan = []
+    for i in range(len(gcfs)):
+        list_gcf2clan.append(gcf2clan[i])
+
+    return satisfied, {i: v for i, v in enumerate(gcfs)}, \
+           {i: v for i, v in enumerate(gcf_hgxs)}, \
+           {i: v for i, v in enumerate(gcf_omes)}, \
+           {i: v for i, v in enumerate(list_gcf2clan)}
 
 
 def classify_gcfs(
@@ -518,8 +530,11 @@ def classify_gcfs(
     inflation = 1.5, minimum = 2, min_omes = 2, 
     minid = 30, cpus = 1, diamond = 'diamond',
     min_gcf_id = 0.3, simfun = overlap, printexit = False,
-    tune = False
+    tune = False, dist_func = treecalcs.calc_tmd,
+    uniq_sp = False
     ):
+
+    i2ome = {v: k for k, v in ome2i.items()}
 
     if not checkdir(hgx_dir, unzip = True, rm = True):
         os.mkdir(hgx_dir)
@@ -590,7 +605,9 @@ def classify_gcfs(
             omes_set = set(omes)
             if len(omes_set) > 1: # need at least one ome to calc a branch length
                 pairDict[id_] = tuple(sorted(omes_set))
-        omes2dist = treecalcs.update_dists(phylo, pairDict, cpus = cpus, omes2dist = omes2dist)
+        omes2dist = treecalcs.update_dists(phylo, pairDict, cpus = cpus, omes2dist = omes2dist,
+                                           func = dist_func, uniq_sp = uniq_sp, i2ome = i2ome)
+
 
         print('\tClassifying HGx clans and gene cluster families (GCFs)', flush = True)
         # populate a lil_matrix here, then use that network to identify modules
@@ -621,7 +638,8 @@ def classify_gcfs(
 
         omes2dist = treecalcs.update_dists(
             phylo, {clanHGxs[i]: omes for i, omes in enumerate(clanOmes)},
-            cpus = cpus, omes2dist = omes2dist
+            cpus = cpus, omes2dist = omes2dist, func = dist_func, uniq_sp = uniq_sp,
+            i2ome = i2ome
             )
         with open(groupII, 'wb') as out:
             pickle.dump([clans, clanOmes, clanHGxs], out)
@@ -666,6 +684,7 @@ def classify_gcfs(
                 clanLoci[clan].extend(outclanLoci[clan])
                 clanHGx4gcfs[clan].extend(outclanHGx[clan])
                 clanHGloci[clan].extend(outclanHGloci[clan])
+
         write_json(clanLoci, clanFile + 'json.gz')
         write_json(clanHGx4gcfs, clanFile + 'hgx.json.gz')
         write_json(clanHGloci, clanFile + 'hg.json.gz')
@@ -683,12 +702,19 @@ def classify_gcfs(
     # dict(clanHGx4gcfs) = {int(clanI): ((og0, og1, ogn,)...,)}
     # dict(clanHGloci) = {int(clanI): ((ome0_gene0_og, ome0_gene1_og,)...,)}
 
+    # need to move up to before writing
+    clanLoci = {k: v for k,v in sorted(clanLoci.items(), key = lambda x: len(x[1]), reverse = True)}
+    clanHGx4gcfs = [clanHGx4gcfs[k] for k in clanLoci]
+    clanHGloci = [clanHGloci[k] for k in clanLoci]
+    clanLoci = [v for v in clanLoci.values()]
+
     gcf_dir = wrk_dir + 'gcf/' 
     if not os.path.isdir(gcf_dir):
         os.mkdir(gcf_dir)
 
     print('\t\tOutputting HG fastas', flush = True)
-    hgs_prep = set(chain(*list(chain(*list(clanHGloci.values())))))
+#    hgs_prep = set(chain(*list(chain(*list(clanHGloci.values())))))
+    hgs_prep = set(chain(*list(chain(*clanHGloci))))
     hgs = sorted([x for x in hgs_prep if x is not None])
     hg_dir = input_parsing.hg_fa_mngr(wrk_dir, hg_dir, 
                              hgs, db, hg2gene, cpus = cpus)
@@ -697,7 +723,8 @@ def classify_gcfs(
 
 
     print('\t\tCalling GCFs', flush = True)
-    print('\t\t\t' + str(sum([len(v) for v in list(clanLoci.values())])) \
+#    print('\t\t\t' + str(sum([len(v) for v in list(clanLoci.values())])) \
+    print(f'\t\t\t{sum([len(v) for v in clanLoci])}' \
         + ' loci', flush = True)
     print('\t\t\tNOTE: for large datasets, clan 0 will hang progress bar', flush = True)
     m, adj_mtr = mp.Manager(), gcf_dir + 'loci.adj'
@@ -710,16 +737,17 @@ def classify_gcfs(
     # at least HGx overlaps < 2 can be eliminated
     min_overlap = round((min_gcf_id * 3) - 0.5)
 
-    loci, hgxXloci = {}, {}
-    for clanI in clanLoci:
+    loci, hgxXloci, loc2clan = {}, {}, {}
+    for clanI, locs in enumerate(clanLoci):
         cmds.append([
-            db, clanI, clanLoci[clanI], clanHGloci[clanI],
+            db, clanI, locs, clanHGloci[clanI],
             hg_dir, hgx_dir, gcf_dir, index, minid, min_gcf_id,
             simfun, min_overlap
             ])
-        for i, locus in enumerate(clanLoci[clanI]):
+        for i, locus in enumerate(locs):
             loci[index] = clanLoci[clanI][i]
             hgxXloci[index] = clanHGx4gcfs[clanI][i]
+            loc2clan[index] = clanI
             index += 1
 
 
@@ -742,15 +770,17 @@ def classify_gcfs(
     while not satisfied:
         if tune:
             inflation += 0.1
-        if inflation < 3:
-            satisfied, gcfs, gcf_hgxs, gcf_omes = mcl2gcfs(gcf_dir, loci,
-                                                            hgxXloci, ome2i, 
-                                                            inflation, tune,
-                                                            min_omes, cpus)
-        else:
+            if inflation > 3:
+                break
+        satisfied, gcfs, gcf_hgxs, gcf_omes, gcf2clan = mcl2gcfs(gcf_dir, loci,
+                                                           hgxXloci, ome2i, 
+                                                           inflation, loc2clan,
+                                                           tune, min_omes,
+                                                           cpus)
+    if tune:
+        if not satisfied:
             eprint('\nERROR: tuning failed to recover clusters', flush = True)
             sys.exit(135)
-    if tune:
         inf_strp = str(inflation * 10)[:2]
         inf_str = inf_strp[0] + '.' + inf_strp[1]
         with open(f'{wrk_dir}../log.txt', 'r') as raw:
@@ -760,8 +790,9 @@ def classify_gcfs(
 
     print('\t\t\t' + str(len(gcfs)) + ' GCFs', flush = True)
     omes2dist = treecalcs.update_dists(
-        phylo, {gcf_hgxs[i]: omes for i, omes in enumerate(gcf_omes)},
-        cpus = cpus, omes2dist = omes2dist
+        phylo, {gcf_hgxs[i]: omes for i, omes in gcf_omes.items()},
+        cpus = cpus, omes2dist = omes2dist, func = dist_func, 
+        uniq_sp = uniq_sp, i2ome = i2ome
         )
 
-    return gcfs, gcf_hgxs, gcf_omes, omes2dist
+    return gcfs, gcf_hgxs, gcf_omes, gcf2clan, omes2dist
