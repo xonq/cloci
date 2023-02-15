@@ -198,7 +198,7 @@ def gcc_mngr(
         hgxGene_cmds = []
         ome_locs = {ome: defaultdict(list) for ome in omes}
 
-        for i, hgx2omes in enumerate(modules):
+        for i, hgx2omes in modules.items():
             modHGx = moduleHGxs[i]
             for hgx, omes in hgx2omes.items():
                 if hgx in d2gcc:
@@ -229,7 +229,7 @@ def gcc_mngr(
             clus_hgs_prep = pickle.load(raw)
 
     clus_hgs = {i: (modHGx, defaultdict(list),) \
-                for i, modHGx in enumerate(moduleHGxs)}
+                for i, modHGx in moduleHGxs.items()}
 
     for res in clus_hgs_prep:
         # clus_hgs = {hgx: [{og: []}]} list is per locus
@@ -332,7 +332,7 @@ def gcc_main(
     else:
         d2gcc, d2id_, d2pos = {}, {}, {}
     
-    hgs = list(chain(*moduleHGxs))
+    hgs = list(chain(*list(moduleHGxs.values())))
     hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgs, 
                         db, hg2gene, cpus = cpus,
                         low_mem = True)
