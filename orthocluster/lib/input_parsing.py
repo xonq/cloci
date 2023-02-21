@@ -34,6 +34,7 @@ def init_log(
                 + f'gcf_id\t{log_dict["gcf_id"]}\n' \
                 + f'gcf_sim\t{log_dict["gcf_sim"]}\n' \
                 + f'orig_gcf_id\t{log_dict["gcf_id"]}\n' \
+                + f'min_merge_perc\t{log_dict["min_merge_perc"]}\n' \
                 + f'inflation\t{log_dict["inflation"]}\n' \
                 + f'tuning\t{log_dict["tuning"]}\n' \
                 + f'id_percent\t{log_dict["id_percent"]}\n' \
@@ -59,11 +60,24 @@ def read_log(
                 else:
                    log_dict['orig_gcf_id'] = log_dict['gcf_id']
                    log_res[key] = False
+            elif key == 'hgx_percentile':
+                if round(float(res) * 100) > \
+                    round(float(log_dict['hgx_percentile']) * 100):
+                    log_res['hgx_percentile_I'] = False
+                    log_res['hgx_percentile_II'] = False
+                elif round(float(res) * 100) != round(float(log_dict['hgx_percentile']) * 100):
+                    log_res['hgx_percentile_I'] = True
+                    log_res['hgx_percentile_II'] = False
+                else:
+                    log_res['hgx_percentile_I'] = True
+                    log_res['hgx_percentile_II'] = True
             elif key == 'gcf_id':
                 continue
             elif key == 'gcf_sim':
                 if res.lower() != str(log_dict[key]).lower():
                     log_res[key] = False
+                else:
+                    log_res[key] = True
             elif res != str(log_dict[key]):
                 log_res[key] = False
                 if key == 'tuning':
@@ -88,7 +102,7 @@ def read_log(
                 else: # else the inflation is the inflation in the log_dict
                     inflation = log_dict['inflation']
              
-                    
+
     try:
         if not log_res['mtdb']:
             log_res['n50'] = False
@@ -136,14 +150,24 @@ def read_log(
         print('null_samples')
     try:
         if not log_res['hgp_percentile']:
-            log_res['hgx_percentile'] = False
+            log_res['hgx_percentile_I'] = False
     except KeyError:
         print('hgp_percentile')
     try:
-        if not log_res['hgx_percentile']:
-            log_res['orig_gcf_id'] = False
+        if not log_res['hgx_percentile_I']:
+            log_res['hgx_percentile_II'] = False
     except KeyError:
-        print('hgx_percentile')
+        print('hgx_percentile_I')
+    try:
+        if not log_res['hgx_percentile_II']:
+            log_res['min_merge_perc'] = False
+    except KeyError:
+        print('hgx_percentile_II')
+    try:
+        if not log_res['min_merge_perc']:
+            log_res['gcf_sim'] = False
+    except KeyError:
+        print('min_merge_perc')
     try:
         if not log_res['gcf_sim']:
             log_res['orig_gcf_id'] = False
@@ -186,29 +210,33 @@ def rm_old_data(
         clus_pickle = wrk_dir + 'hgx2loc.pickle'
         if os.path.isfile(clus_pickle):
             os.remove(clus_pickle)
-    if not log_res['hgx_percentile']:
-        # should be able to tell if the percentile is raised (no need to del)
+    if not log_res['hgx_percentile_I']:
         skip_files = collect_files(wrk_dir + 'null/', '*')
         skip_files = [x for x in skip_files \
                       if os.path.basename(x).startswith('skip.')]
         for skip_file in skip_files:
             os.remove(skip_file)
-        if skip_files:
-            done_file = [x for x in skip_files \
-                         if os.path.basename(x).startswith('done.')]
-            if done_file:
-                os.remove(done_file)
+        done_file = [x for x in collect_files(f'{wrk_dir}null/', 'txt') \
+                     if os.path.basename(x).startswith('done')]
+        if done_file:
+            os.remove(done_file[0])
+    if not log_res['hgx_percentile_II']:
         gcf_dir = wrk_dir + 'gcf/'
         if os.path.isdir(gcf_dir):
             todel.append(gcf_dir)
-        groups = ['group.I', 'group.II', 'group.III']
+        groups = ['group.I', 'group.II']
+        for group in groups:
+             if os.path.isfile(f'{wrk_dir}{group}.pickle'):
+                 os.remove(f'{wrk_dir}{group}.pickle')
+    if not log_res['min_merge_perc']:
+        groups = ['group.III']
         clan_data = ['hg.json.gz', 'hgx.json.gz', 'json.gz']
         for file_ in clan_data:
             if os.path.isfile(f'{wrk_dir}clan2loci.{file_}'):
                 os.remove(f'{wrk_dir}clan2loci.{file_}')
         for group in groups:
              if os.path.isfile(f'{wrk_dir}{group}.pickle'):
-                 os.remove(f'{wrk_dir}{group}.pickle')
+                 os.remove(f'{wrk_dir}{group}.pickle')       
     if not log_res['orig_gcf_id']:
         gcf_dir = f'{wrk_dir}gcf/'
         adj_rows = collect_files(gcf_dir, 'tmp.w')
@@ -262,7 +290,7 @@ def rm_old_data(
     
         if os.path.isdir(hmm_dir):
             shutil.rmtree(hmm_dir)
-        clusOG_f = f'{wrk_dir}clusOGs.pickle'
+        clusOG_f = f'{wrk_dir}clus_hgs.pickle'
         if os.path.isfile(clusOG_f):
             os.remove(clusOG_f)
         if os.path.isdir(f'{out_dir}net/'):
@@ -272,6 +300,12 @@ def rm_old_data(
         for f in tosave:
             try:
                 shutil.move(f, save_dir + os.path.basename(f))
+            except FileNotFoundError:
+                continue
+    else:
+        for f in tosave:
+            try:
+                os.remove(f)
             except FileNotFoundError:
                 continue
     for f in todel:
@@ -613,7 +647,7 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
              tree_path, hg_file, plusminus, seed_perc, clus_perc,
              hgx_perc, id_perc, pos_perc, patch_thresh, gcc_thresh,
              samples, n50thresh, flag, min_gcf_id, inflation, simfun,
-             tune_file, dist_type, uniq_sp, partition):
+             tune_file, dist_type, uniq_sp, partition, min_merge_perc):
     wrk_dir = out_dir + 'working/'
     if not os.path.isdir(wrk_dir):
         os.mkdir(wrk_dir)
@@ -644,7 +678,7 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
         'gcf_percentile': clus_perc, 'id_percent': id_perc,
         'pos_percent': pos_perc, 'patch_threshold': patch_thresh,
         'gcc_threshold': gcc_thresh, 'inflation': inflation,
-        'tuning': tune_sha, 'partition': partition,
+        'tuning': tune_sha, 'partition': partition, 'min_merge_perc': min_merge_perc,
         'null_samples': samples, 'n50': n50thresh}
 
     log_res, inflation = log_check(log_dict, log_path, out_dir, wrk_dir, flag)
