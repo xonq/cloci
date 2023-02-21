@@ -259,7 +259,7 @@ def main(
     id_perc = 30, pos_perc = 30, inflation = 1.5,
     minimum_omes = 2, samples = 10000, pfam = None,
     min_gcf_id = 0.3, simfun = hgx2gcfs.overlap,
-    constraint_path = None, blastp = 'blastp',
+    constraint_path = None, aligner = 'diamond',
     run_dnds = False, cpus = 1, n50thresh = None, 
     root = None, gcc_thresh = 0, patch_thresh = 0,
     method = 'mmseqs easy-cluster', dist_thresh = 0,
@@ -267,7 +267,7 @@ def main(
     near_single_copy_genes = [], tree_path = None, 
     verbose = False, sim = 'overlap', tune_file = None,
     dist_type = 'tmd', uniq_sp = False, partition_rank = None,
-    min_merge_perc = 0
+    min_merge_perc = 0, algn_sens = ''
     ):
     """
     The general workflow:
@@ -470,9 +470,9 @@ def main(
         gcfs, gcf_hgxs, gcf_omes, gcf2clan, omes2dist = hgx2gcfs.classify_gcfs(
             hgx2loc, db, gene2hg, i2hgx, hgx2i, phylo, 
             ome2i, hgx2omes, hg_dir, hgx_dir, wrk_dir, ome2partition, 
-            bord_scores_list, hg2gene, tune = tune,
+            bord_scores_list, hg2gene, tune = tune, algorithm = aligner,
             omes2dist = omes2dist, clusplusminus = plusminus, 
-            inflation = inflation, min_gcf_id = min_gcf_id,
+            inflation = inflation, min_gcf_id = min_gcf_id, algn_sens = algn_sens,
             min_omes = 2, cpus = cpus, simfun = simfun, printexit = printexit,
             dist_func = dist_func, uniq_sp = uniq_sp, min_merge_perc = min_merge_perc
             )
@@ -546,7 +546,7 @@ def main(
     print('\nVII. Quantifying GCF gene committment and intrafamily similarity', flush = True)
     hgx2omes2gcc, hgx2omes2id, hgx2omes2pos = evo_conco.gcc_main(
                             hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
-                            blastp, db, gene2hg, plusminus, hg2gene, 
+                            aligner, db, gene2hg, plusminus, hg2gene, 
                             old_path = 'hgx2omes2pos.full.pickle',
                             gcfs = gcfs, gcf_hgxs = gcf_hgxs,
                             gcf_omes = gcf_omes, printexit = printexit,
@@ -607,6 +607,8 @@ if __name__ == '__main__':
  #   from dna_features_viewer import GraphicFeature, GraphicRecord
     null_ranks = ['kingdom', 'phylum', 'subphylum', 'class', 
                   'order', 'family', 'genus', 'species']
+    aligners = ['diamond', 'blastp', 'diamond ultra-sensitive',
+                'diamond more-sensitive']
     description = \
         """Gene clusters encode discrete metabolic phenotypes that
            perform important organismal and ecological functions.
@@ -663,6 +665,8 @@ if __name__ == '__main__':
 
 
     fam_opt = parser.add_argument_group('Gene cluster family parameters')
+    fam_opt.add_argument('-a', '--aligner', default = 'diamond'
+        help = f'Alignment algorithm: {aligners}; DEFAULT: diamond')
     fam_opt.add_argument('-s', '--similarity', 
         help = 'GCF similarity metric: [J]accard, [O]verlap, [S]orensen. ' \
              + 'DEFAULT: Overlap coefficient')
@@ -706,7 +710,7 @@ if __name__ == '__main__':
 #    run_opt.add_argument('-s', '--dnds', action = 'store_true', help = 'Run dN/dS calculations')
     run_opt.add_argument('--n50', help = 'Minimum assembly N50')
     run_opt.add_argument('--stop', action = 'store_true', 
-                        help = 'Export homology group diamond commands ' \
+                        help = 'Export homology group alignment commands ' \
                              + 'for massive parallelization and stop')
     run_opt.add_argument('-o', '--output_dir')
     run_opt.add_argument('-n', '--new', action = 'store_true', 
@@ -758,8 +762,20 @@ if __name__ == '__main__':
                flush = True)
         sys.exit(43)
 
-    execs = ['mafft', 'hmmsearch', 'blastp', 'mcl',
-             'diamond', 'iqtree']
+    execs = ['mafft', 'hmmsearch', 'mcl',
+             'iqtree']
+    if args.aligner.lower() not in aligners:
+        eprint(f'\nERROR: invalid -a: {args.aligner}',
+               flush = True)
+        sys.exit(47)
+    else:
+        if len(args.aligner.split()) > 1:
+            aligner, algn_sens = args.aligner.lower().split()
+        else:
+            aligner = args.aligner.lower()
+            algn_sens = ''
+       
+
     if args.orthofinder:
         of_out = format_path(args.orthofinder)
         if os.path.isdir(of_out):
@@ -828,7 +844,8 @@ if __name__ == '__main__':
         'Microsynteny tree': format_path(args.tree), 'Root': root_txt, 'Pfam DB': args.pfam, 'Window': args.window*2+1,
         'Distance type': dist, 'Unique species': uniq_sp,
         'HGp Percentile': args.hgp_percentile, #'Precluster threshold': args.clus_threshold,
-        'HGx percentile': args.hgx_percentile, 'Similarity index': sim,
+        'HGx percentile': args.hgx_percentile, 'GCF aligner': f'{aligner} {algn_sens}',
+        'Similarity index': sim,
         'Inflation': args.inflation, 'Tune clusters': tune_file,
         'GCF percentile': args.gcf_percentile, 
         'Minimum family %id': args.id_percent, 'Minimum family %pos': args.pos_percent,
@@ -887,15 +904,12 @@ if __name__ == '__main__':
             focal_genes = [x.rstrip() for x in raw.read().split() \
                            if x.rstrip()]
 
-    sensitive = False
-
-
     db = mtdb(format_path(args.database))
     main(
         db, homogroups, out_dir, plusminus = args.window,
         cpus = args.cpus, hg_dir = hg_dir, inflation = args.inflation,
         hgp_perc = hgp_perc, #clus_thresh = args.clus_threshold,
-        clus_perc = clus_perc, blastp= 'blastp',#seed_thresh = args.seed_threshold,
+        clus_perc = clus_perc, aligner = aligner,#seed_thresh = args.seed_threshold,
         id_perc = args.id_percent, pos_perc = args.pos_percent,
         hgx_perc = hgx_perc, pfam = pfam, samples = args.null_sample,
         partition_file = args.null_partitions, #        run_dnds = args.dnds, 
@@ -908,7 +922,7 @@ if __name__ == '__main__':
         tree_path = format_path(args.tree), tune_file = tune_file,
         dist_thresh = args.md_threshold, uniq_sp = uniq_sp,
         dist_type = dist, partition_rank = partition_rank, 
-        min_merge_perc = min_merge_perc
+        min_merge_perc = min_merge_perc, algn_sens = algn_sens
         )
 
     outro(start_time)
