@@ -65,18 +65,19 @@ def patch_main(
         tuple([str(x) for x in y]) for y in omes \
                if y not in omes2patch
         ])
-    with mp.get_context('fork').Pool(processes = cpus) as pool:
-        patch_res = pool.starmap(
-            calc_patchiness, tqdm([(phylo, x) for x in clusOmes],
-                                             total = len(clusOmes))
-            )
-        pool.close()
-        pool.join()
-    omes2patch = {**omes2patch,
-                  **{ome_tup: patchiness for ome_tup, patchiness in patch_res}}
-    with open(wrk_dir + old_path, 'wb') as out:
-        pickle.dump(omes2patch, out)
-
+    if clusOmes:
+        with mp.get_context('fork').Pool(processes = cpus) as pool:
+            patch_res = pool.starmap(
+                calc_patchiness, tqdm([(phylo, x) for x in clusOmes],
+                                                 total = len(clusOmes))
+                )
+            pool.close()
+            pool.join()
+        omes2patch = {**omes2patch,
+                      **{ome_tup: patchiness for ome_tup, patchiness in patch_res}}
+        with open(wrk_dir + old_path, 'wb') as out:
+            pickle.dump(omes2patch, out)
+    
     return omes2patch
 
 def calc_mmd(phylo, omes):
@@ -148,7 +149,7 @@ def calc_dists(phylo, cooccur_dict, cpus = 1, omes2dist = {}, func = calc_tmd,
                uniq_sp = False, i2ome = None):
     # multiprocessing calculating only new distances for omes2dist
     if uniq_sp:
-        with mp.get_context('fork').Pool(processes = cpus) as pool:
+        with mp.get_context('forkserver').Pool(processes = cpus) as pool:
             results = pool.starmap(
                 calc_tmd_uniq_omes,
                 [(phylo, get_uniq_spp(uniq_sp, x, i2ome), x) \
@@ -158,7 +159,7 @@ def calc_dists(phylo, cooccur_dict, cpus = 1, omes2dist = {}, func = calc_tmd,
             pool.close()
             pool.join()
     else:
-        with mp.get_context('fork').Pool(processes = cpus) as pool:
+        with mp.get_context('forkserver').Pool(processes = cpus) as pool:
             results = pool.starmap(
                 func,
                 [(phylo, x,) for x in list(set(cooccur_dict.values())) \
