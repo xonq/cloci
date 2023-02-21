@@ -279,7 +279,7 @@ def load_hgx_nulls(max_clus_size, nul_dir, hgx_perc, clus_perc, partition_num):
             nullSizes.sort()
             hgxBordPercs[size] = nullSizes[round(hgx_perc * len(nullSizes) + .5)]
             hgxClusPercs[size] = nullSizes[round(clus_perc * len(nullSizes) + .5)]
-        elif os.path.isfile(f'{nul_dir}skip.{size}-{partition_num}'):
+        elif os.path.isfile(f'{nul_dir}skip.{size}-{partition_num}.txt'):
             hgxBordPercs[size] = 0.0
             hgxClusPercs[size] = 0.0
         else:
@@ -303,7 +303,7 @@ def parse_skip_files(skip_files):
     # NEED some accounting of changing bord percentile
     skip_i = defaultdict(int)
     for skip_f in skip_files:
-        s, i = [int(x) for x in skip_f.replace('skip.','').split('-')]
+        s, i = [int(x) for x in skip_f.replace('skip.','').replace('.txt','').split('-')]
         if s > skip_i[i]:
             skip_i[i] = s
     return {k: v for k,v in skip_i.items()}
@@ -354,7 +354,6 @@ def gen_hgx_nulls(
                     hgxClusPercs[i0][size] = 0.0
                     continue
             # multiprocessing
-            print(f'\t\t\tLineage {i0}', flush = True)
             if os.path.isfile(f'{nul_dir}{size}.null.{i0}.txt'):
                 nullSizes = load_null(f'{nul_dir}{size}.null.{i0}.txt')
             else:
@@ -389,12 +388,13 @@ def gen_hgx_nulls(
             if not hgxBordPercs[i0][size]:
                 skip_i[i0] = size
                 for s in range(size, max_clus_size + 1):
-                    with open(f'{nul_dir}skip.{s}-{i0}', 'w') as out:
+                    with open(f'{nul_dir}skip.{s}-{i0}.txt', 'w') as out:
                         pass
-                print(f'\t\t\t\tWARNING: all HGx >= {size} HGs pass')
+                print(f'\t\t\tWARNING: lineage {i0}: all HGx >= {size} HGs pass')
 
-    skips = [f'{k}-{v}' for k,v in skip_i.items()]
-    done_file = f'{nul_dir}done.{".".join(skips)}'
+    #skips = [f'{k}-{v}' for k,v in skip_i.items()]
+#    done_file = f'{nul_dir}done.{".".join(skips)}'
+    done_file = f'{nul_dir}done.txt'
     with open(done_file, 'w') as out:
         pass
 
@@ -409,17 +409,17 @@ def partitions2hgx_nulls(db, partition_omes, ome2i, i2ome, gene2hg, max_hgx_size
     print('\tPreparing HGx nulls', flush = True)
     files = [os.path.basename(x) for x in collect_files(nul_dir, 'txt')]
     done_file = [x for x in files if x.startswith('done.')]
+    skip_files = [x for x in files if x.startswith('skip.')]
+    skip_i = parse_skip_files(skip_files)
     if done_file:
         bordScores_list, clusScores_list = [], []
-        skip_i = parse_done_file(done_file)
+#        skip_i = parse_done_file(done_file)
         for i, omes in enumerate(partition_omes):
             bordScores, clusScores = load_hgx_nulls(max_hgx_size, nul_dir, hgx_perc,
                                                     clus_perc, i)
             bordScores_list.append(bordScores)
             clusScores_list.append(clusScores)
     else:
-        skip_files = [x for x in files if x.startswith('skip.')]
-        skip_i = parse_skip_files(skip_files)
         bordScores_list, clusScores_list = gen_hgx_nulls(
             db, i2ome, {db[k]['gff3']: ome2i[k] for k in list(db.keys()) \
              if k in ome2i},
