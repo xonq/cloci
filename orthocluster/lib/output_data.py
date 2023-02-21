@@ -14,6 +14,10 @@ from mycotools.lib.kontools import eprint
 from mycotools.lib.biotools import list2gff, gff2list, fa2dict, dict2fa
 from orthocluster.orthocluster.lib import input_parsing
 
+# NEED locID output and clans
+# NEED to fix and optimize Pfam annotation
+# NEED gbk output option
+# NEED to add merge abutting clusters feature
 
 def mk_subplots(labels, axes, axes_labels, alpha = 0.6):
     
@@ -104,134 +108,144 @@ def extract_sig_clus(
     return dict(sig_clus)
 
 
-def hash_clusters(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus):
+def hash_clusters(gff_path):
     """sliding window of size clusplusminus, identify sequences that may have
     hgs that may be significant, grab their window, and check for a significant
     higher order og combo in the locus"""
-    
-    gff_list, protoclus, clus_out = gff2list(gff_path), {}, []
+    gff_list = gff2list(gff_path)
     cds_dict = input_parsing.compileCDS(gff_list, os.path.basename(gff_path).replace('.gff3',''))
-    
-    for scaf in cds_dict:
-        for i0, seq0 in enumerate(cds_dict[scaf]):
-            if seq0 in ome_sig_clus: # if the og is part of a significant seed
-            # locus 
-                for sig_clus in ome_sig_clus[seq0]:
-                    start, end = None, None
-                    if i0 < clusplusminus: # is i0 - clusplusminus < 0 ?
-                        locus = cds_dict[scaf][:i0+clusplusminus+1] # then gather
-                        # all the beginning
-                    else:
-                        locus = cds_dict[scaf][i0-clusplusminus:i0+clusplusminus+1]
-                        # instead get the +/- and adjust for python
-                    for i1, seq1 in enumerate(locus): # for each index and sequence
-                    # in the locus
-                        try:
-                            og = gene2hg[seq1]
-                        except KeyError:
-                            continue
-                        if og in sig_clus[0] and start is None: # if the og is
-                        # in the sig clus and we haven't started
-                            start = i1 # this is the start index
-                        elif og in sig_clus[0]: # otherwise if it is in the
-                        # sig clus label this the other border unless another is 
-                        # found 
-                            end = i1 + 1
-                    hgx = tuple(sorted(list(sig_clus[0])))
-                    clus_out.append([
-                         hgx, locus[start:end], {sig_clus[1]}, scaf
-                         ])
-                    # clus_out = [(og0, og1, ... ogn), [prot0, prot1, ... protn])]
-    
-    return ome, clus_out, cds_dict
+    return cds_dict
 
 
-def merge_clusters(clus_out):
+def merge_clusters(clus_out, cds_dict):
     """because we have significant clusters with borders, we can merge each
     cluster and assume that at a certain number of hgs in a combo will never
     happen via random sampling; therefore, their significance in the
     microsynteny adjustment is sufficient for justification for merging"""
     
-    comp_clus, change = [], False
-    while clus_out: # while there are clusters
-        any_intersect, toDel = False, [0] # we haven't found intersection
-        clus0 = clus_out[0] # grab the first tuple
-        loc0 = set(clus0[1]) # grab the set of proteins in the cluster
-        for i, clus1 in enumerate(clus_out[1:]): # look at all other clusters
-            loc1 = set(clus1[1]) # grab their loci
-            intersect = loc0.intersection(loc1) # check for overlap between
-            # proteins
-            if intersect:
-                any_intersect, change = True, True # we found overlap in
-                # clus_out and in this specific cluster comparison
-                hgx = tuple(sorted(list(set(clus0[0]).union(set(clus1[0])))))
-                # obtain the higher order og combination as the union of the
-                # two cluster sets, then sort it and store as a tuple
-                comp_clus.append([
-                    hgx, list(loc0.union(loc1)), 
-                    clus0[2].union(clus1[2]), clus0[3] #, merge_x
-                    ])
-                # append the og combo and the union of the two loci's proteins
-                # protein order is random
-                toDel.append(i) # we can delete the intersected locus as well
-                # as the first
-        
-        if not any_intersect: # if there is not any intersection in the locus
-            comp_clus.append(clus0) #, clus0[2]]) # simply append the original
-            # result
-        toDel.sort(reverse = True) # sort the todel from highest to lowest to
-        # not mess up order when indexing
-        for i in toDel:
-            clus_out.pop(i)
-    
+    comp_clus, change = defaultdict(list), False
+    for scaf, clusters in clus_out.items():
+        gene_list = cds_dict[scaf]
+        while clusters: # while there are clusters
+            any_intersect, toDel = False, [0] # we haven't found intersection
+            clus0 = clusters[0] # grab the first tuple
+            loc0 = clus0[0] # grab the genes in the cluster
+            low_i0 = gene_list.index(loc0[0])
+            hi_i0 = gene_list.index(loc0[-1])
+            for i, clus1 in enumerate(clusters[1:]): # look at all other clusters
+                loc1 = clus1[0] # grab their loci
+                low_i1 = gene_list.index(loc1[0])
+                hi_i1 = gene_list.index(loc1[-1])
+                if low_i1 - hi_i0 == 1 and False:
+                    any_intersect, change = True, True # we found overlap in
+                    # clus_out and in this specific cluster comparison
+ #                   hgx = tuple(sorted(list(set(clus0[0]).union(set(clus1[0])))))
+                    # obtain the higher order og combination as the union of the
+                    # two cluster sets, then sort it and store as a tuple
+                    comp_clus[scaf].append([
+#                        hgx, 
+                        loc0 + loc1, 
+                        clus0[1].union(clus1[1]) #, merge_x
+                        ])
+                    # append the og combo and the union of the two loci's genes
+                    # protein order is random
+                    toDel.append(i) # we can delete the intersected locus as well
+                    # as the first
+                elif low_i0 - hi_i1 == 1 and False:
+                    any_intersect, change = True, True
+                    comp_clus[scaf].append([loc1 + loc0, clus0[1].union(clus1[1])])
+                    toDel.append(i)
+                elif set(loc0).intersection(set(loc1)) and False:
+                    any_intersect, change = True, True
+                    comp_clus[scaf].append([set(loc0).union(set(loc1)), clus0[1].union(clus1[1])])
+                    comp_clus[scaf][-1][0] = sorted(comp_clus[scaf][-1][0], 
+                                                    key = cds_dict[scaf].index)   
+                    toDel.append(i)
+            if not any_intersect: # if there is not any intersection in the locus
+                comp_clus[scaf].append(clus0) #, clus0[2]]) # simply append the original
+                # result
+            toDel.sort(reverse = True) # sort the todel from highest to lowest to
+            # not mess up order when indexing
+            for i in toDel:
+                clusters.pop(i)
+            
     return comp_clus, change
 
 
-def write_clusters(ome_sig_clus, ome, out_file, gff_path, gene2hg, clusplusminus = 10):
-    # is multiprocessing this messing something and memory and that's why
-    # output is wonky? (sometimes fewer proteins than should be in locus) 
-    # or is output consistent fucking up elsewhere
+def clus2scaf(cds_dict, clusters, gene2hg):
 
-    ome, clus_out, cds_dict = hash_clusters(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus)
+    gene2scaf, index_map = {}, {}
+    for scaf, genes in cds_dict.items():
+        index_map[scaf] = {v: i for i, v in enumerate(genes)}
+        for gene in genes:
+            gene2scaf[gene] = scaf
+
+    clus_out = defaultdict(list)
+    for loc, gcf in clusters:
+        gene0 = loc[0]
+        scaf = gene2scaf[gene0]
+        ord_loc = sorted(loc, key = lambda pair: index_map[scaf][pair])
+#        hgs = []
+ #       for gene in ord_loc:
+  #          try:
+   #             hgs.append(gene2hg[gene])
+    #        except KeyError:
+     #           hgs.append('')
+      #  clus_info = [hgs, ord_loc, {gcf}]
+        
+        clus_out[scaf].append([ord_loc, {gcf}])
+
+    return clus_out 
+
+
+def write_clusters(clusters, ome, out_file, gff_path, gene2hg, clusplusminus = 10):
+    cds_dict = input_parsing.compileCDS(gff2list(gff_path), 
+                                        os.path.basename(gff_path).replace('.gff3',''))
+
+    clus_out = clus2scaf(cds_dict, clusters, gene2hg)
     change = True
     while change: # so long as there is a single merge
-        clus_out, change = merge_clusters(clus_out) # attempt to merge clusters
-    clus_out = sorted(clus_out, key = lambda x: len(x[0]), reverse = True)
+        clus_out, change = merge_clusters(clus_out, cds_dict) # attempt to merge clusters
+#    clus_out = sorted(clus_out, key = lambda x: len(x[0]), reverse = True)
     # sort the clusters by the size of the OG combination tuple highest to
     # lowest
 
-    scafs = set()
-    for clus in clus_out:
-        clus[1] = sorted(clus[1], key = cds_dict[clus[3]].index)
-        clusOGs = []
-        for gene in clus[1]:
-            try:
-                clusOGs.append(gene2hg[gene])
-            except KeyError: # gene not in an OG/is a singleton
-                clusOGs.append('')
-        clus[0] = clusOGs
-        scaf = clus[3]
-#        scaf = clus[3][:20]
- #       if clus[3] != scaf:
-#            scaf = clus[3][:20] + '..'
-        count = 0
-        while scaf + '_' + str(count) in scafs:
-            count += 1
-        name = scaf + '_' + str(count)
-        scafs.add(name)
-        clus.append(name)
-
+    for scaf, clusters in clus_out.items():
+        mapping = {v: i for i, v in enumerate(cds_dict[scaf])}
+        clusters = sorted(clusters, key = lambda pair: mapping[pair[0][0]])
+        for i, clus in enumerate(clusters):
+            clus[0] = sorted(clus[0], key = cds_dict[scaf].index)
+            clusHGs = []
+            for gene in clus[0]:
+                try:
+                    clusHGs.append(gene2hg[gene])
+                except KeyError: # gene not in an OG/is a singleton
+                    clusHGs.append('')
+            clus.append(clusHGs)
+   #         scaf = clus[2]
+    #        scaf = clus[3][:20]
+     #       if clus[3] != scaf:
+    #            scaf = clus[3][:20] + '..'
+#            count = 0
+ #           while scaf + '_' + str(count) in scafs:
+  #              count += 1
+            name = scaf + '_' + str(i)
+#            scafs.add(name)
+            clus.append(name)
+        clus_out[scaf] = clusters
+    
 
     out_genes = []
     with open(out_file, 'w') as out:
         out.write('#name\thgs\tgenes\tgcfs\n')
-        for clus in clus_out:
-            clus[2] = sorted(clus[2])
-            hgs = ','.join([str(x) for x in clus[0]]) # og1,og2,...ogn
-            genes = ','.join(clus[1]) # prot1,prot2,prot3,...protn
-            gcfs= ';'.join([str(x) for x in list(clus[2])])
-            out.write(clus[4] + '\t' + hgs + '\t' + genes + '\t' + gcfs + '\n')
-            out_genes.append(clus[1])
+        for scaf, clusters in clus_out.items():
+            for clus in clusters:
+ #           clus[2] = sorted(clus[2])
+                hgs = ','.join([str(x) for x in clus[2]]) # og1,og2,...ogn
+                genes = ','.join(clus[0]) # prot1,prot2,prot3,...protn
+                gcfs = ';'.join([str(x) for x in sorted(clus[1])])
+                out.write(clus[3] + '\t' + hgs + '\t' + genes + '\t' + gcfs + '\n')
+                out_genes.append(clus[0])
 
     return ome, out_genes
 
@@ -391,41 +405,32 @@ def grabClus(genes_list, gff_path, prot_path, ome, ome_dir, gene2hg, pfamRes = {
 #    return ome, clus_gffs, clus_fas, svg_dict
 
 
-def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, gcf_hgxs,
-         omes2dist, hgx2omes2gcc, omes2patch, hgx2omes2id,
-         hgx2omes2pos, hgx2loc, gene2hg, plusminus, ome2i,
-         hgx2i, gcf2clan, pfam_path = None, dnds_dict = {}, dist_thresh = 0, cpus = 1):
-    print('\tWriting cluster scores', flush = True)
-    logh2d = {}
-    for modHGx2omes in gcfs.values():
-        for hgx, omes in modHGx2omes.items():
-            logh2d[hgx] = log(hgx2dist[hgx])
-    maxhgxd = max(logh2d.values())
-    minhgxd = min(logh2d.values())
+def output_hgxs(hgx2dist, hgx2omes, hgx2i, i2ome, out_dir):
+    maxhgxd = max(hgx2dist.values())
+    minhgxd = min(hgx2dist.values())
 
     denom = maxhgxd - minhgxd
-    hgx_output, done = [], set()
-    for gcf, modHGx2omes in gcfs.items():
-        for hgx, omes in modHGx2omes.items():
-            hgx_id = hgx2i[hgx]
-            if hgx2dist[hgx] == 0:
-                print(omes, '0 hgx2dist value', flush = True)
-                continue
-            if hgx_id not in done:
-                done.add(hgx_id)
-            else:
-                continue
-            hgx_output.append([
-                ','.join([str(x) for x in hgx]), hgx_id,
-                gcf, gcf2clan[gcf], (log(hgx2dist[hgx]) - minhgxd)/denom,
-                ','.join([i2ome[x] for x in hgx2omes[hgx]])
-                ]) # HGxs at this stage are not segregated into groups
+    hgx_output = []
+    for hgx, omes in hgx2omes.items():
+        hgx_id = hgx2i[hgx]
+        hgx_output.append([
+            ','.join([str(x) for x in hgx]), hgx_id,
+            (log(hgx2dist[hgx]) - minhgxd)/denom,
+            ','.join([i2ome[x] for x in omes])
+            ]) # HGxs at this stage are not segregated into groups
     hgx_output = sorted(hgx_output, key = lambda x: x[3], reverse = True)
     with gzip.open(out_dir + 'hgxs.tsv.gz', 'wt') as out:
-        out.write('#hgs\thgx_id\tgcf\tclan\tnrm_log_tmd\tomes')#\tpatchiness\tomes')
+        out.write('#hgs\thgx_id\tnrm_log_tmd\tomes')#\tpatchiness\tomes')
         for entry in hgx_output:
             out.write('\n' + '\t'.join([str(x) for x in entry]))
 
+
+def output_gcfs(db, wrk_dir, gcfs, gcf_omes, i2ome, out_dir, gcf_hgxs,
+         omes2dist, hgx2omes2gcc, omes2patch, hgx2omes2id,
+         hgx2omes2pos, gene2hg, plusminus, ome2i,
+         gcf2clan, pfam_path = None, dnds_dict = {}, dist_thresh = 0, cpus = 1):
+
+    print('\tWriting cluster scores', flush = True)
     logg2d = {}
     for omesc in gcf_omes.values():
         logg2d[omesc] = log(omes2dist[omesc])
@@ -433,7 +438,7 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
     mingcfd = min(logg2d.values())
     denom = maxgcfd - mingcfd
     
-    gcf_output, top_hgxs = [], []
+    gcf_output = []
     for i, gcf_hgx in gcf_hgxs.items():
         omesc = gcf_omes[i]
         nml_log_tmd = (logg2d[omesc] - mingcfd)/denom
@@ -446,8 +451,6 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
                 ','.join([str(i2ome[x]) for x in omesc])#,
          #        dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
                 ])
-            for shgx, omes in gcfs[i].items():
-                top_hgxs.append([shgx, i, set(omes)])
 
     gcf_output = sorted(gcf_output, key = lambda x: x[3], reverse = True)
     with gzip.open(out_dir + 'gcfs.tsv.gz', 'wt') as out:
@@ -474,7 +477,7 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
         axes[2].append(entry[3])
     print('\tOutputting scatter plots', flush = True)
     axes_labels = [
-        'Distribution Patchiness', 'Gene BLAST Congruence', 'Log Microsynteny Distance' #,
+        'Distribution Patchiness', 'Gene Cluster Commitment', 'Log Microsynteny Distance' #,
         ]
 
     fig = mk_subplots(labels, axes, axes_labels, alpha = 0.6)
@@ -483,19 +486,22 @@ def output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, i2ome, hgx2omes, out_dir, 
     fig.write_html(out_dir + 'gcfs.html')
 
     print('\tCompiling clusters from annotations', flush = True)
-    sig_clus = extract_sig_clus(
-        hgx2dist, hgx2loc, top_hgxs, ome2i
-        )
     write_clus_cmds = []
+    ome2clusters = defaultdict(list)
+    for gcf, loci in gcfs.items():
+        for loc in loci:
+            ome = loc[0][:loc[0].find('_')]
+            ome2clusters[ome].append([loc, gcf])
+
     ome_dir = out_dir + 'ome/'
     if not os.path.isdir(ome_dir):
         os.mkdir(ome_dir)
-    for ome in sig_clus:
+    for ome, clusters in ome2clusters.items():
         if not os.path.isdir(ome_dir + ome):
             os.mkdir(ome_dir + ome)
         gff = db[ome]['gff3']
         out_file = ome_dir + ome + '/info.out'
-        write_clus_cmds.append([sig_clus[ome], ome, out_file, gff, gene2hg, plusminus])
+        write_clus_cmds.append([clusters, ome, out_file, gff, gene2hg])
     with mp.get_context('fork').Pool(processes = cpus) as pool:
         out_genes = pool.starmap(write_clusters, 
                                  tqdm(write_clus_cmds, 
