@@ -30,6 +30,7 @@ def init_log(
                 + f'plusminus\t{log_dict["plusminus"]}\n' \
                 + f'hgp_percentile\t{log_dict["hgp_percentile"]}\n' \
                 + f'hgx_percentile\t{log_dict["hgx_percentile"]}\n' \
+                + f'aligner\t{log_dict["aligner"]}\n' \
                 + f'gcf_percentile\t{log_dict["gcf_percentile"]}\n' \
                 + f'gcf_id\t{log_dict["gcf_id"]}\n' \
                 + f'gcf_sim\t{log_dict["gcf_sim"]}\n' \
@@ -102,91 +103,123 @@ def read_log(
                 else: # else the inflation is the inflation in the log_dict
                     inflation = log_dict['inflation']
              
-
+    init_discrepancy = []
     try:
         if not log_res['mtdb']:
             log_res['n50'] = False
+            init_discrepancy.append('-d')
     except KeyError:
+        init_discrepancy.append('-d')
         print('mtdb')
     try:
         if not log_res['partition']:
+            init_discrepancy.append('-np/-nr')
             log_res['null_samples'] = False
     except KeyError:
+        init_discrepancy.append('-np/-nr')
         print('partition')
     try:
         if not log_res['focal_genes']:
             log_res['microsynt_tree'] = False
+            init_discrepancy.append('-f')
     except KeyError:
+        init_discrepancy.append('-f')
         print('focal_genes')
     try:
         if not log_res['microsynt_constraint']:
+            init_discrepancy.append('-c')
             log_res['microsynt_tree'] = False
     except KeyError:
+        init_discrepancy.append('-c')
         print('microsynt_constraint')
     try:
         if not log_res['n50']:
+            init_discrepancy.append('-n50')
             log_res['plusminus'] = False
     except KeyError:
+        init_discrepancy.append('-n50')
         print('n50')
     try:
         if not log_res['dist_type']:
+            init_discrepancy.append('-mmd')
             log_res['uniq_sp'] = False
     except KeyError:
+        init_discrepancy.append('-mmd')
         print('dist_type')
     try:
         if not log_res['uniq_sp']:
+            init_discrepancy.append('-us')
             log_res['null_samples'] = False
     except KeyError:
+        init_discrepancy.append('-us')
         print('uniq_sp')
     try:
         if not log_res['plusminus']:
+            init_discrepancy.append('-w')
             log_res['null_samples'] = False
     except KeyError:
+        init_discrepancy.append('-w')
         print('plusminus')
     try:
         if not log_res['null_samples']:
+            init_discrepancy.append('-ns')
             log_res['hgp_percentile'] = False
     except KeyError:
+        init_discrepancy.append('-ns')
         print('null_samples')
     try:
         if not log_res['hgp_percentile']:
+            init_discrepancy.append('-hp')
             log_res['hgx_percentile_I'] = False
     except KeyError:
+        init_discrepancy.append('-hp')
         print('hgp_percentile')
     try:
         if not log_res['hgx_percentile_I']:
+            init_discrepancy.append('-xp')
             log_res['hgx_percentile_II'] = False
     except KeyError:
+        init_discrepancy.append('-xp')
         print('hgx_percentile_I')
     try:
         if not log_res['hgx_percentile_II']:
+            init_discrepancy.append('-xp')
             log_res['min_merge_perc'] = False
     except KeyError:
+        init_discrepancy.append('-xp')
         print('hgx_percentile_II')
     try:
         if not log_res['min_merge_perc']:
+            init_discrepancy.append('-mm')
             log_res['gcf_sim'] = False
     except KeyError:
+        init_discrepancy.append('-mm')
         print('min_merge_perc')
     try:
         if not log_res['gcf_sim']:
+            init_discrepancy.append('-mi')
             log_res['orig_gcf_id'] = False
     except KeyError:
+        init_discrepancy.append('-mi')
         print('gcf similarity')
     try:
         if not log_res['orig_gcf_id']:
+            init_discrepancy.append('-mi')
             log_res['inflation'] = False
     except KeyError:
+        init_discrepancy.append('-mi')
         print('orig_gcf_id')
     try:
         if not log_res['inflation']:
+            init_discrepancy.append('-I/-T')
             log_res['gcf_percentile'] = False
     except KeyError:
         print('\nERROR: corrupted log.txt.' + \
             '\nIf not rectified, future runs will completely overwrite the current\n')
+        init_discrepancy.append('-I/-T')
         sys.exit(149)
 
-    return log_res, inflation
+    return log_res, inflation, init_discrepancy
 
 
 def rm_old_data(
@@ -327,21 +360,22 @@ def log_check(log_dict, log_path, out_dir, wrk_dir, flag = True):
         log_res = {x: False for x in log_dict}
         rm_old_data(log_res, out_dir, wrk_dir)
         init_log(log_path, log_dict)
-    log_res, inflation = read_log(log_path, log_dict)
+    log_res, inflation, init_discrepancy = read_log(log_path, log_dict)
     if any(not log_res[x] for x in log_res):
         if not flag:
-            print('\nInitializing new run', flush = True)
+            print(f'\n{init_discrepancy[0]} changed; ' \
+                + 'Initializing new run', flush = True)
             rm_old_data(log_res, out_dir, wrk_dir)
             init_log(log_path, log_dict)
         else:
-            failed = set([x for x, v in log_res.items() if not v])
-            for skip in ['patch_threshold', 'gcc_threshold',
-                         'pos_percent', 'id_percent']:
-                if skip in failed:
-                    failed.remove(skip)
+#            failed = set([x for x, v in log_res.items() if not v])
+ #           for skip in ['patch_threshold', 'gcc_threshold',
+  #                       'pos_percent', 'id_percent']:
+   #             if skip in failed:
+    #                failed.remove(skip)
             if failed:
                 eprint('\nERROR: -n not called and incompatible parameters: \
-                        \n\t' + ','.join([x for x in list(failed)]),
+                        \n\t' + ','.join([x for x in list(init_discrepancy)]),
                    flush = True)
                 sys.exit(15)
 
@@ -647,7 +681,8 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
              tree_path, hg_file, plusminus, seed_perc, clus_perc,
              hgx_perc, id_perc, pos_perc, patch_thresh, gcc_thresh,
              samples, n50thresh, flag, min_gcf_id, inflation, simfun,
-             tune_file, dist_type, uniq_sp, partition, min_merge_perc):
+             tune_file, dist_type, uniq_sp, partition, min_merge_perc,
+             aligner):
     wrk_dir = out_dir + 'working/'
     if not os.path.isdir(wrk_dir):
         os.mkdir(wrk_dir)
@@ -674,6 +709,7 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
         'hg_file': hg_file, 'plusminus': plusminus, 'dist_type': dist_type,
         'uniq_sp': bool(uniq_sp),
         'hgp_percentile': seed_perc, 'hgx_percentile': hgx_perc, 
+        'aligner': aligner,
         'orig_gcf_id': None, 'gcf_id': min_gcf_id, 'gcf_sim': str(simfun).lower(),
         'gcf_percentile': clus_perc, 'id_percent': id_perc,
         'pos_percent': pos_perc, 'patch_threshold': patch_thresh,
