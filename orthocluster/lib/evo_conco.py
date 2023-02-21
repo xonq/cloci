@@ -36,9 +36,9 @@ def retroactive_grab_hgx_genes(
         for i0, seq0 in enumerate(cds_dict[scaf]):
             if seq0 in ome_loc: # if the og is part of a significant seed 
             # locus
-                for hgx, clanI in ome_loc[seq0]:
+                for hgx, fam in ome_loc[seq0]:
                     hgs = set(hgx)
-                    clus_hgs[hgx].append((clanI, defaultdict(list),))
+                    clus_hgs[hgx].append((fam, defaultdict(list),))
                     start, end = None, None
                     if i0 < clusplusminus: # is i0 - clusplusminus < 0 ?
                         locus = cds_dict[scaf][:i0+clusplusminus+1] # then gather
@@ -83,13 +83,13 @@ def hgx2omes2gcc_calc(
 
     # res = {og: {}}
     res = {}
-    for og, qs in hgxDict.items():
+    for hg, qs in hgxDict.items():
         hgx_genes, hgx_omes = set(qs), set([q[:q.find('_')] for q in qs])
         hgx_gene_len = len(hgx_genes)
         if hgx_gene_len == 1: # no homologs
             continue
-        res[og] = {}
-        with open(hgx_dir + str(og) + '.out', 'r') as raw:
+        res[hg] = {}
+        with open(hgx_dir + str(hg) + '.out', 'r') as raw:
         # open the blast results
             geneInfo = defaultdict(list)
             for line in raw:
@@ -109,8 +109,8 @@ def hgx2omes2gcc_calc(
         # what about paralogs within the same group?
         for gene in qs: # for each gene
             ome = gene[:gene.find('_')] # identify the ome
-            if ome not in res[og]:
-                res[og][ome] = [0, {}]
+            if ome not in res[hg]:
+                res[hg][ome] = [0, {}]
 
 #            if sbjct_ome in omes: # SHARED OMES PASS, a conservative approach
             # to identify if the subject is in the family of omes
@@ -125,13 +125,13 @@ def hgx2omes2gcc_calc(
  #               if sbj_ome == ome: # same ome, could be recent paralog
                 if sbj_gene in hgx_genes and sbj_ome != ome:
                     # grab the hit positives and identity
-                    res[og][ome][1][sbj_gene] = tuple(geneInfo[gene][0][1:])
+                    res[hg][ome][1][sbj_gene] = tuple(geneInfo[gene][0][1:])
                     hits.add(sbj_gene)
                     if not hgx_genes.difference(hits):
                         break
 #                elif sbj_ome in hgx_omes: # ome in subjects, could be recent paralog
                 else:
-                    res[og][ome][0] += 1 # add one to the failed count
+                    res[hg][ome][0] += 1 # add one to the failed count
                 try:
                     geneInfo[gene].pop(0)
                 except IndexError:
@@ -139,10 +139,10 @@ def hgx2omes2gcc_calc(
 
             # if there are missing hits
 #            print(hgx_gene_len -  len(res[og][ome][1]) + 1)
-            if hgx_gene_len - len(res[og][ome][1]) - 1 > 0:
-                res[og][ome][0] = 0
+            if hgx_gene_len - len(res[hg][ome][1]) - 1 > 0:
+                res[hg][ome][0] = 0
             else:
-                res[og][ome][0] = hgx_gene_len / (hgx_gene_len + res[og][ome][0])
+                res[hg][ome][0] = hgx_gene_len / (hgx_gene_len + res[hg][ome][0])
 
     # populate a binary response dictionary for each ome and its genes that are
     # in the shared HGx; 0 = the OG's best blast hit in this ome is not another
@@ -150,13 +150,13 @@ def hgx2omes2gcc_calc(
     # code that share the HGx
     omeScores = defaultdict(dict)
     ids_y_pos = defaultdict(dict)
-    for og in res:
-        for ome, data in res[og].items():
+    for hg in res:
+        for ome, data in res[hg].items():
             d = data[1]
-            omeScores[ome][og] = data[0]
+            omeScores[ome][hg] = data[0]
             ids, pos = [x[0] for x in d.values()], [x[1] for x in d.values()]
             if ids:
-                ids_y_pos[og][ome] = (min(ids), min(pos))
+                ids_y_pos[hg][ome] = (min(ids), min(pos))
             else:
                 ids, pos = 0, 0
     try:
@@ -188,69 +188,85 @@ def hgx2omes2gcc_calc(
 
 def gcc_mngr(
     hgs, omes, hgx_dir, hgx2loc,
-    db, gene2hg, clusplusminus, hg2gene, modules,
-    moduleOmes, moduleHGxs, ome2i, 
+    db, gene2hg, clusplusminus, hg2gene, gcfs,
+    gcf_omes, gcf_hgxs, ome2i, 
     d2gcc, d2id_, d2pos, cpus = 1
     ):
 
     i2ome = {v: k for k, v in ome2i.items()}
-    if not os.path.isfile(hgx_dir + '../clusOGs.pickle'):
-        hgxGene_cmds = []
-        ome_locs = {ome: defaultdict(list) for ome in omes}
+#    if not os.path.isfile(hgx_dir + '../clus_hgs.pickle'):
+ #       hgxGene_cmds = []
+  #      ome_locs = {ome: defaultdict(list) for ome in omes}
 
-        for i, hgx2omes in modules.items():
-            modHGx = moduleHGxs[i]
-            for hgx, omes in hgx2omes.items():
-                if hgx in d2gcc:
-                    if tuple(omes) in d2gcc[hgx]:
-                        continue
-                omes_set = set(omes)
-                for seq in hgx2loc[hgx]:
-                    ome = seq[:seq.find('_')]
-                    if ome2i[ome] in omes_set:
+   #     for i, hgx2omes in gcfs.items():
+    #        modHGx = gcf_hgxs[i]
+     #       for hgx, omes in hgx2omes.items():
+      #          if hgx in d2gcc:
+       #             if tuple(omes) in d2gcc[hgx]:
+        #                continue
+         #       omes_set = set(omes)
+          #      for seq in hgx2loc[hgx]:
+           #         ome = seq[:seq.find('_')]
+            #        if ome2i[ome] in omes_set:
     #                    if seq not in ome_locs[ome]:
      #                       ome_locs[ome][seq] = []
-                        ome_locs[ome][seq].append((modHGx, i,))
+             #           ome_locs[ome][seq].append((modHGx, i,))
 
-        for ome, ome_loc in ome_locs.items():
-            gff = db[ome]['gff3']
-            hgxGene_cmds.append([gff, ome_loc, gene2hg, clusplusminus])
+#        for ome, ome_loc in ome_locs.items():
+ #           gff = db[ome]['gff3']
+  #          hgxGene_cmds.append([gff, ome_loc, gene2hg, clusplusminus])
 
-        print('\tAssimilating GCF loci', flush = True)
-        with mp.get_context('fork').Pool(processes = cpus) as pool:
-            clus_hgs_prep = pool.starmap(retroactive_grab_hgx_genes, 
-                                         tqdm(hgxGene_cmds, total = len(hgxGene_cmds)))
-            pool.close()
-            pool.join()
-        with open(hgx_dir + '../clusOGs.pickle', 'wb') as out:
-            pickle.dump(clus_hgs_prep, out)
-    else:
-        with open(hgx_dir + '../clusOGs.pickle', 'rb') as raw:
-            clus_hgs_prep = pickle.load(raw)
+   #     print('\tAssimilating GCF loci', flush = True)
+    #    with mp.get_context('fork').Pool(processes = cpus) as pool:
+     #       clus_hgs_prep = pool.starmap(retroactive_grab_hgx_genes, 
+      #                                   tqdm(hgxGene_cmds, total = len(hgxGene_cmds)))
+       #     pool.close()
+        #    pool.join()
+#        with open(hgx_dir + '../clus_hgs.pickle', 'wb') as out:
+ #           pickle.dump(clus_hgs_prep, out)
+  #  else:
+   #     with open(hgx_dir + '../clus_hgs.pickle', 'rb') as raw:
+    #        clus_hgs_prep = pickle.load(raw)
 
-    clus_hgs = {i: (modHGx, defaultdict(list),) \
-                for i, modHGx in moduleHGxs.items()}
+    clus_hgs = {fam: (modHGx, defaultdict(list),) \
+                for fam, modHGx in gcf_hgxs.items()}
 
-    for res in clus_hgs_prep:
+    clus_hgs = {}
+    for fam, loci in gcfs.items():
+# are some gcf_hgx HGs relics of the original hgx and thus only contain one gene?
+# would lower evo_conco scores
+        gcf_hgx = gcf_hgxs[fam]
+        clus_hgs[fam] = [gcf_hgx, defaultdict(list)]
+        gcf_hgx_set = set(gcf_hgx)
+        for loc in loci:
+            for gene in loc:
+                try:
+                    hg = gene2hg[gene]
+                except KeyError:
+                    continue
+                if hg in gcf_hgx_set:
+                    clus_hgs[fam][1][hg].append(gene)
+
+#    for res in clus_hgs_prep:
         # clus_hgs = {hgx: [{og: []}]} list is per locus
-        for hgx, loci in res.items():
-            for clanI, locus in loci:
-                for og in locus:
-                    clus_hgs[clanI][1][og].extend(locus[og])
+ #       for hgx, loci in res.items():
+  #          for fam, locus in loci:
+   #             for hg in locus:
+    #                clus_hgs[fam][1][hg].extend(locus[hg])
     clus_hgs = {
-        clanI: [d[0], {og: set(v) for og, v in d[1].items()}] \
-        for clanI, d in clus_hgs.items()
+        fam: [d[0], {og: set(v) for og, v in d[1].items()}] \
+        for fam, d in clus_hgs.items()
         } # make sets from it
-    # {clanI: [hgx, {og: set(seqs)}}
+    # {fam: [hgx, {og: set(seqs)}}
 
     print('\tCalculating gene cluster committment (GCC) and minimum mean identity (MMI)', flush = True)
     with mp.get_context('fork').Pool(processes = cpus) as pool:
         gcc_res = pool.starmap(
             hgx2omes2gcc_calc,
-            ([moduleHGxs[clanI], moduleOmes[clanI],
-            [i2ome[i] for i in moduleOmes[clanI]],
+            ([gcf_hgxs[fam], gcf_omes[fam],
+            [i2ome[i] for i in gcf_omes[fam]],
             d[1], hgx_dir] \
-             for clanI, d in clus_hgs.items())
+             for fam, d in clus_hgs.items())
             )
         pool.close()
         pool.join()
@@ -313,8 +329,8 @@ def gcc_main(
     hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
     blastp, db, gene2hg, plusminus, hg2gene,
     old_path = 'hgx2omes2gcc.pickle',
-    modules = None, moduleHGxs = None,
-    moduleOmes = None, cpus = 1, printexit = False
+    gcfs = None, gcf_hgxs = None,
+    gcf_omes = None, cpus = 1, printexit = False
     ):
 
 
@@ -332,7 +348,7 @@ def gcc_main(
     else:
         d2gcc, d2id_, d2pos = {}, {}, {}
     
-    hgs = list(chain(*list(moduleHGxs.values())))
+    hgs = list(chain(*list(gcf_hgxs.values())))
     hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgs, 
                         db, hg2gene, cpus = cpus,
                         low_mem = True)
@@ -342,8 +358,8 @@ def gcc_main(
 
     d2gcc, d2id_, d2pos = gcc_mngr(
         list(hgs), list(ome2i.keys()), hgx_dir, hgx2loc,
-        db, gene2hg, plusminus, hg2gene, modules,
-        moduleOmes, moduleHGxs, ome2i, 
+        db, gene2hg, plusminus, hg2gene, gcfs,
+        gcf_omes, gcf_hgxs, ome2i, 
         d2gcc, d2id_, d2pos, cpus = cpus
         )
 #    hgx_dirTar = mp.Process(target=tardir, args=(hgx_dir, True))
