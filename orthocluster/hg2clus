@@ -29,15 +29,14 @@ from datetime import datetime
 from collections import defaultdict
 from mycotools.lib.kontools import \
     intro, outro, format_path, collect_files, \
-    findExecs, eprint, tardir
+    findExecs, eprint, tardir, write_json
 from mycotools.lib.biotools import \
     gff2list
 from mycotools.lib.dbtools import mtdb, masterDB
 from mycotools.gff2svg import main as gff2svg
 from mycotools import db2microsyntree
 from orthocluster.orthocluster.lib import treecalcs, evo_conco, \
-     hgx2gcfs, input_parsing, hgp2hgx, generate_nulls
-from orthocluster.orthocluster.lib.output_data import output_res
+     hgx2gcfs, input_parsing, hgp2hgx, generate_nulls, output_data
 
 
 try:
@@ -267,7 +266,8 @@ def main(
     printexit = False, flag = True, partition_file = None,
     near_single_copy_genes = [], tree_path = None, 
     verbose = False, sim = 'overlap', tune_file = None,
-    dist_type = 'tmd', uniq_sp = False, partition_rank = None
+    dist_type = 'tmd', uniq_sp = False, partition_rank = None,
+    min_merge_perc = 0
     ):
     """
     The general workflow:
@@ -304,7 +304,8 @@ def main(
                                               patch_thresh, gcc_thresh,
                                               samples, n50thresh, flag,
                                               min_gcf_id, inflation, sim, 
-                                              tune_file, dist_type, uniq_sp, partition)
+                                              tune_file, dist_type, uniq_sp, partition,
+                                              min_merge_perc)
 
 
     ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_dict = \
@@ -455,11 +456,14 @@ def main(
     hgx2omes, hgx2loc, hgx2dist, i2hgx, hgx2i = threshold_hgx(hgx2omes, hgx2loc,
                                                     omes2dist, ome2partition, 
                                                     bord_scores_list)
+    with open(wrk_dir + 'hgx2dist.pickle', 'wb') as out:
+        pickle.dump(hgx2dist, out)
+    output_data.output_hgxs(hgx2dist, hgx2omes, hgx2i, i2ome, out_dir)
 
     hgx_dir = f'{wrk_dir}hgx/'
 
 
-    print('\nV. Calling gene clusters from HGxs', flush = True)
+    print('\nV. Calling gene cluster families (GCFs) from HGxs', flush = True)
     if not os.path.isfile(wrk_dir + 'gcfs.pickle'): # need to add this to
     # log parsing
         # Group hgxs
@@ -470,7 +474,7 @@ def main(
             omes2dist = omes2dist, clusplusminus = plusminus, 
             inflation = inflation, min_gcf_id = min_gcf_id,
             min_omes = 2, cpus = cpus, simfun = simfun, printexit = printexit,
-            dist_func = dist_func, uniq_sp = uniq_sp
+            dist_func = dist_func, uniq_sp = uniq_sp, min_merge_perc = min_merge_perc
             )
         with open(wrk_dir + 'gcfs.pickle', 'wb') as pickout:
             pickle.dump([gcfs, gcf_omes, gcf_hgxs, gcf2clan], pickout)
@@ -480,11 +484,11 @@ def main(
         with open(wrk_dir + 'gcfs.pickle', 'rb') as raw:
             gcfs, gcf_omes, gcf_hgxs, gcf2clan = pickle.load(raw)
         # placeholder for legacy data
-        if not isinstance(gcfs, dict):
-            gcfs = {i: v for i, v in enumerate(gcfs)}
-            gcf_omes = {i: v for i, v in enumerate(gcf_omes)}
-            gcf_hgxs = {i: v for i, v in enumerate(gcf_hgxs)}
-            gcf2clan = {i: v for i, v in enumerate(gcf2clan)}
+#        if not isinstance(gcfs, dict):
+ #           gcfs = {i: v for i, v in enumerate(gcfs)}
+  #          gcf_omes = {i: v for i, v in enumerate(gcf_omes)}
+   #         gcf_hgxs = {i: v for i, v in enumerate(gcf_hgxs)}
+    #        gcf2clan = {i: v for i, v in enumerate(gcf2clan)}
 
     if not uniq_sp:
         omes2dist = treecalcs.update_dists(phylo, {i: omes for i, omes in gcf_omes.items()}, 
@@ -494,6 +498,12 @@ def main(
                                         cpus, omes2dist, func = treecalcs.calc_tmd,
                                         uniq_sp = db, i2ome = i2ome)
 
+    # this is a crude pseudo cluster family expectedness check; its pseudo because the HGx
+    # is now the conglomerate of the extracted loci's, and if that locus is derived from
+    # multiple HGxs or the set of omes with that locus is truncated relative to the original
+    # HGx then it is not obtained in the same way the null distribution was constructed;
+    # nevertheless, this is a liberal mechanism that will remove edge cases to reduce computation
+    # If the user doesn't want this, then remove the family percentile argument.
     todel = []
     for i, omes in gcf_omes.items():
         dist = omes2dist[omes]
@@ -504,11 +514,14 @@ def main(
                 continue
         # get the threshold corresponding to the maximum sized HGx 
         # in the family, and the minimum lineages' value [liberal]
-        max_len = max([len(x) for x in gcfs[i]])
-        clus_score = min([clus_scores_list[v][max_len] \
-                          for v in list(parts)])
-        if not dist > clus_score:
-            todel.append(i)
+#        max_len = max([len(x) for x in gcfs[i]])
+        max_len = len(gcf_hgxs[i]) # get the len of the complete HGx
+        # if its too big, we cant evaluate its pseudo-expectedness, so pass
+        if max_len <= plusminus * 2 + 1:
+            clus_score = min([clus_scores_list[v][max_len] \
+                              for v in list(parts)])
+            if not dist > clus_score:
+                todel.append(i)
 
     todel.reverse()
     for i in todel:
@@ -535,8 +548,8 @@ def main(
                             hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
                             blastp, db, gene2hg, plusminus, hg2gene, 
                             old_path = 'hgx2omes2pos.full.pickle',
-                            modules = gcfs, moduleHGxs = gcf_hgxs,
-                            moduleOmes = gcf_omes, printexit = printexit,
+                            gcfs = gcfs, gcf_hgxs = gcf_hgxs,
+                            gcf_omes = gcf_omes, printexit = printexit,
                             cpus = cpus
                             )
     # this is the output directory for hgx2gcf and evo_conco
@@ -580,11 +593,11 @@ def main(
                                         uniq_sp = db, i2ome = i2ome)
 
     print('\nIIX. Writing and annotating clusters', flush = True)
-    output_res(db, wrk_dir, hgx2dist, gcfs, gcf_omes, 
-         i2ome, hgx2omes, out_dir, gcf_hgxs,
+    output_data.output_gcfs(db, wrk_dir, gcfs, gcf_omes, 
+         i2ome, out_dir, gcf_hgxs,
          omes2dist, hgx2omes2gcc, omes2patch, hgx2omes2id,
-         hgx2omes2pos, hgx2loc, gene2hg, plusminus, ome2i,
-         hgx2i, gcf2clan, pfam_path = pfam, dnds_dict = {}, 
+         hgx2omes2pos, gene2hg, plusminus, ome2i,
+         gcf2clan, pfam_path = pfam, dnds_dict = {}, 
          dist_thresh = dist_thresh, cpus = cpus)
 
 
@@ -653,9 +666,12 @@ if __name__ == '__main__':
     fam_opt.add_argument('-s', '--similarity', 
         help = 'GCF similarity metric: [J]accard, [O]verlap, [S]orensen. ' \
              + 'DEFAULT: Overlap coefficient')
-    fam_opt.add_argument('-m', '--minimum_id', type = float, default = 30,
+    fam_opt.add_argument('-mi', '--minimum_id', type = float, default = 30,
         help = 'Percent [0 < value < 100] ID minimum between loci for GCF. ' \
              + 'DEFAULT: 30')
+    fam_opt.add_argument('-mm', '--maximum_merge', type = float, default = 0,
+        help = 'Percent [0 < value < 100] microsynteny distance difference maximum ' \
+             + 'for merging loci in family network')
     fam_opt.add_argument('-I', '--inflation', default = 1.5, type = float,
         help = 'MCL inflation during family detection. DEFAULT: 1.5')
     fam_opt.add_argument('-T', '--tune', 
@@ -671,7 +687,7 @@ if __name__ == '__main__':
         help = 'Null percentile [0 < value < 100] of HGx microsynteny distances. ' \
              + 'Must be less than -fp; DEFAULT: -cp')
     thr_opt.add_argument('-fp', '--gcf_percentile', type = int, default = 70, 
-        help = 'Null percentile [0 < value < 100] of GCF microsynteny distances. ' \
+        help = 'Pseudonull percentile [0 < value < 100] of GCF microsynteny distances. ' \
              + 'DEFAULT: 70')
     thr_opt.add_argument('-ip', '--id_percent', default = 0, type = float,
         help = 'Percent [0 < value < 100] identity minimum for gene cluster family')
@@ -719,6 +735,11 @@ if __name__ == '__main__':
 
     if not args.hgx_percentile:
         args.hgx_percentile = args.gcf_percentile # set the default
+
+    if args.maximum_merge:
+        min_merge_perc = args.maximum_merge/100
+    else:
+        min_merge_perc = 0
 
     if not args.similarity:
         simfun = hgx2gcfs.overlap # set default function
@@ -886,7 +907,8 @@ if __name__ == '__main__':
         min_gcf_id = args.minimum_id / 100, sim = sim, 
         tree_path = format_path(args.tree), tune_file = tune_file,
         dist_thresh = args.md_threshold, uniq_sp = uniq_sp,
-        dist_type = dist, partition_rank = partition_rank
+        dist_type = dist, partition_rank = partition_rank, 
+        min_merge_perc = min_merge_perc
         )
 
     outro(start_time)
