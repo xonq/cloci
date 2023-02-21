@@ -85,6 +85,7 @@ def hgx2omes2gcc_calc(
     res = {}
     for hg, qs in hgxDict.items():
         hgx_genes, hgx_omes = set(qs), set([q[:q.find('_')] for q in qs])
+        # grab the length of the genes associated with this HG
         hgx_gene_len = len(hgx_genes)
         if hgx_gene_len == 1: # no homologs
             continue
@@ -101,20 +102,20 @@ def hgx2omes2gcc_calc(
                 if q in hgx_genes:
                     geneInfo[q].append((s, float(i), float(p)))
                     # dict(geneInfo) = {query: [(sbj, evalue, id, pos)]}
+
+        # sort each query by percent ID (should maybe have a coverage filter)
         geneInfo = {
             k: sorted(v, key = lambda x: x[1], reverse = True) \
             for k,v in geneInfo.items()
-            } # sort each query by percent ID (should maybe have a coverage filter)
+            } 
 
         # what about paralogs within the same group?
-        for gene in qs: # for each gene
+        for gene in qs: # for each gene in the hgx_genes
             ome = gene[:gene.find('_')] # identify the ome
             if ome not in res[hg]:
                 res[hg][ome] = [0, {}]
 
-#            if sbjct_ome in omes: # SHARED OMES PASS, a conservative approach
             # to identify if the subject is in the family of omes
-#            if geneInfo[gene][0][0] in geneInfo: # ONLY SHARED GENES PASS
             hits = {gene}
             # while all cluster homologs aren't accounted for and there remain hits
             if gene not in geneInfo:
@@ -122,26 +123,32 @@ def hgx2omes2gcc_calc(
             while geneInfo[gene]:
                 sbj_gene = geneInfo[gene][0][0]
                 sbj_ome = sbj_gene[:sbj_gene.find('_')]
- #               if sbj_ome == ome: # same ome, could be recent paralog
+                # if the subject is also in the checked queries and it is not
+                # a recent paralog of the query species
                 if sbj_gene in hgx_genes and sbj_ome != ome:
                     # grab the hit positives and identity
                     res[hg][ome][1][sbj_gene] = tuple(geneInfo[gene][0][1:])
                     hits.add(sbj_gene)
                     if not hgx_genes.difference(hits):
                         break
-#                elif sbj_ome in hgx_omes: # ome in subjects, could be recent paralog
-                else:
-                    res[hg][ome][0] += 1 # add one to the failed count
+                # add one to the failed count
+                else: 
+                    res[hg][ome][0] += 1 
+                # proceed to the next query
                 try:
                     geneInfo[gene].pop(0)
                 except IndexError:
                     break
 
             # if there are missing hits
-#            print(hgx_gene_len -  len(res[og][ome][1]) + 1)
             if hgx_gene_len - len(res[hg][ome][1]) - 1 > 0:
-                res[hg][ome][0] = 0
+#                res[hg][ome][0] = 0
+                # then get the percent of observed hits that are valid
+                hit_len = res[hg][ome][0] + len(res[hg][ome][1])
+                res[hg][ome][0] = hit_len / (hit_len + res[hg][ome][0])
             else:
+                # the score for this HG and ome is the total of the genes in this
+                # hgx divided by the total + the failed genes
                 res[hg][ome][0] = hgx_gene_len / (hgx_gene_len + res[hg][ome][0])
 
     # populate a binary response dictionary for each ome and its genes that are
@@ -282,55 +289,83 @@ def gcc_mngr(
     return hgx2omes2gcc, hgx2omes2id, hgx2omes2pos
 
 
-def prep_blast_cmds(db, hgs, hg_dir, hgx_dir, minid = 30, diamond = 'diamond'):
+def prep_blast_cmds(db, hgs, hg_dir, hgx_dir, 
+                    minid = 30, algorithm = 'diamond',
+                    sensitivity = ''):
 
     alnd_hgs = set([int(os.path.basename(x[:-4])) \
                     for x in collect_files(hgx_dir, 'out')])
-    dmnd_dbs = set([int(os.path.basename(x[:-5])) \
-                    for x in collect_files(hgx_dir, 'dmnd')])
     missing_alns = set(hgs).difference(alnd_hgs)
-    missing_dmnds = set(missing_alns).difference(dmnd_dbs)
 
-    cmds1 = [(diamond, 'makedb', '--db', f'{hgx_dir}{hg}.dmnd',
-              '--in', f'{hg_dir}{hg}.faa', '--threads', '2') \
-              for hg in missing_dmnds]
-    cmds2 = [((diamond, 'blastp', '--query', f'{hg_dir}{hg}.faa',
-              '--db', f'{hgx_dir}{hg}.dmnd', '-o', f'{hgx_dir}{hg}.out.tmp',
-              '--outfmt', '6', 'qseqid', 'sseqid', 'evalue', 'pident',
-              'ppos', '--threads', '2', '--id', str(minid),
-              '--no-self-hits', '&&'), ('mv', f'{hgx_dir}{hg}.out.tmp',
-              f'{hgx_dir}{hg}.out')) for hg in missing_alns]
+    if os.path.basename(algorithm) == 'diamond':
+        dmnd_dbs = set([int(os.path.basename(x[:-5])) \
+                    for x in collect_files(hgx_dir, 'dmnd')])
+        missing_dmnds = set(missing_alns).difference(dmnd_dbs)
+        cmds1 = [(diamond, 'makedb', '--db', f'{hgx_dir}{hg}.dmnd',
+                  '--in', f'{hg_dir}{hg}.faa', '--threads', '2') \
+                  for hg in missing_dmnds]
+        if sensitivity:
+            cmds2 = [((diamond, 'blastp', '--query', f'{hg_dir}{hg}.faa',
+                      '--db', f'{hgx_dir}{hg}.dmnd', '-o', f'{hgx_dir}{hg}.out.tmp',
+                      '--outfmt', '6', 'qseqid', 'sseqid', 'evalue', 'pident',
+                      'ppos', '--threads', '2', '--id', str(minid), f'--{sensitivity}',
+                      '--no-self-hits', '&&'), ('mv', f'{hgx_dir}{hg}.out.tmp',
+                      f'{hgx_dir}{hg}.out')) for hg in missing_alns]
+        else:
+            cmds2 = [((diamond, 'blastp', '--query', f'{hg_dir}{hg}.faa',
+                      '--db', f'{hgx_dir}{hg}.dmnd', '-o', f'{hgx_dir}{hg}.out.tmp',
+                      '--outfmt', '6', 'qseqid', 'sseqid', 'evalue', 'pident',
+                      'ppos', '--threads', '2', '--id', str(minid),
+                      '--no-self-hits', '&&'), ('mv', f'{hgx_dir}{hg}.out.tmp',
+                      f'{hgx_dir}{hg}.out')) for hg in missing_alns]
+        
+    elif os.path.basename(algorithm) == 'blastp':
+        cmds1 = []
+'-outfmt', '6 " qseqid sseqid pident"'
+        cmds2 = [(('blastp', '-query', f'{hg_dir}{hg}.faa', '-subject',
+                   f'{hg_dir}{hg}.faa', '-out', f'{hgx_dir}{hg}.out.tmp',
+                   '-outfmt', '6 "qseqid sseqid evalue pident ppos"', '&&'),
+                   ('mv', f'{hgx_dir}{hg}.out.tmp', f'{hgx_dir}{hg}.out')) \
+                  for hg in missing_alns]
 
     return cmds1, cmds2
 
 
-def run_blast(hgs, db, hg_dir, hgx_dir, 
-              diamond = 'diamond', printexit = False, cpus = 1):
+def run_blast(hgs, db, hg_dir, hgx_dir, algorithm = 'diamond', 
+              printexit = False, sensitivity = '', cpus = 1):
 #    hgs = sorted(set(chain(*list(hgx2loc.keys()))))
-    db_cmds, dmnd_cmds = prep_blast_cmds(db, hgs, hg_dir, hgx_dir, diamond = 'diamond')
-    if printexit and dmnd_cmds:
-        print('\tPreparing diamond commands and exiting', flush = True)
-        with open(hgx_dir + '../../makedb.sh', 'w') as out:
-            out.write('\n'.join([' '.join(x) for x in db_cmds]))
+    db_cmds, algn_cmds = prep_blast_cmds(db, hgs, hg_dir, hgx_dir, 
+                                         algorithm = algorithm, 
+                                         sensitivity = sensitivity)
+    if printexit and algn_cmds:
+        print(f'\tPreparing {algorithm} commands and exiting', flush = True)
+        if db_cmds:
+            with open(hgx_dir + '../../makedb.sh', 'w') as out:
+                out.write('\n'.join([' '.join(x) for x in db_cmds]))
+            print('\n`diamond makedb` commands outputted to ' \
+                 + f'{hgx_dir}../../makedb.sh; run this first', flush = True)
         with open(hgx_dir + '../../srch.sh', 'w') as out:
-            out.write('\n'.join([' '.join(x) for x in dmnd_cmds]))
-        print('\nDiamond commands outputted to `<OUTPUT>/*.sh` ' \
-            + 'Run `makedb.sh` first', flush = True)
+            for algn, tmp_mv in cmds2:
+                out.write(' '.join(algn) + '\n' + ' '.join(tmp_mv) + '\n')
+        print(f'\n{algorithm} commands outputted to {hgx_dir}../../srch.sh',
+              flush = True)
         sys.exit(0)
-    elif dmnd_cmds:
-        print(f'\tBuilding {len(db_cmds)} diamond dbs', flush = True)
-        multisub(db_cmds, verbose = 2, processes = cpus)
+    elif algn_cmds:
+        if db_cmds:
+            print(f'\tBuilding {len(db_cmds)} diamond dbs', flush = True)
+            multisub(db_cmds, verbose = 2, processes = cpus)
         print(f'\tAligning {len(dmnd_cmds)} HGs', flush = True)
-        multisub(dmnd_cmds, verbose = 2, processes = cpus,
+        multisub(algn_cmds, verbose = 2, processes = cpus,
                  injectable = True)
 
 
 def gcc_main(
     hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
-    blastp, db, gene2hg, plusminus, hg2gene,
+    algorithm, db, gene2hg, plusminus, hg2gene,
     old_path = 'hgx2omes2gcc.pickle',
     gcfs = None, gcf_hgxs = None,
-    gcf_omes = None, cpus = 1, printexit = False
+    gcf_omes = None, cpus = 1, printexit = False,
+    algn_sens = ''
     ):
 
 
@@ -352,9 +387,9 @@ def gcc_main(
     hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgs, 
                         db, hg2gene, cpus = cpus,
                         low_mem = True)
-    run_blast(hgs, db, hg_dir, 
-              hgx_dir, cpus = cpus,
-              diamond = 'diamond', printexit = printexit)
+    run_blast(hgs, db, hg_dir, hgx_dir, cpus = cpus,
+              algorithm = algorithm, printexit = printexit,
+              sensitivity = algn_sens)
 
     d2gcc, d2id_, d2pos = gcc_mngr(
         list(hgs), list(ome2i.keys()), hgx_dir, hgx2loc,
