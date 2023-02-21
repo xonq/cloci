@@ -219,21 +219,21 @@ def clan_to_gcf_sim(
         if gene_len > 1:
             gene_set = set(genes)
             algn_base = f'{hgx_dir}{hg}.out'
-            try:
-                with open(algn_base, 'r') as raw:
-                    for line in raw:
-                        d = line.rstrip().split()
-                        q, s, pident = d[0], d[1], d[-2]
-                        if {q, s}.issubset(gene_set):
-                            if q not in blast_ids[hg]:
-                                blast_ids[hg][q] = {}
-                            blast_ids[hg][q][s] = float(pident)/100 # adjust diamond to decimal
-                        if len(blast_ids[hg]) == gene_len:
-                            break
-            except FileNotFoundError:
-                 blast_ids = run_hgx_blast(blast_ids, hg_dir, hg, genes, 
-                              hgx_dir, clanI, minid = minid,
-                              diamond = 'diamond')  
+    #        try:
+            with open(algn_base, 'r') as raw:
+                for line in raw:
+                    d = line.rstrip().split()
+                    q, s, pident = d[0], d[1], d[-2]
+                    if {q, s}.issubset(gene_set):
+                        if q not in blast_ids[hg]:
+                            blast_ids[hg][q] = {}
+                        blast_ids[hg][q][s] = float(pident)/100 # adjust diamond to decimal
+                    if len(blast_ids[hg]) == gene_len:
+                        break
+#            except FileNotFoundError:
+ #                blast_ids = run_hgx_blast(blast_ids, hg_dir, hg, genes, 
+  #                            hgx_dir, clanI, minid = minid,
+   #                           algorithm = algorithm)  
 
     # could be expedited by multiprocessing a writer and numba njit the math
     if blast_ids:
@@ -269,7 +269,7 @@ def clan_to_gcf_sim(
  
 def run_hgx_blast(blast_ids, hg_dir, hg, genes, 
                   hgx_dir, clanI, minid = 30,
-                  diamond = 'diamond'):
+                  algorithm = 'diamond'):
     hg_file = f'{hg_dir}{hg}.faa'
     fileBase = hgx_dir + str(hg)
     if not os.path.isfile(fileBase + '.out'):
@@ -657,10 +657,10 @@ def classify_gcfs(
     wrk_dir, ome2partition, bord_scores_list,
     hg2gene, omes2dist = {}, clusplusminus = 3,
     inflation = 1.5, min_hgx_overlap = 1, min_omes = 2, 
-    minid = 30, cpus = 1, diamond = 'diamond',
+    minid = 30, cpus = 1, algorithm = 'diamond',
     min_gcf_id = 0.3, simfun = overlap, printexit = False,
     tune = False, dist_func = treecalcs.calc_tmd,
-    uniq_sp = False, min_merge_perc = 0
+    uniq_sp = False, min_merge_perc = 0, algn_sens = ''
     ):
 
     i2ome = {v: k for k, v in ome2i.items()}
@@ -862,7 +862,8 @@ def classify_gcfs(
     hg_dir = input_parsing.hg_fa_mngr(wrk_dir, hg_dir, 
                              hgs, db, hg2gene, cpus = cpus)
     evo_conco.run_blast(hgs, db, hg_dir, hgx_dir, cpus = cpus,
-                        diamond = diamond, printexit = printexit)
+                        algorithm = algorithm, printexit = printexit,
+                        sensitivity = algn_sens)
 
 
     print('\t\tCalling GCFs', flush = True)
