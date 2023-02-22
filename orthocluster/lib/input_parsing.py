@@ -1,4 +1,3 @@
-
 import re
 import os
 import sys
@@ -554,7 +553,7 @@ def symlink_files(f0, f1):
     os.symlink(f0, f1)
 
 
-def big_acc2fa(db, hg_dir, hgs, hg2gene, cpus = 1):
+def load_ome2fa(db):
     big_fa = {}
     with mp.Pool(processes = cpus) as pool:
         fa_dicts = pool.map(fa2dict, 
@@ -564,6 +563,9 @@ def big_acc2fa(db, hg_dir, hgs, hg2gene, cpus = 1):
         pool.join()
     for res in fa_dicts:
         big_fa = {**big_fa, **res}
+    return big_fa
+
+def big_acc2fa(db, hg_dir, hgs, hg2gene, big_fa, cpus = 1):
     big_dict = mp.Manager().dict(big_fa)
     with mp.Pool(processes = cpus) as pool:
         pool.starmap(write_hg_fa, tqdm(((f'{hg_dir}{hg}.faa',
@@ -596,7 +598,8 @@ def hg_fa_mngr(wrk_dir, hg_dir, hgs,
                 pool.close()
                 pool.join()
         else:
-            big_acc2fa(db, new_hg_dir, hgs, hg2gene, cpus)
+            big_fa = load_ome2fa(db)
+            big_acc2fa(db, new_hg_dir, hgs, hg2gene, big_fa, cpus)
     else: # predetermined hg input
         hg_fa_cmds = []
         orthofinder = False
