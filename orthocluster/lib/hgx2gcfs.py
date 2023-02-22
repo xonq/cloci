@@ -12,7 +12,7 @@ from datetime import datetime
 from itertools import combinations, chain
 from scipy.sparse import lil_matrix, csr_matrix
 from collections import defaultdict, Counter
-from mycotools.lib.biotools import gff2list
+from mycotools.lib.biotools import gff2list, dict2fa
 from mycotools.lib.kontools import write_json, read_json, collect_files, \
                                    checkdir, eprint
 from orthocluster.orthocluster.lib import input_parsing, treecalcs, evo_conco
@@ -651,6 +651,15 @@ def mcl2gcfs(gcf_dir, loci, hgxXloci, ome2i, inflation,
            {i: v for i, v in enumerate(list_gcf2clan)}
 
 
+def clan2hg_fa(hg_dir, clan, hg, genes, big_fa):
+    out_fa = f'{hg_dir}{hg}.{clan}.faa'
+    hg_fa = {gene: big_fa[gene] for gene in genes}
+    with open(out_fa, 'w') as out:
+        out.write(dict2fa(out_fa))
+    
+
+
+
 def classify_gcfs(
     hgx2loc, db, gene2hg, i2hgx, hgx2i,
     phylo, ome2i, hgx2omes, hg_dir, hgx_dir,
@@ -857,13 +866,35 @@ def classify_gcfs(
 
     print('\t\tOutputting HG fastas', flush = True)
 #    hgs_prep = set(chain(*list(chain(*list(clanHGloci.values())))))
-    hgs_prep = set(chain(*list(chain(*clanHGloci))))
-    hgs = sorted([x for x in hgs_prep if x is not None])
-    hg_dir = input_parsing.hg_fa_mngr(wrk_dir, hg_dir, 
-                             hgs, db, hg2gene, cpus = cpus)
-    evo_conco.run_blast(hgs, db, hg_dir, hgx_dir, cpus = cpus,
-                        algorithm = algorithm, printexit = printexit,
-                        sensitivity = algn_sens)
+    if not sens_gcf_sim:
+        hgs_prep = set(chain(*list(chain(*clanHGloci))))
+        hgs = sorted([x for x in hgs_prep if x is not None])
+        hg_dir = input_parsing.hg_fa_mngr(wrk_dir, hg_dir, 
+                                 hgs, db, hg2gene, cpus = cpus)
+        evo_conco.run_blast(hgs, db, hg_dir, hgx_dir, cpus = cpus,
+                            algorithm = algorithm, printexit = printexit,
+                            sensitivity = algn_sens)
+    else:
+        big_fa = input_parsing.load_ome2fa(db)
+        big_dict = mp.Manager().dict(big_fa)
+        for clan, loci in enumerate(clanLoci):
+            hg_loci = clanHGloci[clan]
+            clan_hg2gene = defaultdict(list)
+            for loc_i, locus in enumerate(loci):
+                hg_locus = hg_loci[loc_i]
+                for gene_i, gene in enumerate(locus):
+                    hg = hg_locus[gene_i]
+                    clan_hg2gene[hg].append(gene)
+            if len(clan_hg2gene) > 100:
+                with mp.Pool(processes = cpus) as pool:
+                    pool.starmap(clan2hg_fa, ((hg_dir, clan,
+                                                    hg, genes, big_dict) \
+                                                   for hg, genes in \
+                                                   clan_hg2gene.items()))
+            else:
+                for hg, genes in clan_hg2gene.items():
+                    clan2hg_fa(hg_dir, clan, hg, genes, big_fa)
+
 
 
     print('\t\tCalling GCFs', flush = True)
