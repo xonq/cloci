@@ -89,20 +89,22 @@ def hgx2omes2gcc_calc(
         hgx_gene_len = len(hgx_genes)
         if hgx_gene_len == 1: # no homologs
             continue
-        res[hg] = {}
-        with open(hgx_dir + str(hg) + '.out', 'r') as raw:
-        # open the blast results
-            geneInfo = defaultdict(list)
-            for line in raw:
-                d = line.rstrip().split('\t')
-                if len(d) == 4:
-                    q,s,i,p = d
-                elif len(d) == 5:
-                    q,s,e,i,p = d
-                if q in hgx_genes:
-                    geneInfo[q].append((s, float(i), float(p)))
-                    # dict(geneInfo) = {query: [(sbj, evalue, id, pos)]}
-
+        try:
+            with open(hgx_dir + str(hg) + '.out', 'r') as raw:
+                res[hg] = {}
+                # open the blast results
+                geneInfo = defaultdict(list)
+                for line in raw:
+                    d = line.rstrip().split('\t')
+                    q, s, e, i = d
+                    if q in hgx_genes:
+                        geneInfo[q].append((s, float(i))) #, float(p)))
+                        # dict(geneInfo) = {query: [(sbj, id)]}
+        # if the file doesnt exist at this point then something went wrong with
+        # the alignment. for mmseqs, this can happen if the genes are too small
+        # relative to the default kmer length
+        except FileNotFoundError:
+            continue
         # sort each query by percent ID (should maybe have a coverage filter)
         geneInfo = {
             k: sorted(v, key = lambda x: x[1], reverse = True) \
@@ -121,13 +123,13 @@ def hgx2omes2gcc_calc(
             if gene not in geneInfo:
                 continue
             while geneInfo[gene]:
-                sbj_gene = geneInfo[gene][0][0]
+                sbj_gene, sbj_id = geneInfo[gene][0]
                 sbj_ome = sbj_gene[:sbj_gene.find('_')]
                 # if the subject is also in the checked queries and it is not
                 # a recent paralog of the query species
                 if sbj_gene in hgx_genes and sbj_ome != ome:
-                    # grab the hit positives and identity
-                    res[hg][ome][1][sbj_gene] = tuple(geneInfo[gene][0][1:])
+                    # grab the hit identity
+                    res[hg][ome][1][sbj_gene] = sbj_id
                     hits.add(sbj_gene)
                     if not hgx_genes.difference(hits):
                         break
@@ -159,13 +161,13 @@ def hgx2omes2gcc_calc(
     ids_y_pos = defaultdict(dict)
     for hg in res:
         for ome, data in res[hg].items():
-            d = data[1]
-            omeScores[ome][hg] = data[0]
-            ids, pos = [x[0] for x in d.values()], [x[1] for x in d.values()]
+            t_gcc, t_ids_dict = data
+            omeScores[ome][hg] = t_gcc
+            ids = list(t_ids_dict.values()) #pos = [x[1] for x in d.values()]
             if ids:
-                ids_y_pos[hg][ome] = (min(ids), min(pos))
+                ids_y_pos[hg][ome] = min(ids)# , min(pos))
             else:
-                ids, pos = 0, 0
+                ids_y_pos[hg][ome] = 0 #, pos = 0, 0
     try:
         # average score of each og (perhaps needs to be weighted by presence)
         # sum of percent top hits that're in GCF adjusted number of ogs appear
@@ -179,61 +181,28 @@ def hgx2omes2gcc_calc(
         gccScore = 0
 
     # average minimum identity / minimum positive; for each gene homolog group
-    gcf_min_id, gcf_min_pos, total = 0, 0, 0
-    for og, ome_dict in ids_y_pos.items():
-        gcf_min_id += sum([x[0] for x in ome_dict.values()])
-        gcf_min_pos += sum([x[1] for x in ome_dict.values()])
+    gcf_min_id, total = 0, 0 #, gcf_min_pos, total = 0, 0, 0
+    for ome_dict in ids_y_pos.values():
+        gcf_min_id += sum(ome_dict.values())
+#        gcf_min_pos += sum([x[1] for x in ome_dict.values()])
         total += len(ome_dict)
     try:
         gcf_min_id /= total
-        gcf_min_pos /= total
+#        gcf_min_pos /= total
     except ZeroDivisionError:
-        gcf_min_id, gcf_min_pos = 0, 0
+        gcf_min_id = 0 #, gcf_min_pos = 0, 0
 
-    return hgx, omesI, gccScore, gcf_min_id, gcf_min_pos
+    return hgx, omesI, gccScore, gcf_min_id #, gcf_min_pos
 
 
 def gcc_mngr(
     hgs, omes, hgx_dir, hgx2loc,
     db, gene2hg, clusplusminus, hg2gene, gcfs,
     gcf_omes, gcf_hgxs, ome2i, 
-    d2gcc, d2id_, d2pos, cpus = 1
+    d2gcc, d2id_, cpus = 1 #d2pos, cpus = 1
     ):
 
     i2ome = {v: k for k, v in ome2i.items()}
-#    if not os.path.isfile(hgx_dir + '../clus_hgs.pickle'):
- #       hgxGene_cmds = []
-  #      ome_locs = {ome: defaultdict(list) for ome in omes}
-
-   #     for i, hgx2omes in gcfs.items():
-    #        modHGx = gcf_hgxs[i]
-     #       for hgx, omes in hgx2omes.items():
-      #          if hgx in d2gcc:
-       #             if tuple(omes) in d2gcc[hgx]:
-        #                continue
-         #       omes_set = set(omes)
-          #      for seq in hgx2loc[hgx]:
-           #         ome = seq[:seq.find('_')]
-            #        if ome2i[ome] in omes_set:
-    #                    if seq not in ome_locs[ome]:
-     #                       ome_locs[ome][seq] = []
-             #           ome_locs[ome][seq].append((modHGx, i,))
-
-#        for ome, ome_loc in ome_locs.items():
- #           gff = db[ome]['gff3']
-  #          hgxGene_cmds.append([gff, ome_loc, gene2hg, clusplusminus])
-
-   #     print('\tAssimilating GCF loci', flush = True)
-    #    with mp.get_context('fork').Pool(processes = cpus) as pool:
-     #       clus_hgs_prep = pool.starmap(retroactive_grab_hgx_genes, 
-      #                                   tqdm(hgxGene_cmds, total = len(hgxGene_cmds)))
-       #     pool.close()
-        #    pool.join()
-#        with open(hgx_dir + '../clus_hgs.pickle', 'wb') as out:
- #           pickle.dump(clus_hgs_prep, out)
-  #  else:
-   #     with open(hgx_dir + '../clus_hgs.pickle', 'rb') as raw:
-    #        clus_hgs_prep = pickle.load(raw)
 
     clus_hgs = {fam: (modHGx, defaultdict(list),) \
                 for fam, modHGx in gcf_hgxs.items()}
@@ -254,12 +223,6 @@ def gcc_mngr(
                 if hg in gcf_hgx_set:
                     clus_hgs[fam][1][hg].append(gene)
 
-#    for res in clus_hgs_prep:
-        # clus_hgs = {hgx: [{og: []}]} list is per locus
- #       for hgx, loci in res.items():
-  #          for fam, locus in loci:
-   #             for hg in locus:
-    #                clus_hgs[fam][1][hg].extend(locus[hg])
     clus_hgs = {
         fam: [d[0], {og: set(v) for og, v in d[1].items()}] \
         for fam, d in clus_hgs.items()
@@ -280,18 +243,19 @@ def gcc_mngr(
 
     hgx2omes2gcc = defaultdict(dict)
     hgx2omes2id = defaultdict(dict)
-    hgx2omes2pos = defaultdict(dict)
-    for hgx, omes, score, id_, pos in gcc_res:
+#    hgx2omes2pos = defaultdict(dict)
+    for hgx, omes, score, id_ in gcc_res: # pos in gcc_res:
         hgx2omes2gcc[hgx][omes] = score
         hgx2omes2id[hgx][omes] = id_
-        hgx2omes2pos[hgx][omes] = pos
+ #       hgx2omes2pos[hgx][omes] = pos
 
-    return hgx2omes2gcc, hgx2omes2id, hgx2omes2pos
+    return hgx2omes2gcc, hgx2omes2id #, hgx2omes2pos
 
 
 def prep_blast_cmds(db, hgs, hg_dir, hgx_dir, 
                     minid = 30, algorithm = 'diamond',
-                    sensitivity = ''):
+                    sensitivity = '', hg2gene = None,
+                    cpus = 1):
 
     alnd_hgs = set([int(os.path.basename(x[:-4])) \
                     for x in collect_files(hgx_dir, 'out')])
@@ -301,62 +265,95 @@ def prep_blast_cmds(db, hgs, hg_dir, hgx_dir,
         dmnd_dbs = set([int(os.path.basename(x[:-5])) \
                     for x in collect_files(hgx_dir, 'dmnd')])
         missing_dmnds = set(missing_alns).difference(dmnd_dbs)
-        cmds1 = [(diamond, 'makedb', '--db', f'{hgx_dir}{hg}.dmnd',
+        cmds1 = [(algorithm, 'makedb', '--db', f'{hgx_dir}{hg}.dmnd',
                   '--in', f'{hg_dir}{hg}.faa', '--threads', '2') \
                   for hg in missing_dmnds]
         if sensitivity:
-            cmds2 = [((diamond, 'blastp', '--query', f'{hg_dir}{hg}.faa',
+            cmds2 = [((algorithm, 'blastp', '--query', f'{hg_dir}{hg}.faa',
                       '--db', f'{hgx_dir}{hg}.dmnd', '-o', f'{hgx_dir}{hg}.out.tmp',
                       '--outfmt', '6', 'qseqid', 'sseqid', 'evalue', 'pident',
-                      'ppos', '--threads', '2', '--id', str(minid), f'--{sensitivity}',
+                      '--threads', '2', '--id', str(minid), f'--{sensitivity}',
                       '--no-self-hits', '&&'), ('mv', f'{hgx_dir}{hg}.out.tmp',
                       f'{hgx_dir}{hg}.out')) for hg in missing_alns]
         else:
-            cmds2 = [((diamond, 'blastp', '--query', f'{hg_dir}{hg}.faa',
+            cmds2 = [((algorithm, 'blastp', '--query', f'{hg_dir}{hg}.faa',
                       '--db', f'{hgx_dir}{hg}.dmnd', '-o', f'{hgx_dir}{hg}.out.tmp',
                       '--outfmt', '6', 'qseqid', 'sseqid', 'evalue', 'pident',
-                      'ppos', '--threads', '2', '--id', str(minid),
+                      '--threads', '2', '--id', str(minid),
                       '--no-self-hits', '&&'), ('mv', f'{hgx_dir}{hg}.out.tmp',
                       f'{hgx_dir}{hg}.out')) for hg in missing_alns]
-        
+    # NEED to increase max seq output 
     elif os.path.basename(algorithm) == 'blastp':
         cmds1 = []
-'-outfmt', '6 " qseqid sseqid pident"'
-        cmds2 = [(('blastp', '-query', f'{hg_dir}{hg}.faa', '-subject',
+        cmds2 = [((algorithm, '-query', f'{hg_dir}{hg}.faa', '-subject',
                    f'{hg_dir}{hg}.faa', '-out', f'{hgx_dir}{hg}.out.tmp',
-                   '-outfmt', '6 "qseqid sseqid evalue pident ppos"', '&&'),
+                   '-outfmt', '6 "qseqid sseqid evalue pident"', '-num_threads',
+                   str(cpus*2),
+                   '-max_target_seqs', str(len(hg2gene[hg])), '&&'),
                    ('mv', f'{hgx_dir}{hg}.out.tmp', f'{hgx_dir}{hg}.out')) \
                   for hg in missing_alns]
+    elif os.path.basename(algorithm) == 'mmseqs':
+        mmseqs_dbs = set([int(os.path.basename(x[:-7])) \
+                     for x in collect_files(hgx_dir, 'mmseqs')])
+        missing_mmseqs = set(missing_alns).difference(mmseqs_dbs)
+        cmds1 = [(algorithm , 'createdb', f'{hg_dir}{hg}.faa', f'{hgx_dir}{hg}.mmseqs',
+                  '--createdb-mode', '1', '--shuffle', '0') for hg in missing_mmseqs]
+        cmds2 = [((algorithm, 'search', f'{hgx_dir}{hg}.mmseqs', f'{hgx_dir}{hg}.mmseqs',
+                  f'{hgx_dir}{hg}.raw', f'{hgx_dir}tmp{hg}', '--threads', str(cpus*2),
+                  '--num-iterations', '3', '-s', '7.5', '-e', '0.001', 
+                  '--max-seqs', str(len(hg2gene[hg])), '--max-rejected', '10', 
+                  '--min-ungapped-score', '30', '&&'),
+                  (algorithm, 'convertalis', f'{hgx_dir}{hg}.mmseqs', f'{hgx_dir}{hg}.mmseqs',
+                   f'{hgx_dir}{hg}.raw', f'{hgx_dir}{hg}.out.tmp', '--format-output', 
+                   'query,target,evalue,pident', '&&'),
+                  ('mv', f'{hgx_dir}{hg}.out.tmp', f'{hgx_dir}{hg}.out', '&&'),
+                  ('rm', '-rf', f'{hgx_dir}tmp{hg}')) for hg in missing_alns]
 
     return cmds1, cmds2
 
 
 def run_blast(hgs, db, hg_dir, hgx_dir, algorithm = 'diamond', 
-              printexit = False, sensitivity = '', cpus = 1):
+              printexit = False, sensitivity = '', hg2gene = None,
+              cpus = 1):
 #    hgs = sorted(set(chain(*list(hgx2loc.keys()))))
     db_cmds, algn_cmds = prep_blast_cmds(db, hgs, hg_dir, hgx_dir, 
                                          algorithm = algorithm, 
-                                         sensitivity = sensitivity)
-    if printexit and algn_cmds:
+                                         sensitivity = sensitivity,
+                                         hg2gene = hg2gene, cpus = cpus)
+    if algn_cmds:
         print(f'\tPreparing {algorithm} commands and exiting', flush = True)
         if db_cmds:
-            with open(hgx_dir + '../../makedb.sh', 'w') as out:
+            with open(hgx_dir + '../makedb.sh', 'w') as out:
                 out.write('\n'.join([' '.join(x) for x in db_cmds]))
-            print('\n`diamond makedb` commands outputted to ' \
-                 + f'{hgx_dir}../../makedb.sh; run this first', flush = True)
-        with open(hgx_dir + '../../srch.sh', 'w') as out:
-            for algn, tmp_mv in cmds2:
-                out.write(' '.join(algn) + '\n' + ' '.join(tmp_mv) + '\n')
-        print(f'\n{algorithm} commands outputted to {hgx_dir}../../srch.sh',
-              flush = True)
-        sys.exit(0)
-    elif algn_cmds:
+        with open(hgx_dir + '../srch.sh', 'w') as out:
+            if len(algn_cmds[0]) == 2:
+                for algn, tmp_mv in algn_cmds:
+                    out.write(' '.join(algn) + '\n' + ' '.join(tmp_mv) + '\n')
+            else:
+                for algn, convert, tmp_mv, rm in algn_cmds:
+                    out.write(' '.join(algn[:-1]) + '\n' + ' '.join(convert[:-1]) \
+                            + '\n' + ' '.join(tmp_mv[:-1]) + '\n' + ' '.join(rm) \
+                            + '\n\n')
+        if printexit:
+            print(f'\n{algorithm} db commands outputted to ' \
+                 + f'{hgx_dir}../makedb.sh; run this first', flush = True)
+            print(f'\n{algorithm} commands outputted to {hgx_dir}../srch.sh',
+                  flush = True)
+            sys.exit(0)
+
         if db_cmds:
-            print(f'\tBuilding {len(db_cmds)} diamond dbs', flush = True)
+            print(f'\tBuilding {len(db_cmds)} aligner DBs', flush = True)
             multisub(db_cmds, verbose = 2, processes = cpus)
-        print(f'\tAligning {len(dmnd_cmds)} HGs', flush = True)
-        multisub(algn_cmds, verbose = 2, processes = cpus,
-                 injectable = True)
+        print(f'\tAligning {len(algn_cmds)} HGs', flush = True)
+        if algorithm == 'diamond':
+            multisub(algn_cmds, verbose = 2, processes = cpus,
+                     injectable = True)
+        else: # leave the multithreading optimization to the program
+#            multisub(algn_cmds, verbose = 2, processes = round((cpus - 1)/2),
+ #                    injectable = True)
+            # launch 1 subprocess to minimize python overhead
+            subprocess.call(environ['SHELL'], f'{hgx_dir}../srch.sh',
+                            stdout = subprocess.DEVNULL)
 
 
 def gcc_main(
@@ -378,10 +375,10 @@ def gcc_main(
             d2gcc = pickle.load(pickin)
         with open(wrk_dir + 'hgx2omes2id.full.pickle', 'rb') as pickin:
             d2id_ = pickle.load(pickin)
-        with open(wrk_dir + 'hgx2omes2pos.full.pickle', 'rb') as pickin:
-            d2pos = pickle.load(pickin)
+#        with open(wrk_dir + 'hgx2omes2pos.full.pickle', 'rb') as pickin:
+ #           d2pos = pickle.load(pickin)
     else:
-        d2gcc, d2id_, d2pos = {}, {}, {}
+        d2gcc, d2id_ = {}, {} #, d2pos = {}, {}, {}
     
     hgs = list(chain(*list(gcf_hgxs.values())))
     hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgs, 
@@ -389,13 +386,15 @@ def gcc_main(
                         low_mem = True)
     run_blast(hgs, db, hg_dir, hgx_dir, cpus = cpus,
               algorithm = algorithm, printexit = printexit,
-              sensitivity = algn_sens)
+              sensitivity = algn_sens, hg2gene = hg2gene,
+              cpus = cpus)
 
-    d2gcc, d2id_, d2pos = gcc_mngr(
+    d2gcc, d2id_ = gcc_mngr(
+        #, d2pos = gcc_mngr(
         list(hgs), list(ome2i.keys()), hgx_dir, hgx2loc,
         db, gene2hg, plusminus, hg2gene, gcfs,
         gcf_omes, gcf_hgxs, ome2i, 
-        d2gcc, d2id_, d2pos, cpus = cpus
+        d2gcc, d2id_, cpus = cpus #d2pos, cpus = cpus
         )
 #    hgx_dirTar = mp.Process(target=tardir, args=(hgx_dir, True))
  #   hgx_dirTar.start() # when to join ...
@@ -403,7 +402,7 @@ def gcc_main(
         pickle.dump(d2gcc, pickout)
     with open(wrk_dir + 'hgx2omes2id.full.pickle', 'wb') as pickout:
         pickle.dump(d2id_, pickout)
-    with open(wrk_dir + 'hgx2omes2pos.full.pickle', 'wb') as pickout:
-        pickle.dump(d2pos, pickout)
+#    with open(wrk_dir + 'hgx2omes2pos.full.pickle', 'wb') as pickout:
+ #       pickle.dump(d2pos, pickout)
 
-    return d2gcc, d2id_, d2pos
+    return d2gcc, d2id_ #, d2pos
