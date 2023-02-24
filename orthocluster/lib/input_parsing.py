@@ -29,6 +29,7 @@ def init_log(
                 + f'plusminus\t{log_dict["plusminus"]}\n' \
                 + f'hgp_percentile\t{log_dict["hgp_percentile"]}\n' \
                 + f'hgx_percentile\t{log_dict["hgx_percentile"]}\n' \
+                + f'aligner\t{log_dict["aligner"]}\n' \
                 + f'gcf_percentile\t{log_dict["gcf_percentile"]}\n' \
                 + f'gcf_id\t{log_dict["gcf_id"]}\n' \
                 + f'gcf_sim\t{log_dict["gcf_sim"]}\n' \
@@ -37,12 +38,14 @@ def init_log(
                 + f'inflation\t{log_dict["inflation"]}\n' \
                 + f'tuning\t{log_dict["tuning"]}\n' \
                 + f'id_percent\t{log_dict["id_percent"]}\n' \
-                + f'pos_percent\t{log_dict["pos_percent"]}\n' \
+#                + f'pos_percent\t{log_dict["pos_percent"]}\n' \
                 + f'patch_threshold\t{log_dict["patch_threshold"]}\n' \
                 + f'gcc_threshold\t{log_dict["gcc_threshold"]}\n' \
                 + f'partition\t{log_dict["partition"]}\n' \
                 + f'null_samples\t{log_dict["null_samples"]}\n' \
-                + f'n50\t{log_dict["n50"]}')
+                + f'n50\t{log_dict["n50"]}\n' \
+                + f'hg_dir\t{log_dict["hg_dir"]}\n' \
+                + f'hgx_dir\t{log_dict["hgx_dir"]}')
 
 def read_log(
     log_file, log_dict
@@ -52,7 +55,10 @@ def read_log(
         for line in raw:
             key = line[:line.find('\t')]
             res = line[line.find('\t') + 1:].rstrip()
-            if key == 'orig_gcf_id':
+            if key not in log_dict: # old feature
+                log_res[key] = False
+                continue
+            elif key == 'orig_gcf_id':
                 if round(float(res) * 100) \
                    <= round(float(log_dict['gcf_id']) * 100):
                    log_res[key] = True
@@ -102,90 +108,121 @@ def read_log(
                     inflation = log_dict['inflation']
              
 
+    init_discrep = []
     try:
         if not log_res['mtdb']:
+            init_discrep.append('-d')
             log_res['n50'] = False
     except KeyError:
-        print('mtdb')
+        init_discrep.append('-d')
     try:
         if not log_res['partition']:
+            init_discrep.append('-nr/-np')
             log_res['null_samples'] = False
     except KeyError:
-        print('partition')
+        init_discrep.append('-nr/-np')
     try:
         if not log_res['focal_genes']:
+            init_discrep.append('-f')
             log_res['microsynt_tree'] = False
     except KeyError:
-        print('focal_genes')
+        init_discrep.append('-f')
     try:
         if not log_res['microsynt_constraint']:
+            init_discrep.append('-c')
             log_res['microsynt_tree'] = False
     except KeyError:
-        print('microsynt_constraint')
+        init_discrep.append('-c')
     try:
         if not log_res['n50']:
+            init_discrep.append('--n50')
             log_res['plusminus'] = False
     except KeyError:
-        print('n50')
+        init_discrep.append('--n50')
     try:
         if not log_res['dist_type']:
+            init_discrep.append('-mmd')
             log_res['uniq_sp'] = False
     except KeyError:
-        print('dist_type')
+        init_discrep.append('-mmd')
     try:
         if not log_res['uniq_sp']:
+            init_discrep.append('-u')
             log_res['null_samples'] = False
     except KeyError:
-        print('uniq_sp')
+        init_discrep.append('-u')
     try:
         if not log_res['plusminus']:
+            init_discrep.append('-w')
             log_res['null_samples'] = False
     except KeyError:
-        print('plusminus')
+        init_discrep.append('-w')
     try:
         if not log_res['null_samples']:
+            init_discrep.append('-ns')
             log_res['hgp_percentile'] = False
     except KeyError:
-        print('null_samples')
+        init_discrep.append('-ns')
     try:
         if not log_res['hgp_percentile']:
+            init_discrep.append('-hp')
             log_res['hgx_percentile_I'] = False
     except KeyError:
-        print('hgp_percentile')
+        init_discrep.append('-hp')
     try:
         if not log_res['hgx_percentile_I']:
+            init_discrep.append('-xp')
             log_res['hgx_percentile_II'] = False
     except KeyError:
-        print('hgx_percentile_I')
+        init_discrep.append('-xp')
     try:
         if not log_res['hgx_percentile_II']:
+            init_discrep.append('-xp')
             log_res['min_merge_perc'] = False
     except KeyError:
-        print('hgx_percentile_II')
+        init_discrep.append('-xp')
     try:
         if not log_res['min_merge_perc']:
+            init_discrep.append('-mm')
             log_res['gcf_sim'] = False
     except KeyError:
-        print('min_merge_perc')
+        init_discrep.append('-mm')
+    try:
+        if not log_res['aligner']:
+            init_discrep.append('-a')
+            log_res['gcf_sim'] = False
+    except KeyError:
+        log_res['aligner'] = False
+        init_discrep.append('-a')
     try:
         if not log_res['gcf_sim']:
+            init_discrep.append('-s')
             log_res['orig_gcf_id'] = False
     except KeyError:
-        print('gcf similarity')
+        init_discrep.append('-s')
     try:
         if not log_res['orig_gcf_id']:
+            init_discrep.append('-s')
             log_res['inflation'] = False
     except KeyError:
-        print('orig_gcf_id')
+        init_discrep.append('-s')
     try:
         if not log_res['inflation']:
+            init_discrep.append('-I/-T')
             log_res['gcf_percentile'] = False
     except KeyError:
+        init_discrep.append('-I/-T')
         print('\nERROR: corrupted log.txt.' + \
             '\nIf not rectified, future runs will completely overwrite the current\n')
         sys.exit(149)
+    # stop gap for legacy data
+    if 'hg_dir' not in log_res:
+        log_res['hg_dir'] = True
+    if 'hgx_dir' not in log_res:
+        log_res['hgx_dir'] = True
+        
 
-    return log_res, inflation
+    return log_res, inflation, init_discrep
 
 
 def rm_old_data(
@@ -236,6 +273,9 @@ def rm_old_data(
         for group in groups:
              if os.path.isfile(f'{wrk_dir}{group}.pickle'):
                  os.remove(f'{wrk_dir}{group}.pickle')       
+    if not log_res['aligner']:
+        hgx_dir = f'{wrk_dir}hgx/'
+        shutil.rmtree(hgx_dir)
     if not log_res['orig_gcf_id']:
         gcf_dir = f'{wrk_dir}gcf/'
         adj_rows = collect_files(gcf_dir, 'tmp.w')
@@ -245,8 +285,8 @@ def rm_old_data(
         if os.path.isfile(row_file):
             todel.append(row_file)
         hgx_files = ['hgx2omes2gcc.full.pickle',
-                     'hgx2omes2id.full.pickle',
-                     'hgx2omes2pos.full.pickle']
+                     'hgx2omes2id.full.pickle']#,
+#                     'hgx2omes2pos.full.pickle']
         for file_ in hgx_files:
             if os.path.isfile(f'{wrk_dir}{file_}'):
                 os.remove(f'{wrk_dir}{file_}')
@@ -295,6 +335,13 @@ def rm_old_data(
         if os.path.isdir(f'{out_dir}net/'):
             shutil.move(f'{out_dir}net/', f'{save_dir}net/')
 
+    if not log_res['hg_dir']:
+        if os.path.isdir(f'{wrk_dir}hg/'):
+            shutil.rmtree(f'{wrk_dir}hg/')
+    if not log_res['hgx_dir']:
+        if os.path.isdir(f'{wrk_dir}hgx/'):
+            shutil.rmtree(f'{wrk_dir}hgx/')
+
     if save_dir:
         for f in tosave:
             try:
@@ -326,22 +373,22 @@ def log_check(log_dict, log_path, out_dir, wrk_dir, flag = True):
         log_res = {x: False for x in log_dict}
         rm_old_data(log_res, out_dir, wrk_dir)
         init_log(log_path, log_dict)
-    log_res, inflation = read_log(log_path, log_dict)
+    log_res, inflation, init_discrep = read_log(log_path, log_dict)
     if any(not log_res[x] for x in log_res):
         if not flag:
-            print('\nInitializing new run', flush = True)
+            print(f'\n{init_discrep[0]} changed; Initializing new run', flush = True)
             rm_old_data(log_res, out_dir, wrk_dir)
             init_log(log_path, log_dict)
         else:
             failed = set([x for x, v in log_res.items() if not v])
             for skip in ['patch_threshold', 'gcc_threshold',
-                         'pos_percent', 'id_percent']:
+                         'id_percent']:
+#                         'pos_percent', 'id_percent']:
                 if skip in failed:
                     failed.remove(skip)
             if failed:
                 eprint('\nERROR: -n not called and incompatible parameters: \
-                        \n\t' + ','.join([x for x in list(failed)]),
-                   flush = True)
+                        \n\t' + init_discrep[0], flush = True)
                 sys.exit(15)
 
     return log_res, inflation
@@ -648,9 +695,11 @@ def sha_tune_file(tune_file):
 
 def init_run(db, out_dir, near_single_copy_genes, constraint_path,
              tree_path, hg_file, plusminus, seed_perc, clus_perc,
-             hgx_perc, id_perc, pos_perc, patch_thresh, gcc_thresh,
+             hgx_perc, aligner, id_perc, #pos_perc,
+             patch_thresh, gcc_thresh,
              samples, n50thresh, flag, min_gcf_id, inflation, simfun,
-             tune_file, dist_type, uniq_sp, partition, min_merge_perc):
+             tune_file, dist_type, uniq_sp, partition, min_merge_perc,
+             hg_dir, hgx_dir):
     wrk_dir = out_dir + 'working/'
     if not os.path.isdir(wrk_dir):
         os.mkdir(wrk_dir)
@@ -677,12 +726,27 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
         'hg_file': hg_file, 'plusminus': plusminus, 'dist_type': dist_type,
         'uniq_sp': bool(uniq_sp),
         'hgp_percentile': seed_perc, 'hgx_percentile': hgx_perc, 
+        'aligner': aligner,
         'orig_gcf_id': None, 'gcf_id': min_gcf_id, 'gcf_sim': str(simfun).lower(),
         'gcf_percentile': clus_perc, 'id_percent': id_perc,
-        'pos_percent': pos_perc, 'patch_threshold': patch_thresh,
+        #'pos_percent': pos_perc, 
+        'patch_threshold': patch_thresh,
         'gcc_threshold': gcc_thresh, 'inflation': inflation,
         'tuning': tune_sha, 'partition': partition, 'min_merge_perc': min_merge_perc,
-        'null_samples': samples, 'n50': n50thresh}
+        'null_samples': samples, 'n50': n50thresh, 'hg_dir': hg_dir,
+        'hgx_dir': hgx_dir}
 
     log_res, inflation = log_check(log_dict, log_path, out_dir, wrk_dir, flag)
+
+    # symlink files on an individual basis so the new dir is writeable without
+    # propagating new changes back to the reference dir
+    if log_dict['hg_dir'] and not os.path.isdir(wrk_dir + 'hg/'):
+        os.mkdir(wrk_dir + 'hg/')
+        for i in collect_files(log_dict['hg_dir'], '*'):
+            os.symlink(i, wrk_dir + 'hg/' + os.path.basename(i))
+    if log_dict['hgx_dir'] and not os.path.isdir(wrk_dir + 'hgx/'):
+        os.mkdir(wrk_dir + 'hgx/')
+        for i in collect_files(log_dict['hgx_dir'], '*'):
+            os.symlink(i, wrk_dir + 'hgx/' + os.path.basename(i))
+
     return wrk_dir, nul_dir, inflation
