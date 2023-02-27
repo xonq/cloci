@@ -264,7 +264,7 @@ def main(
     run_dnds = False, cpus = 1, n50thresh = None, 
     root = None, gcc_thresh = 0, patch_thresh = 0,
     method = 'mmseqs easy-cluster', dist_thresh = 0,
-    printexit = False, flag = True, partition_file = None,
+    printexit = False, skipalgn = False, flag = True, partition_file = None,
     near_single_copy_genes = [], tree_path = None, 
     verbose = False, sim = 'overlap', tune_file = None,
     dist_type = 'tmd', uniq_sp = False, partition_rank = None,
@@ -475,7 +475,8 @@ def main(
             omes2dist = omes2dist, clusplusminus = plusminus, 
             inflation = inflation, min_gcf_id = min_gcf_id, algn_sens = algn_sens,
             min_omes = 2, cpus = cpus, simfun = simfun, printexit = printexit,
-            dist_func = dist_func, uniq_sp = uniq_sp, min_merge_perc = min_merge_perc
+            dist_func = dist_func, uniq_sp = uniq_sp, min_merge_perc = min_merge_perc,
+            skipalgn = skipalgn
             )
         with open(wrk_dir + 'gcfs.pickle', 'wb') as pickout:
             pickle.dump([gcfs, gcf_omes, gcf_hgxs, gcf2clan], pickout)
@@ -552,7 +553,7 @@ def main(
                             old_path = 'hgx2omes2id.full.pickle',
                             gcfs = gcfs, gcf_hgxs = gcf_hgxs,
                             gcf_omes = gcf_omes, printexit = printexit,
-                            cpus = cpus
+                            skipalgn = skipalgn, cpus = cpus
                             )
     # this is the output directory for hgx2gcf and evo_conco
     hg_dir = f'{wrk_dir}hg/'
@@ -610,8 +611,7 @@ if __name__ == '__main__':
  #   from dna_features_viewer import GraphicFeature, GraphicRecord
     null_ranks = ['kingdom', 'phylum', 'subphylum', 'class', 
                   'order', 'family', 'genus', 'species']
-    aligners = ['mmseqs', 'diamond', 'blastp', 'diamond ultra-sensitive',
-                'diamond more-sensitive']
+    aligners = ['mmseqs', 'diamond', 'blastp']
     description = \
         """Gene clusters encode discrete metabolic phenotypes that
            perform important organismal and ecological functions.
@@ -637,7 +637,7 @@ if __name__ == '__main__':
     mt_opt.add_argument('-c', '--constraint',
         help = 'Constrain microsynteny topology to species tree w/ome code tips')
     mt_opt.add_argument('-r', '--root', 
-        help = 'Ome code to root upon; DEFAULT: midpoint' + \
+        help = 'Ome code to root upon; DEFAULT: midpoint')
     mt_opt.add_argument('-t', '--tree',
         help = 'Precomputed microsynteny tree path')
 
@@ -669,6 +669,8 @@ if __name__ == '__main__':
     fam_opt = parser.add_argument_group('Gene cluster family parameters')
     fam_opt.add_argument('-a', '--aligner', default = 'mmseqs',
         help = f'Alignment algorithm: {aligners}; DEFAULT: mmseqs')
+    fam_opt.add_argument('-sa', '--sensitive_align',
+        help = f'[diamond ultra-sensitive] or [mmseqs -s 7.5 --num_iterations 3]')
     fam_opt.add_argument('-s', '--similarity', default = 'sorensen',
         help = 'GCF similarity metric: [J]accard, [O]verlap, [S]orensen. ' \
              + 'DEFAULT: Sorensen')
@@ -713,6 +715,9 @@ if __name__ == '__main__':
     run_opt.add_argument('--stop', action = 'store_true', 
                         help = 'Export HG alignment commands ' \
                              + 'for parallelization and stop')
+    run_opt.add_argument('--skip', action = 'store_true', 
+                        help = 'Ignore missing HG alignments as assumed failures')
+
     run_opt.add_argument('-n', '--new', action = 'store_true', 
         help = 'Rerun with new parameters and overwrite incompatible data')
     run_opt.add_argument('--compress', action = 'store_true', help = 'Compress run')
@@ -775,13 +780,13 @@ if __name__ == '__main__':
                flush = True)
         sys.exit(47)
     else:
-        if len(args.aligner.split()) > 1:
-            aligner, algn_sens = args.aligner.lower().split()
+        aligner = args.aligner.lower()
+        if args.sensitive_align:
+            algn_sens = 'sensitive'
         else:
-            aligner = args.aligner.lower()
             algn_sens = ''
         execs.append(aligner)
-       
+     
 
     if args.orthofinder:
         of_out = format_path(args.orthofinder)
@@ -873,10 +878,12 @@ if __name__ == '__main__':
   #      sys.exit(4)
 
     findExecs(execs, exit = set(execs))
-    if args.gcf_percentile < args.hgx_percentile:
+    if args.gcf_percentile < args.hgx_percentile and args.gcf_percentile:
         print('\nERROR: HGx percentile is greater than GCF percentile',
             flush = True)
         sys.exit(3)
+    elif not args.gcf_percentile:
+        args.gcf_percentile = args.hgx_percentile
 
     start_time = intro('homologs to clusters - hg2clus', args_dict, 
                        'Zachary Konkel, Laura Kubatko, Jason Slot')
@@ -927,7 +934,7 @@ if __name__ == '__main__':
         root = root, gcc_thresh = args.gcc_threshold, 
         constraint_path = constraint_path, simfun = simfun,
         patch_thresh = args.patch_threshold, method = method,
-        printexit = args.stop, flag = bool(not args.new),
+        printexit = args.stop, skipalgn = args.skip, flag = bool(not args.new),
         min_gcf_id = args.minimum_id / 100, sim = sim, 
         tree_path = format_path(args.tree), tune_file = tune_file,
         dist_thresh = args.md_threshold, uniq_sp = uniq_sp,
