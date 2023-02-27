@@ -215,6 +215,12 @@ def read_log(
         print('\nERROR: corrupted log.txt.' + \
             '\nIf not rectified, future runs will completely overwrite the current\n')
         sys.exit(149)
+    try:
+        if not log_res['gcf_percentile']:
+            init_discrep.append('-fp')
+    except KeyError:
+        init_discrep.append('-fp')
+
     # stop gap for legacy data
     if 'hg_dir' not in log_res:
         log_res['hg_dir'] = True
