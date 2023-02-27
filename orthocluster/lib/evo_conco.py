@@ -11,6 +11,8 @@ from mycotools.lib.biotools import gff2list
 from mycotools.lib.kontools import multisub, tardir, collect_files, checkdir
 from orthocluster.orthocluster.lib.input_parsing import compileCDS2, hg_fa_mngr
 
+# NEED an option to import OrthoFinder pairwise alignments
+	# Diamond is not recommended for these alignments
 
 def retroactive_grab_hgx_genes(
     gff_path, ome_loc, gene2hg, clusplusminus
@@ -96,7 +98,8 @@ def hgx2omes2gcc_calc(
                 geneInfo = defaultdict(list)
                 for line in raw:
                     d = line.rstrip().split('\t')
-                    q, s, e, i = d
+                    # need to adjust to just use d when safe
+                    q, s, i = d[0], d[1], d[-1]
                     if q in hgx_genes:
                         geneInfo[q].append((s, float(i))) #, float(p)))
                         # dict(geneInfo) = {query: [(sbj, id)]}
@@ -252,14 +255,32 @@ def gcc_mngr(
     return hgx2omes2gcc, hgx2omes2id #, hgx2omes2pos
 
 
-def prep_blast_cmds(db, hgs, hg_dir, hgx_dir, 
-                    minid = 30, algorithm = 'diamond',
-                    sensitivity = '', hg2gene = None,
-                    cpus = 1):
-
+def find_missing_algns(hgs, hgx_dir):
     alnd_hgs = set([int(os.path.basename(x[:-4])) \
                     for x in collect_files(hgx_dir, 'out')])
     missing_alns = set(hgs).difference(alnd_hgs)
+    return missing_alns
+
+
+def parse_failures(fail_file):
+    if os.path.isfile(fail_file):
+        with open(fail_file, 'r') as raw:
+            failed_hgs = [int(x.rstrip()) for x in raw]
+    else:
+        failed_hgs = []
+    return failed_hgs
+
+
+def prep_blast_cmds(db, hgs, hg_dir, hgx_dir, 
+                    minid = 30, algorithm = 'diamond',
+                    sensitivity = '', hg2gene = None,
+                    cpus = 1, rerun = False):
+
+    missing_alns = find_missing_algns(hgs, hgx_dir)
+
+    if not rerun:
+        failed_hgs = parse_failures(hgx_dir + 'failed.txt')
+        missing_alns = missing_alns.difference(set(failed_hgs))
 
     if os.path.basename(algorithm) == 'diamond':
         dmnd_dbs = set([int(os.path.basename(x[:-5])) \
@@ -271,23 +292,24 @@ def prep_blast_cmds(db, hgs, hg_dir, hgx_dir,
         if sensitivity:
             cmds2 = [((algorithm, 'blastp', '--query', f'{hg_dir}{hg}.faa',
                       '--db', f'{hgx_dir}{hg}.dmnd', '-o', f'{hgx_dir}{hg}.out.tmp',
-                      '--outfmt', '6', 'qseqid', 'sseqid', 'evalue', 'pident',
-                      '--threads', '2', '--id', str(minid), f'--{sensitivity}',
-                      '--no-self-hits', '&&'), ('mv', f'{hgx_dir}{hg}.out.tmp',
-                      f'{hgx_dir}{hg}.out')) for hg in missing_alns]
+                      '--outfmt', '6', 'qseqid', 'sseqid', 'pident',
+                      '--threads', '2', '--id', str(minid), '--ultra-sensitive',
+                      '--no-self-hits', '--max-target-seqs', str(len(hg2gene[hg])), '&&'), 
+                      ('mv', f'{hgx_dir}{hg}.out.tmp', f'{hgx_dir}{hg}.out')) \
+                     for hg in missing_alns]
         else:
             cmds2 = [((algorithm, 'blastp', '--query', f'{hg_dir}{hg}.faa',
                       '--db', f'{hgx_dir}{hg}.dmnd', '-o', f'{hgx_dir}{hg}.out.tmp',
-                      '--outfmt', '6', 'qseqid', 'sseqid', 'evalue', 'pident',
-                      '--threads', '2', '--id', str(minid),
-                      '--no-self-hits', '&&'), ('mv', f'{hgx_dir}{hg}.out.tmp',
-                      f'{hgx_dir}{hg}.out')) for hg in missing_alns]
-    # NEED to increase max seq output 
+                      '--outfmt', '6', 'qseqid', 'sseqid', 'pident',
+                      '--threads', '2', '--id', str(minid), '--max-target-seqs', 
+                      str(len(hg2gene[hg])), '--no-self-hits', '&&'), 
+                      ('mv', f'{hgx_dir}{hg}.out.tmp', f'{hgx_dir}{hg}.out')) \
+                     for hg in missing_alns]
     elif os.path.basename(algorithm) == 'blastp':
         cmds1 = []
         cmds2 = [((algorithm, '-query', f'{hg_dir}{hg}.faa', '-subject',
                    f'{hg_dir}{hg}.faa', '-out', f'{hgx_dir}{hg}.out.tmp',
-                   '-outfmt', '6 "qseqid sseqid evalue pident"', '-num_threads',
+                   '-outfmt', '6 "qseqid sseqid pident"', '-num_threads',
                    str(cpus*2),
                    '-max_target_seqs', str(len(hg2gene[hg])), '&&'),
                    ('mv', f'{hgx_dir}{hg}.out.tmp', f'{hgx_dir}{hg}.out')) \
@@ -299,29 +321,32 @@ def prep_blast_cmds(db, hgs, hg_dir, hgx_dir,
         cmds1 = [(algorithm , 'createdb', f'{hg_dir}{hg}.faa', f'{hgx_dir}{hg}.mmseqs',
                   '--createdb-mode', '1', '--shuffle', '0') for hg in missing_mmseqs]
         cmds2 = [((algorithm, 'search', f'{hgx_dir}{hg}.mmseqs', f'{hgx_dir}{hg}.mmseqs',
-                  f'{hgx_dir}{hg}.raw', f'{hgx_dir}tmp{hg}', '--threads', str(cpus*2),
+                  f'{hgx_dir}{hg}.raw', f'{hgx_dir}tmp{hg}', '--threads', str(cpus),
                   '--num-iterations', '3', '-s', '7.5', '-e', '0.001', 
                   '--max-seqs', str(len(hg2gene[hg])), '--max-rejected', '10', 
                   '--min-ungapped-score', '30', '&&'),
+                  (algorithm, 'filterdb', f'{hgx_dir}{hg}.raw', f'{hgx_dir}{hg}.raw.filter', 
+                   '--comparison-operator', 'ge', '--comparison-value', str(minid/100), 
+                   '--filter-column', '2', '--threads', str(cpus), '&&'),
                   (algorithm, 'convertalis', f'{hgx_dir}{hg}.mmseqs', f'{hgx_dir}{hg}.mmseqs',
-                   f'{hgx_dir}{hg}.raw', f'{hgx_dir}{hg}.out.tmp', '--format-output', 
-                   'query,target,evalue,pident', '&&'),
+                   f'{hgx_dir}{hg}.raw.filter', f'{hgx_dir}{hg}.out.tmp', '--format-output', 
+                   'query,target,pident', '--threads', str(cpus), '&&'),
                   ('mv', f'{hgx_dir}{hg}.out.tmp', f'{hgx_dir}{hg}.out', '&&'),
-                  ('rm', '-rf', f'{hgx_dir}tmp{hg}')) for hg in missing_alns]
+                  ('rm', '-rf', f'{hgx_dir}tmp{hg}', f'{hgx_dir}{hg}.raw', 
+                   f'{hgx_dir}{hg}.raw.filter')) for hg in missing_alns]
 
     return cmds1, cmds2
 
 
 def run_blast(hgs, db, hg_dir, hgx_dir, algorithm = 'diamond', 
               printexit = False, sensitivity = '', hg2gene = None,
-              cpus = 1):
+              skipalgn = False, cpus = 1):
 #    hgs = sorted(set(chain(*list(hgx2loc.keys()))))
     db_cmds, algn_cmds = prep_blast_cmds(db, hgs, hg_dir, hgx_dir, 
                                          algorithm = algorithm, 
                                          sensitivity = sensitivity,
                                          hg2gene = hg2gene, cpus = cpus)
     if algn_cmds:
-        print(f'\tPreparing {algorithm} commands and exiting', flush = True)
         if db_cmds:
             with open(hgx_dir + '../makedb.sh', 'w') as out:
                 out.write('\n'.join([' '.join(x) for x in db_cmds]))
@@ -330,10 +355,12 @@ def run_blast(hgs, db, hg_dir, hgx_dir, algorithm = 'diamond',
                 for algn, tmp_mv in algn_cmds:
                     out.write(' '.join(algn) + '\n' + ' '.join(tmp_mv) + '\n')
             else:
-                for algn, convert, tmp_mv, rm in algn_cmds:
-                    out.write(' '.join(algn[:-1]) + '\n' + ' '.join(convert[:-1]) \
-                            + '\n' + ' '.join(tmp_mv[:-1]) + '\n' + ' '.join(rm) \
-                            + '\n\n')
+                for algn, fltr, convert, tmp_mv, rm in algn_cmds:
+                    out.write(' '.join(algn[:-1]) + ' && \n ' \
+                            + ' '.join(fltr[:-1]) + ' && \n ' \
+                            + ' '.join(convert[:-1]) + ' && \n ' \
+                            + ' '.join(tmp_mv[:-1]) + ' && \n ' \
+                            + ' '.join(rm) + ' \n\n')
         if printexit:
             print(f'\n{algorithm} db commands outputted to ' \
                  + f'{hgx_dir}../makedb.sh; run this first', flush = True)
@@ -341,19 +368,26 @@ def run_blast(hgs, db, hg_dir, hgx_dir, algorithm = 'diamond',
                   flush = True)
             sys.exit(0)
 
-        if db_cmds:
-            print(f'\tBuilding {len(db_cmds)} aligner DBs', flush = True)
-            multisub(db_cmds, verbose = 2, processes = cpus)
-        print(f'\tAligning {len(algn_cmds)} HGs', flush = True)
-        if algorithm == 'diamond':
-            multisub(algn_cmds, verbose = 2, processes = cpus,
-                     injectable = True)
-        else: # leave the multithreading optimization to the program
-#            multisub(algn_cmds, verbose = 2, processes = round((cpus - 1)/2),
- #                    injectable = True)
-            # launch 1 subprocess to minimize python overhead
-            subprocess.call(environ['SHELL'], f'{hgx_dir}../srch.sh',
-                            stdout = subprocess.DEVNULL)
+        elif not skipalgn:
+            if db_cmds:
+                print(f'\tBuilding {len(db_cmds)} aligner DBs', flush = True)
+                multisub(db_cmds, verbose = 2, processes = cpus)
+            print(f'\tAligning {len(algn_cmds)} HGs', flush = True)
+            if algorithm == 'diamond':
+                multisub(algn_cmds, verbose = 2, processes = cpus,
+                         injectable = True)
+            else: # leave the multithreading optimization to the program
+    #            multisub(algn_cmds, verbose = 2, processes = round((cpus - 1)/2),
+     #                    injectable = True)
+                # launch 1 subprocess to minimize python overhead
+                subprocess.run([os.environ['SHELL'], f'{hgx_dir}../srch.sh'],
+                                stdout = subprocess.DEVNULL)
+    
+    missing_alns = find_missing_algns(hgs, hgx_dir)
+    print(f'\t\t{len(missing_alns)} failed alignments will be skipped', 
+          flush = True)
+    with open(hgx_dir + 'failed.txt', 'w') as out:
+        out.write('\n'.join([str(x) for x in missing_alns]))
 
 
 def gcc_main(
@@ -362,7 +396,7 @@ def gcc_main(
     old_path = 'hgx2omes2gcc.pickle',
     gcfs = None, gcf_hgxs = None,
     gcf_omes = None, cpus = 1, printexit = False,
-    algn_sens = ''
+    algn_sens = '', skipalgn = False
     ):
 
 
@@ -384,10 +418,10 @@ def gcc_main(
     hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgs, 
                         db, hg2gene, cpus = cpus,
                         low_mem = True)
-    run_blast(hgs, db, hg_dir, hgx_dir, cpus = cpus,
+    run_blast(hgs, db, hg_dir, hgx_dir,
               algorithm = algorithm, printexit = printexit,
               sensitivity = algn_sens, hg2gene = hg2gene,
-              cpus = cpus)
+              skipalgn = skipalgn, cpus = cpus)
 
     d2gcc, d2id_ = gcc_mngr(
         #, d2pos = gcc_mngr(
