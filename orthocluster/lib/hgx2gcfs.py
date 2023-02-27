@@ -134,60 +134,59 @@ def acquire_clus_gcf_sim_noq(
         if hg in intersection:
             hg_dict[hg][1].append(loc1[i])
 
-    #jaccard = len(intersection)/len(set0.union(set1))
-    # currently this is biased against contig edges and will also
-    # force fragments with a much smaller subset OG # then the
-    # primary HGx into separate gcfs
-
-    # could alternatively weight just by incorporating 0 values
-    # for OGs that don't overlap
-
     scores = []
     for hg in inter_list:
-#        if hg_dict[hg][0] and hg_dict[hg][1]: #unnec
-        scores.append([])
-        for gene0 in hg_dict[hg][0]:
-            for gene1 in hg_dict[hg][1]:
-                try:
-                    scores[-1].append(blast_ids[hg][gene0][gene1])
-                except KeyError: # missing gene
-                    #adjust overlap coef, not 0
-   #                 scores[-1].append(0)
-                    pass
-    #    else:
-    #        scores[-1].append(0)
+        if hg in hg_dict:
+            scores.append([])
+            for gene0 in hg_dict[hg][0]:
+                for gene1 in hg_dict[hg][1]:
+                    try:
+                        scores[-1].append(blast_ids[hg][gene0][gene1])
+                    except KeyError: # if the genes are missing its a 0
+                        # this isnt necessarily true for non-comprehensive
+                        # alignment searches, such as diamond, because
+                        # they wont report most alignments
+                        scores[-1].append(0)
     scores = [x for x in scores if x]
     if scores:
         maxScores = [max(i) for i in scores]
         coef = simfun(len(scores), len(set0), len(set1))
         gcf_id = (sum(maxScores)/len(maxScores)) * coef
         if gcf_id > mingcfid:
-            return str(i0 + index) + '\t' + str(i1 + index) + '\t' + str(gcf_id) + '\n'
+            return f'{i0 + index}\t{i1 + index}\t{gcf_id}\n'
 
     return
 
 
-def gen_blastids_mp(hg, genes, hgx_dir, blast_ids_mngr):
+def gen_blastids_mp(hg, genes, hgx_dir):#, blast_ids_mngr):
+    # CURRENTLY NOT SETUP FOR ANY OTHER CLANS THAN 0
+    # would need to incorporate clanI in the output json
+    # or else it runs the risk of using a failed runs' old jsons
+    # cannot multiprocess the runs either
     gene_set = set(genes)
     gene_len = len(gene_set)
     algn_base = f'{hgx_dir}{hg}.out'
-    try:
-        hg_dict = parse_blast(algn_base, gene_len, gene_set)
-        blast_ids_mngr[hg].update(hg_dict)
-    except FileNotFoundError:
-        print(f'\t\t\t\t\tAttempting to BLAST {hg}', flush = True)
-        blast = run_hgx_blast(hg_dir, hg, genes, hgx_dir, 
-                      blastp = 'blastp', cpus = 1)
-        if blast:
-            blast_ids_mngr[hg].update(parse_blast(algn_base, 
-                                                  gene_len, gene_set))
+    json_out = f'{hgx_dir}../gcf/{hg}.json'
+    if not os.path.isfile(json_out):
+        try:
+            hg_dict = parse_blast(algn_base, gene_len, gene_set)
+            write_json(hg_dict, json_out)
+    #        blast_ids_mngr[hg].update(hg_dict)
+        except FileNotFoundError:
+            pass
+ #       print(f'\t\t\t\t\tAttempting to BLAST {hg}', flush = True)
+#        blast = run_hgx_blast(hg_dir, hg, genes, hgx_dir, 
+  #                    blastp = 'blastp', cpus = 1)
+   #     if blast:
+    #        blast_ids_mngr[hg].update(parse_blast(algn_base, 
+     #                                             gene_len, gene_set))
 
 
 def read_gcf_sim_jsons(gcf_dir):
     jsons = collect_files(gcf_dir, 'json')
     blast_ids = {}
     for j_f in jsons:
-        hg = os.path.basename(j_f).replace('.0.json','')
+        hg = os.path.basename(j_f).replace('.json','')
         blast_ids[int(hg)] = read_json(j_f)
     return blast_ids
 
@@ -197,9 +196,12 @@ def parse_blast(algn_base, gene_len, gene_set):
     with open(algn_base, 'r') as raw:
         for line in raw:
             d = line.rstrip().split()
-            q, s, e, pident = d
+            # adjust to just reference d when safe
+            q, s, pident = d[0], d[1], d[-1]
             if {q, s}.issubset(gene_set):
-                hg_dict[q][s] = float(pident)/100 # adjust diamond to decimal
+                pid = float(pident)/100
+                if pid >= 0.3:
+                    hg_dict[q][s] = pid # adjust diamond to decimal
             if len(hg_dict) == gene_len:
                 break
     return hg_dict
@@ -209,7 +211,7 @@ def parse_blast(algn_base, gene_len, gene_set):
 def clan_to_gcf_sim(
     db, clanI, loci, hgLoci, hg_dir, hgx_dir, gcf_dir, index,
     minid = 30, mingcfid = 0.15, simfun = overlap, min_overlap = 2,
-    cpus = None
+    cpus = 1
     ):
 
     finished_file = f'{gcf_dir}{clanI}.sadj.tmp'
@@ -269,26 +271,30 @@ def clan_to_gcf_sim(
                 try:
                     blast_ids[hg] = parse_blast(algn_base, gene_len, gene_set)
                 except FileNotFoundError:
-                    print(f'\t\t\t\tAttempting to BLAST {hg}', flush = True)
-                    blast = run_hgx_blast(hg_dir, hg, genes, hgx_dir, 
-                                  blastp = 'blastp', cpus = 1)
-                    if blast:
-                        blast_ids[hg] = parse_blast(algn_base, gene_len, gene_set)
+                    pass
+#                    print(f'\t\t\t\tAttempting to BLAST {hg}', flush = True)
+ #                   blast = run_hgx_blast(hg_dir, hg, genes, hgx_dir, 
+  #                                blastp = 'blastp', cpus = 1)
+   #                 if blast:
+    #                    blast_ids[hg] = parse_blast(algn_base, gene_len, gene_set)
 
     else:
         print('\t\t\t\t\tLoading alignment results', flush = True)
         json_f = f'{gcf_dir}{clanI}.json.gz'
         if not os.path.isfile(json_f):
-            blast_ids_mngr = mp.Manager().dict({hg: {} for hg in blast_hash})
+#            blast_ids_mngr = mp.Manager().dict({hg: {} for hg in blast_hash})
             with mp.get_context('forkserver').Pool(processes = cpus) as pool:
                 pool.starmap(gen_blastids_mp, 
-                             ((hg, genes, hgx_dir, blast_ids_mngr) \
+                             ((hg, genes, hgx_dir) \
                                for hg, genes in blast_hash.items() \
                                if len(genes) > 1))
                 pool.close()
                 pool.join()
-            blast_ids = dict(blast_ids_mngr)
+            blast_ids = read_gcf_sim_jsons(gcf_dir)
+#           blast_ids = dict(blast_ids_mngr)
             write_json(blast_ids, json_f)
+            for f in collect_files(gcf_dir, 'json'):
+                os.remove(f)
         else:
             blast_ids = read_json(json_f)
 
@@ -335,12 +341,12 @@ def run_hgx_blast(hg_dir, hg, genes,
     hg_file = f'{hg_dir}{hg}.faa'
     fileBase = hgx_dir + str(hg)
     if not os.path.isfile(fileBase + '.out'):
-        blast = subprocess.call([algorithm, '-query', 
+        blast = subprocess.call([blastp, '-query', 
             hg_file, '-subject', hg_file, '-num_threads', 
             str(cpus * 2), '-out', fileBase + '.out.tmp', '-outfmt', 
             '6 "qseqid sseqid evalue pident"', '-evalue', '0.001',
             '-max_target_seqs', str(len(genes))], 
-            stdin = subprocess.PIPE, stdout = subprocess.DEVNULL)
+            stdout = subprocess.DEVNULL)
         shutil.move(fileBase + '.out.tmp', fileBase + '.out')
     if blast:
         return False
@@ -709,7 +715,8 @@ def classify_gcfs(
     minid = 30, cpus = 1, algorithm = 'diamond',
     min_gcf_id = 0.3, simfun = overlap, printexit = False,
     tune = False, dist_func = treecalcs.calc_tmd,
-    uniq_sp = False, min_merge_perc = 0, algn_sens = ''
+    uniq_sp = False, min_merge_perc = 0, algn_sens = '',
+    skipalgn = False
     ):
 
     i2ome = {v: k for k, v in ome2i.items()}
@@ -906,14 +913,18 @@ def classify_gcfs(
 
     print('\t\tOutputting HG fastas', flush = True)
 #    hgs_prep = set(chain(*list(chain(*list(clanHGloci.values())))))
-    hgs_prep = set(chain(*list(chain(*clanHGloci))))
-    hgs = sorted([x for x in hgs_prep if x is not None])
+    hgs_prep = list(chain(*list(chain(*clanHGloci))))
+    hg_count = Counter(hgs_prep)
+    if None in hg_count:
+        del hg_count[None]
+    hgs = sorted([x for x, v in hg_count.items() \
+                  if v > 1])
     hg_dir = input_parsing.hg_fa_mngr(wrk_dir, hg_dir, 
                              hgs, db, hg2gene, cpus = cpus)
-    evo_conco.run_blast(hgs, db, hg_dir, hgx_dir, cpus = cpus,
+    evo_conco.run_blast(hgs, db, hg_dir, hgx_dir,
                         algorithm = algorithm, printexit = printexit,
                         sensitivity = algn_sens, hg2gene = hg2gene,
-                        cpus = cpus)
+                        skipalgn = skipalgn, cpus = cpus)
 
 
 
