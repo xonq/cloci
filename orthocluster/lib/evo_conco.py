@@ -8,82 +8,268 @@ from itertools import chain
 from collections import defaultdict
 from mycotools.acc2fa import dbmain as acc2fa
 from mycotools.lib.biotools import gff2list
-from mycotools.lib.kontools import multisub, tardir, collect_files, checkdir
+from mycotools.lib.kontools import multisub, tardir, collect_files, checkdir, eprint
 from orthocluster.orthocluster.lib.input_parsing import compileCDS2, hg_fa_mngr
 
 # NEED an option to import OrthoFinder pairwise alignments
-	# Diamond is not recommended for these alignments
+	# not recommended, need higher max target sequences than OrthoFinder 
+def parse_algn_wpos(hgx_dir, hg, hgx_genes):
+    qlen, hit_len = len(hgx_genes), 0
+    with open(f'{hgx_dir}{hg}.out', 'r') as raw:
+        # open the blast results
+        gene2algn = defaultdict(list)
+        for line in raw:
+            d = line.rstrip().split('\t')
+            # need to adjust to just use d when safe
+            q, s, p, i = d[0], d[1], d[2], d[3]
+            if q in hgx_genes:
+                gene2algn[q].append((s, float(i), float(p)))
+                hit_len = len(gene2algn)
+            elif hit_len == qlen:
+                break
+    return gene2algn
 
-def retroactive_grab_hgx_genes(
-    gff_path, ome_loc, gene2hg, clusplusminus
-    ):                  
-                    
-    gff_list = gff2list(gff_path)
-    clus_hgs = defaultdict(list)
-    cds_dict, cds_dict2 = compileCDS2(
-        gff_list, os.path.basename(gff_path).replace('.gff3','')
-        )               
-                            
-    # the goal here is to take each HGx and compile and OG by OG list of each
-    # gene that is associated with it - I think I am going to need some sort of
-    # while loop to accomodate searches outside of the plusminus range.
-    # Essentially this will operate by first checking if the entirety of the
-    # HGx is within the plusminus range. The next step is that, if not, go
-    # ahead and use a while loop to simultaneously parse up and down beyond the
-    # plusminus to grab the rest of the HGx and stop when acquired. This can be
-    # accomplished by taking the set of HGx and one by one removing the hits
-    # found. The while loop would then operate on what is contained within the
-    # set. 
-    for scaf in cds_dict:
-        for i0, seq0 in enumerate(cds_dict[scaf]):
-            if seq0 in ome_loc: # if the og is part of a significant seed 
-            # locus
-                for hgx, fam in ome_loc[seq0]:
-                    hgs = set(hgx)
-                    clus_hgs[hgx].append((fam, defaultdict(list),))
-                    start, end = None, None
-                    if i0 < clusplusminus: # is i0 - clusplusminus < 0 ?
-                        locus = cds_dict[scaf][:i0+clusplusminus+1] # then gather
-                        # all the beginning
-                    else:
-                        locus = cds_dict[scaf][i0-clusplusminus:i0+clusplusminus+1]
-                        # instead get the +/- and adjust for python
-                    for i1, seq1 in enumerate(locus): # for each index and sequence
-                    # in the locus
-                        try:
-                            og = gene2hg[seq1]
-                        except KeyError:
-                            continue
-                        if og in hgs:
-                            clus_hgs[hgx][-1][1][og].append(seq1)
-                        # I'm envisioning a scenario where a P450 from outside
-                        # the cluster joins in, even though a P450 OG was an
-                        # original part of the HGx; the newly joining P450
-                        # would not hit another organism with the cluster and
-                        # thus impact the score. it is an assumption that
-                        # this is minor.
-    return clus_hgs
-    # clus_hgs = {hgx: [{og: []}]} list is per locus
+def parse_algn_wopos(hgx_dir, hg, hgx_genes):
+    qlen, hit_len = len(hgx_genes), 0
+    with open(f'{hgx_dir}{hg}.out', 'r') as raw:
+        # open the blast results
+        gene2algn = defaultdict(list)
+        for line in raw:
+            d = line.rstrip().split('\t')
+            # need to adjust to just use d when safe
+            q, s, i = d[0], d[1], d[2]
+            if q in hgx_genes:
+                gene2algn[q].append((s, float(i)))
+                hit_len = len(gene2algn)
+            elif hit_len == qlen:
+                break
+    return gene2algn
 
-def run_make_dmnddb(db, diamond, hgx_dir, og, genes):
-    fa_dict = acc2fa(db, genes)
-    makeDBcmd = subprocess.Popen([
-        diamond, 'makedb', '--db',
-        hgx_dir + str(og) + '.dmnd'
-        ], stdin = subprocess.PIPE, stdout = subprocess.DEVNULL,
-        stderr = subprocess.DEVNULL
-        )
-    makeDBcmd.communicate(input=dict2fa(fa_dict).encode())[0]
-    makeDBcmd.stdin.close()
-    makeDBcmd.wait()
+def get_top_hits_wpos(gene, gcf, hgx_genes, hits, gene2algn, res, ome):
+    while gene2algn[gene]:
+        sbj_gene, sbj_id, sbj_pos = gene2algn[gene][0]
+        sbj_ome = sbj_gene[:sbj_gene.find('_')]
+        # if the subject is also in the checked queries and it is not
+        # a recent paralog of the query species
+        if sbj_gene in hgx_genes and sbj_ome != ome:
+            # grab the hit similarity
+            res[gcf][gene][1][sbj_gene] = (sbj_id, sbj_pos,)
+            hits.add(sbj_gene)
+            if not hgx_genes.difference(hits):
+                break
+        # add one to the failed count
+        else: 
+            res[gcf][gene][0] += 1 
+        # proceed to the next query
+        try:
+            gene2algn[gene].pop(0)
+        except IndexError:
+            break
+    return hits, res, gene2algn
+        
+def get_top_hits_wopos(gene, gcf, hgx_genes, hits, gene2algn, res, ome):
+    while gene2algn[gene]:
+        sbj_gene, sbj_id = gene2algn[gene][0]
+        sbj_ome = sbj_gene[:sbj_gene.find('_')]
+        # if the subject is also in the checked queries and it is not
+        # a recent paralog of the query species
+        if sbj_gene in hgx_genes and sbj_ome != ome:
+            # grab the hit similarity
+            res[gcf][gene][1][sbj_gene] = sbj_id
+            hits.add(sbj_gene)
+            if not hgx_genes.difference(hits):
+                break
+        # add one to the failed count
+        else: 
+            res[gcf][gene][0] += 1 
+        # proceed to the next query
+        try:
+            gene2algn[gene].pop(0)
+        except IndexError:
+            break
+    return hits, res, gene2algn   
+
+def sim_calc_wpos(res):
+    omeScores = defaultdict(dict)
+    ids_y_pos = defaultdict(dict)
+    for hg in res:
+        for ome, data in res[hg].items():
+            t_gcc, id_y_pos_data = data
+            omeScores[ome][hg] = t_gcc
+            ids = [x[0] for x in id_y_pos_data.values()]
+            pos = [x[1] for x in id_y_pos_data.values()]
+            if ids:
+                ids_y_pos[hg][ome] = (min(ids), min(pos),)
+            else:
+                ids_y_pos[hg][ome] = (0, 0,)
+    return omeScores, ids_y_pos
+
+def sim_calc_wopos(res):
+    omeScores = defaultdict(dict)
+    ids_dict = defaultdict(dict)
+    for hg in res:
+        for ome, data in res[hg].items():
+            t_gcc, id_data = data
+            omeScores[ome][hg] = t_gcc
+            ids = list(id_data.values())
+            if ids:
+                ids_dict[hg][ome] = min(ids)
+            else:
+                ids_dict[hg][ome] = 0
+    return omeScores, ids_dict
+
+def mms_calcs_wpos(ids_y_pos):
+    # average minimum identity / minimum positive; for each gene homolog group
+    gcf_min_id, gcf_min_pos, total = 0, 0, 0
+    for ome_dict in ids_y_pos.values():
+        gcf_min_id += sum([x[0] for x in ome_dict.values()])
+        gcf_min_pos += sum([x[1] for x in ome_dict.values()])
+        total += len(ome_dict)
+    try:
+        gcf_min_id /= total
+        gcf_min_pos /= total
+    except ZeroDivisionError:
+        gcf_min_id, gcf_min_pos = 0, 0
+    return gcf_min_id, gcf_min_pos
+
+def mms_calcs_wopos(ids_dict):
+    # average minimum identity; for each gene homolog group
+    gcf_min_id, total = 0, 0
+    for ome_dict in ids_dict.values():
+        gcf_min_id += sum(ome_dict.values())
+        total += len(ome_dict)
+    try:
+        gcf_min_id /= total
+    except ZeroDivisionError:
+        gcf_min_id = 0
+    return gcf_min_id, None
+
+def hg_sim_calc_wpos(res):
+    output_data = {}
+    for gcf, gene_info in res.items():
+        output_data[gcf] = {}
+        for gene, data in gene_info.items():
+            ome = gene[:gene.find('_')]
+            ome_gcc = data[0]
+            try:
+                ome_mi = min([v[0] for v in data[1].values()])
+                ome_mp = min([v[1] for v in data[1].values()])
+            except ValueError:
+                ome_mi, ome_mp = 0, 0
+            if ome not in output_data[gcf]:
+                output_data[gcf][ome] = (ome_gcc, ome_mi, ome_mp)
+            # if there's a paralog, take the best gcc
+            else:
+                if ome_gcc > output_data[gcf][ome][0]:
+                    output_data[gcf][ome] = (ome_gcc, ome_mi, ome_mp)
+    return output_data
+
+def hg_sim_calc_wopos(res):
+    output_data = {}
+    for gcf, gene_info in res.items():
+        output_data[gcf] = {}
+        for gene, data in gene_info.items():
+            ome = gene[:gene.find('_')]
+            ome_gcc = data[0]
+            try:
+                ome_mi = min(data[1].values())
+            except ValueError:
+                ome_mi = 0
+            if ome not in output_data[gcf]:
+                output_data[gcf][ome] = (ome_gcc, ome_mi)
+            # if there's a paralog, take the best gcc
+            else:
+                if ome_gcc > output_data[gcf][ome][0]:
+                    output_data[gcf][ome] = (ome_gcc, ome_mi)
+    return output_data
+
+
+
+def hg_parse_and_calc(hg, hg_dict, hgx_dir, pos_data = True):
+
+    if pos_data:
+       parse_func = parse_algn_wpos
+       top_hits_func = get_top_hits_wpos
+       hg_sim_func = hg_sim_calc_wpos
+    else:
+       parse_func = parse_algn_wopos
+       top_hits_func = get_top_hits_wopos
+       hg_sim_func = hg_sim_calc_wopos
+
+    gene2gcf = {}
+    for gcf, genes in hg_dict.items():
+        # ignore singletons
+        if len(genes) > 1:
+            for gene in genes:
+                gene2gcf[gene] = gcf
+
+    hg_genes = set(gene2gcf.keys())
+
+    try:
+        gene2algn = parse_func(hgx_dir, hg, hg_genes)
+    except IndexError:
+        if not pos_data:
+            eprint(f'\nERROR: malformatted output file: {hg}', flush = True)
+            sys.exit(123)
+        else:
+            parse_func = parse_algn_wopos
+            top_hits_func = get_top_hits_wopos
+            hg_sim_func = hg_sim_calc_wopos
+        gene2algn = parse_func(hgx_dir, hg, hg_genes)
+    except FileNotFoundError:
+        return None, None
+
+    # sort each query by percent ID (should maybe have a coverage filter)
+    gene2algn = {
+        k: sorted(v, key = lambda x: x[1], reverse = True) \
+        for k,v in gene2algn.items()
+        } 
+    res = defaultdict(dict)
+
+    for gcf, genes in hg_dict.items():
+        gene_set = set(genes)
+        hgx_gene_len = len(gene_set)
+        for gene in genes:
+            ome = gene[:gene.find('_')] # identify the ome
+            if gene not in res[gcf]:
+                res[gcf][gene] = [0, {}]
+    
+            # to identify if the subject is in the family of omes
+            hits = {gene}
+            # while all cluster homologs aren't accounted for and there remain hits
+            if gene not in gene2algn:
+                continue
+            hits, res, gene2algn = top_hits_func(gene, gcf, gene_set, hits, 
+                                                 gene2algn, res, ome)
+    
+            # if there are missing hits
+            if hgx_gene_len - len(res[gcf][gene][1]) - 1 > 0:
+                # then get the percent of observed hits that are valid
+                hit_len = res[gcf][gene][0] + len(res[gcf][gene][1])
+                res[gcf][gene][0] = hit_len / (hit_len + res[gcf][gene][0])
+            else:
+                # the score for this HG and ome is the total of the genes in this
+                # hgx divided by the total + the failed genes
+                res[gcf][gene][0] = hgx_gene_len / (hgx_gene_len + res[gcf][gene][0])
+    
+    return hg, hg_sim_func(res)
 
 
 def hgx2omes2gcc_calc(
-    hgx, omesI, omes, hgxDict, hgx_dir
+    hgx, omesI, omes, hgxDict, hgx_dir, pos_data = True
     ):
-    # hgxDict = {og: set(gene1, gene2)}
 
-    # res = {og: {}}
+    if pos_data:
+        parse_func = parse_algn_wpos
+        top_hits_func = get_top_hits_wpos 
+        sim_func = sim_calc_wpos
+        mms_func = mms_calcs_wpos
+    else:
+        parse_func = parse_algn_wopos
+        top_hits_func = get_top_hits_wopos
+        sim_func = sim_calc_wopos
+        mms_func = mms_calcs_wopos
+
     res = {}
     for hg, qs in hgxDict.items():
         hgx_genes, hgx_omes = set(qs), set([q[:q.find('_')] for q in qs])
@@ -92,26 +278,27 @@ def hgx2omes2gcc_calc(
         if hgx_gene_len == 1: # no homologs
             continue
         try:
-            with open(hgx_dir + str(hg) + '.out', 'r') as raw:
-                res[hg] = {}
-                # open the blast results
-                geneInfo = defaultdict(list)
-                for line in raw:
-                    d = line.rstrip().split('\t')
-                    # need to adjust to just use d when safe
-                    q, s, i = d[0], d[1], d[-1]
-                    if q in hgx_genes:
-                        geneInfo[q].append((s, float(i))) #, float(p)))
-                        # dict(geneInfo) = {query: [(sbj, id)]}
+            gene2algn = parse_func(hgx_dir, hg, hgx_genes)
+            res[hg] = {}
+        except ValueError:
+            if not pos_data:
+                eprint(f'\nERROR: malformatted output file: {hg}', flush = True)
+                sys.exit(123)
+            else:
+                parse_func = parse_algn_wopos
+                top_hits_func = get_top_hits_wopos
+                sim_func = sim_calc_wopos
+                mms_func = mms_calcs_wopos
+                        # dict(gene2algn) = {query: [(sbj, id)]}
         # if the file doesnt exist at this point then something went wrong with
         # the alignment. for mmseqs, this can happen if the genes are too small
-        # relative to the default kmer length
+        # relative to the default kmer length or other errors (~0.5% alignments)
         except FileNotFoundError:
             continue
         # sort each query by percent ID (should maybe have a coverage filter)
-        geneInfo = {
+        gene2algn = {
             k: sorted(v, key = lambda x: x[1], reverse = True) \
-            for k,v in geneInfo.items()
+            for k,v in gene2algn.items()
             } 
 
         # what about paralogs within the same group?
@@ -123,27 +310,10 @@ def hgx2omes2gcc_calc(
             # to identify if the subject is in the family of omes
             hits = {gene}
             # while all cluster homologs aren't accounted for and there remain hits
-            if gene not in geneInfo:
+            if gene not in gene2algn:
                 continue
-            while geneInfo[gene]:
-                sbj_gene, sbj_id = geneInfo[gene][0]
-                sbj_ome = sbj_gene[:sbj_gene.find('_')]
-                # if the subject is also in the checked queries and it is not
-                # a recent paralog of the query species
-                if sbj_gene in hgx_genes and sbj_ome != ome:
-                    # grab the hit identity
-                    res[hg][ome][1][sbj_gene] = sbj_id
-                    hits.add(sbj_gene)
-                    if not hgx_genes.difference(hits):
-                        break
-                # add one to the failed count
-                else: 
-                    res[hg][ome][0] += 1 
-                # proceed to the next query
-                try:
-                    geneInfo[gene].pop(0)
-                except IndexError:
-                    break
+            hits, res, gene2algn = top_hits_func(gene, hgx_genes, hg,
+                                                hits, gene2algn, res, ome)
 
             # if there are missing hits
             if hgx_gene_len - len(res[hg][ome][1]) - 1 > 0:
@@ -157,23 +327,13 @@ def hgx2omes2gcc_calc(
                 res[hg][ome][0] = hgx_gene_len / (hgx_gene_len + res[hg][ome][0])
 
     # populate a binary response dictionary for each ome and its genes that are
-    # in the shared HGx; 0 = the OG's best blast hit in this ome is not another
-    # ome code that shares the HGx, 1 = the OG's best blast hit is another ome
+    # in the shared HGx; 0 = the HG's best blast hit in this ome is not another
+    # ome code that shares the HGx, 1 = the HG's best blast hit is another ome
     # code that share the HGx
-    omeScores = defaultdict(dict)
-    ids_y_pos = defaultdict(dict)
-    for hg in res:
-        for ome, data in res[hg].items():
-            t_gcc, t_ids_dict = data
-            omeScores[ome][hg] = t_gcc
-            ids = list(t_ids_dict.values()) #pos = [x[1] for x in d.values()]
-            if ids:
-                ids_y_pos[hg][ome] = min(ids)# , min(pos))
-            else:
-                ids_y_pos[hg][ome] = 0 #, pos = 0, 0
+    omeScores, sim_dict = sim_func(res)
     try:
-        # average score of each og (perhaps needs to be weighted by presence)
-        # sum of percent top hits that're in GCF adjusted number of ogs appear
+        # average score of each hg (perhaps needs to be weighted by presence)
+        # sum of percent top hits that're in GCF adjusted number of hgs appear
         # in) averaged over number of omes
         gccScore = 0
         ome_av = [sum(v.values())/len(v) for ome, v in omeScores.items()]
@@ -183,76 +343,100 @@ def hgx2omes2gcc_calc(
 #        print(f'\t{hgx} {ome_av}')
         gccScore = 0
 
-    # average minimum identity / minimum positive; for each gene homolog group
-    gcf_min_id, total = 0, 0 #, gcf_min_pos, total = 0, 0, 0
-    for ome_dict in ids_y_pos.values():
-        gcf_min_id += sum(ome_dict.values())
-#        gcf_min_pos += sum([x[1] for x in ome_dict.values()])
-        total += len(ome_dict)
-    try:
-        gcf_min_id /= total
-#        gcf_min_pos /= total
-    except ZeroDivisionError:
-        gcf_min_id = 0 #, gcf_min_pos = 0, 0
+    gcf_min_id, gcf_min_pos = mms_func(sim_dict)
 
-    return hgx, omesI, gccScore, gcf_min_id #, gcf_min_pos
+    return hgx, omesI, gccScore, gcf_min_id, gcf_min_pos
 
 
 def gcc_mngr(
     hgs, omes, hgx_dir, hgx2loc,
     db, gene2hg, clusplusminus, hg2gene, gcfs,
     gcf_omes, gcf_hgxs, ome2i, 
-    d2gcc, d2id_, cpus = 1 #d2pos, cpus = 1
+    d2gcc, d2id_, d2pos, cpus = 1
     ):
 
     i2ome = {v: k for k, v in ome2i.items()}
 
-    clus_hgs = {fam: (modHGx, defaultdict(list),) \
-                for fam, modHGx in gcf_hgxs.items()}
-
     clus_hgs = {}
     for fam, loci in gcfs.items():
-# are some gcf_hgx HGs relics of the original hgx and thus only contain one gene?
-# would lower evo_conco scores
         gcf_hgx = gcf_hgxs[fam]
-        clus_hgs[fam] = [gcf_hgx, defaultdict(list)]
-        gcf_hgx_set = set(gcf_hgx)
-        for loc in loci:
-            for gene in loc:
-                try:
-                    hg = gene2hg[gene]
-                except KeyError:
-                    continue
-                if hg in gcf_hgx_set:
-                    clus_hgs[fam][1][hg].append(gene)
+        omesc = gcf_omes[fam]
+        if gcf_hgx not in d2id_:
+            if omesc not in d2id_[gcf_hgx]:
+                clus_hgs[fam] = [gcf_hgx, defaultdict(list)]
+        # are some gcf_hgx HGs relics of the original hgx and thus only contain one gene?
+        # would lower evo_conco scores
+                gcf_hgx_set = set(gcf_hgx)
+                for loc in loci:
+                    for gene in loc:
+                        try:
+                            hg = gene2hg[gene]
+                        except KeyError:
+                            continue
+                        if hg in gcf_hgx_set:
+                            clus_hgs[fam][1][hg].append(gene)
+            # {fam: [hgx, {hg: set(seqs)}}
 
     clus_hgs = {
-        fam: [d[0], {og: set(v) for og, v in d[1].items()}] \
+        fam: [d[0], {hg: set(v) for hg, v in d[1].items()}] \
         for fam, d in clus_hgs.items()
         } # make sets from it
-    # {fam: [hgx, {og: set(seqs)}}
+    hg2genes = defaultdict(dict)
+    for gcf, hgs in clus_hgs.items():
+        for hg, gene_set in hgs[1].items():
+            hg2genes[hg][gcf] = tuple(sorted(gene_set))
 
-    print('\tCalculating gene cluster committment (GCC) and minimum mean identity (MMI)', flush = True)
+    print('\tParsing alignments', flush = True)
     with mp.get_context('fork').Pool(processes = cpus) as pool:
-        gcc_res = pool.starmap(
-            hgx2omes2gcc_calc,
-            ([gcf_hgxs[fam], gcf_omes[fam],
-            [i2ome[i] for i in gcf_omes[fam]],
-            d[1], hgx_dir] \
-             for fam, d in clus_hgs.items())
-            )
+        hg_results = pool.starmap(hg_parse_and_calc,
+                              tqdm(((hg, hg_dict, hgx_dir) \
+                               for hg, hg_dict in hg2genes.items()),
+                               total = len(hg2genes)))
         pool.close()
         pool.join()
+  
+    print('\tQuantifying', flush = True)
+    gcf_res = defaultdict(dict)
+    for hg, hg_res in hg_results:
+        if hg_res:
+            for gcf, ome_dict in hg_res.items():
+                gcf_res[gcf][hg] = []
+                for ome, res in ome_dict.items():
+                    gcf_res[gcf][hg].append(res)
 
     hgx2omes2gcc = defaultdict(dict)
     hgx2omes2id = defaultdict(dict)
-#    hgx2omes2pos = defaultdict(dict)
-    for hgx, omes, score, id_ in gcc_res: # pos in gcc_res:
-        hgx2omes2gcc[hgx][omes] = score
-        hgx2omes2id[hgx][omes] = id_
- #       hgx2omes2pos[hgx][omes] = pos
+    hgx2omes2pos = defaultdict(dict)
+    for gcf, hg_dict in tqdm(gcf_res.items(), total = len(gcf_res)):
+        hgx, omes = gcf_hgxs[gcf], gcf_omes[gcf]
+        gccs, ids, poss = [], [], []
+        for hg, res in hg_dict.items():
+            gccs.append(sum([x[0] for x in res])/len(res))
+            ids.append(sum([x[1] for x in res])/len(res))
+            try:
+                poss.append(sum([x[2] for x in res])/len(res))
+            except IndexError:
+                poss.append(None)
+            except TypeError:
+                poss.append(None)
+        gcc = sum(gccs)/len(gccs)
+        id_ = sum(ids)/len(ids)
+        try:
+            pos = sum(poss)/len(poss)
+        except ValueError:
+            pos = None
+        except TypeError:
+            pos = None
 
-    return hgx2omes2gcc, hgx2omes2id #, hgx2omes2pos
+        hgx2omes2gcc[hgx][omes] = gcc
+        hgx2omes2id[hgx][omes] = id_
+        if pos is not None:
+            hgx2omes2pos[hgx][omes] = pos
+
+    hgx2omes2pos = dict(hgx2omes2pos)
+    return {**hgx2omes2gcc, **d2gcc}, \
+        {**hgx2omes2id, **d2id_}, \
+        {**hgx2omes2pos, **d2pos}
 
 
 def find_missing_algns(hgs, hgx_dir):
@@ -292,7 +476,7 @@ def prep_blast_cmds(db, hgs, hg_dir, hgx_dir,
         if sensitivity:
             cmds2 = [((algorithm, 'blastp', '--query', f'{hg_dir}{hg}.faa',
                       '--db', f'{hgx_dir}{hg}.dmnd', '-o', f'{hgx_dir}{hg}.out.tmp',
-                      '--outfmt', '6', 'qseqid', 'sseqid', 'pident',
+                      '--outfmt', '6', 'qseqid', 'sseqid', 'ppos', 'pident',
                       '--threads', '2', '--id', str(minid), '--ultra-sensitive',
                       '--no-self-hits', '--max-target-seqs', str(len(hg2gene[hg])), '&&'), 
                       ('mv', f'{hgx_dir}{hg}.out.tmp', f'{hgx_dir}{hg}.out')) \
@@ -300,7 +484,7 @@ def prep_blast_cmds(db, hgs, hg_dir, hgx_dir,
         else:
             cmds2 = [((algorithm, 'blastp', '--query', f'{hg_dir}{hg}.faa',
                       '--db', f'{hgx_dir}{hg}.dmnd', '-o', f'{hgx_dir}{hg}.out.tmp',
-                      '--outfmt', '6', 'qseqid', 'sseqid', 'pident',
+                      '--outfmt', '6', 'qseqid', 'sseqid', 'ppos', 'pident',
                       '--threads', '2', '--id', str(minid), '--max-target-seqs', 
                       str(len(hg2gene[hg])), '--no-self-hits', '&&'), 
                       ('mv', f'{hgx_dir}{hg}.out.tmp', f'{hgx_dir}{hg}.out')) \
@@ -309,7 +493,7 @@ def prep_blast_cmds(db, hgs, hg_dir, hgx_dir,
         cmds1 = []
         cmds2 = [((algorithm, '-query', f'{hg_dir}{hg}.faa', '-subject',
                    f'{hg_dir}{hg}.faa', '-out', f'{hgx_dir}{hg}.out.tmp',
-                   '-outfmt', '6 "qseqid sseqid pident"', '-num_threads',
+                   '-outfmt', '6 "qseqid sseqid ppos pident"', '-num_threads',
                    str(cpus*2),
                    '-max_target_seqs', str(len(hg2gene[hg])), '&&'),
                    ('mv', f'{hgx_dir}{hg}.out.tmp', f'{hgx_dir}{hg}.out')) \
@@ -340,9 +524,10 @@ def prep_blast_cmds(db, hgs, hg_dir, hgx_dir,
 
 def run_blast(hgs, db, hg_dir, hgx_dir, algorithm = 'diamond', 
               printexit = False, sensitivity = '', hg2gene = None,
-              skipalgn = False, cpus = 1):
+              skipalgn = False, fallback = False, minid = 30, cpus = 1):
 #    hgs = sorted(set(chain(*list(hgx2loc.keys()))))
     db_cmds, algn_cmds = prep_blast_cmds(db, hgs, hg_dir, hgx_dir, 
+                                         minid = minid, rerun = not skipalgn,
                                          algorithm = algorithm, 
                                          sensitivity = sensitivity,
                                          hg2gene = hg2gene, cpus = cpus)
@@ -384,8 +569,26 @@ def run_blast(hgs, db, hg_dir, hgx_dir, algorithm = 'diamond',
                                 stdout = subprocess.DEVNULL)
     
     missing_alns = find_missing_algns(hgs, hgx_dir)
-    print(f'\t\t{len(missing_alns)} failed alignments will be skipped', 
-          flush = True)
+    if not fallback:
+        print(f'\t\t{len(missing_alns)} failed alignments will be skipped', 
+              flush = True)
+    elif missing_alns:
+        print(f'\t\t{len(missing_alns)} failed alignments will fallback to diamond', 
+              flush = True)
+        db_cmds, algn_cmds = prep_blast_cmds(db, hgs, hg_dir, hgx_dir, 
+                                         minid = minid, rerun = True,
+                                         algorithm = 'diamond', 
+                                         sensitivity = None,
+                                         hg2gene = hg2gene, cpus = cpus)
+        if db_cmds:
+            print(f'\tBuilding {len(db_cmds)} diamond DBs', flush = True)
+            multisub(db_cmds, verbose = 2, processes = cpus)
+        print(f'\tAligning {len(algn_cmds)} HGs', flush = True)
+        multisub(algn_cmds, verbose = 2, processes = cpus,
+                 injectable = True)
+        missing_alns = find_missing_algns(hgs, hgx_dir)
+
+       
     with open(hgx_dir + 'failed.txt', 'w') as out:
         out.write('\n'.join([str(x) for x in missing_alns]))
 
@@ -396,7 +599,8 @@ def gcc_main(
     old_path = 'hgx2omes2gcc.pickle',
     gcfs = None, gcf_hgxs = None,
     gcf_omes = None, cpus = 1, printexit = False,
-    algn_sens = '', skipalgn = False
+    algn_sens = '', skipalgn = False, minid = 30,
+    fallback = False
     ):
 
 
@@ -409,26 +613,29 @@ def gcc_main(
             d2gcc = pickle.load(pickin)
         with open(wrk_dir + 'hgx2omes2id.full.pickle', 'rb') as pickin:
             d2id_ = pickle.load(pickin)
-#        with open(wrk_dir + 'hgx2omes2pos.full.pickle', 'rb') as pickin:
- #           d2pos = pickle.load(pickin)
+        if os.path.isfile(wrk_dir + 'hgx2omes2pos.full.pickle'):
+            with open(wrk_dir + 'hgx2omes2pos.full.pickle', 'rb') as pickin:
+                d2pos = pickle.load(pickin)
+        else:
+            d2pos = {}
     else:
-        d2gcc, d2id_ = {}, {} #, d2pos = {}, {}, {}
+        d2gcc, d2id_, d2pos = {}, {}, {}
     
     hgs = list(chain(*list(gcf_hgxs.values())))
-    hg_dir = hg_fa_mngr(wrk_dir, hg_dir, hgs, 
+    hg_dir = hg_fa_mngr(wrk_dir, None, hgs, 
                         db, hg2gene, cpus = cpus,
                         low_mem = True)
-    run_blast(hgs, db, hg_dir, hgx_dir,
+    run_blast(hgs, db, hg_dir, hgx_dir, #minid = minid, let minid be at locus sim step
               algorithm = algorithm, printexit = printexit,
               sensitivity = algn_sens, hg2gene = hg2gene,
-              skipalgn = skipalgn, cpus = cpus)
+              skipalgn = skipalgn, fallback = fallback,
+              cpus = cpus)
 
-    d2gcc, d2id_ = gcc_mngr(
-        #, d2pos = gcc_mngr(
+    d2gcc, d2id_, d2pos = gcc_mngr(
         list(hgs), list(ome2i.keys()), hgx_dir, hgx2loc,
         db, gene2hg, plusminus, hg2gene, gcfs,
         gcf_omes, gcf_hgxs, ome2i, 
-        d2gcc, d2id_, cpus = cpus #d2pos, cpus = cpus
+        d2gcc, d2id_, d2pos, cpus = cpus #d2pos, cpus = cpus
         )
 #    hgx_dirTar = mp.Process(target=tardir, args=(hgx_dir, True))
  #   hgx_dirTar.start() # when to join ...
@@ -436,7 +643,8 @@ def gcc_main(
         pickle.dump(d2gcc, pickout)
     with open(wrk_dir + 'hgx2omes2id.full.pickle', 'wb') as pickout:
         pickle.dump(d2id_, pickout)
-#    with open(wrk_dir + 'hgx2omes2pos.full.pickle', 'wb') as pickout:
- #       pickle.dump(d2pos, pickout)
+    if d2pos:
+        with open(wrk_dir + 'hgx2omes2pos.full.pickle', 'wb') as pickout:
+            pickle.dump(d2pos, pickout)
 
-    return d2gcc, d2id_ #, d2pos
+    return d2gcc, d2id_, d2pos

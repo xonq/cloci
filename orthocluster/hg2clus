@@ -1,6 +1,7 @@
 #! /usr/bin/env python3
 
 #NEED call OrthoFinder option
+#NEED use hg_dir from OrthoFinder in input_parsing/hgx2gcf, currently doesnt work
 #NEED to add tune parameter
     # update log with inflation following successful tune
 #NEED to make gcc_mngr split different families with the same GCF
@@ -24,6 +25,7 @@ import hashlib
 import argparse
 import numpy as np
 import multiprocessing as mp
+from math import log
 from tqdm import tqdm
 from itertools import chain
 from datetime import datetime
@@ -206,6 +208,58 @@ def threshold_hgx(hgx2omes, hgx2loc, omes2dist,
     hgx2loc = {v: hgx2loc[v] for v in i2hgx.values()}
     return hgx2omes, hgx2loc, hgx2dist, i2hgx, hgx2i
 
+def threshold_gcf_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, gcfs,
+                       gcf_hgxs, gcf_omes, omes2patch, hgx2omes2gcc,
+                       hgx2omes2id, hgx2omes2pos, dist_thresh, logg2d):
+    if any(x > 0 for x in [gcc_thresh, patch_thresh, id_perc, pos_perc, dist_thresh]):
+        print('\tApplying thresholds', flush = True)
+        print('\t\t' + str(len(gcfs)) + ' GCFs before', flush = True)
+        newGCFs, newGCFOmes, newGCFHGxs = {}, {}, {}
+        for gcf, locs in gcfs.items():
+            check = False # have we added a new list
+            hgxc = gcf_hgxs[gcf]
+            omesc = gcf_omes[gcf]
+            try:
+                if hgx2omes2gcc[hgxc][omesc] >= gcc_thresh \
+                    and logg2d[omesc] >= dist_thresh \
+                    and omes2patch[omesc] >= patch_thresh \
+                    and hgx2omes2id[hgxc][omesc] >= id_perc \
+                    and hgx2omes2pos[hgxc][omesc] >= pos_perc:
+                    newGCFs[gcf] = locs
+                    newGCFOmes[gcf] = omesc
+                    newGCFHGxs[gcf] = hgxc
+            except TypeError:
+                 if hgx2omes2gcc[hgxc][omesc] >= gcc_thresh \
+                    and logg2d[omesc] >= dist_thresh \
+                    and omes2patch[omesc] >= patch_thresh \
+                    and hgx2omes2id[hgxc][omesc] >= id_perc:
+                    newGCFs[gcf] = locs
+                    newGCFOmes[gcf] = omesc
+                    newGCFHGxs[gcf] = hgxc
+        return newGCFs, newGCFOmes, newGCFHGxs
+
+def threshold_gcf_wopos(gcc_thresh, patch_thresh, id_perc, gcfs,
+                       gcf_hgxs, gcf_omes, omes2patch,
+                       hgx2omes2gcc, hgx2omes2id, dist_thresh, logg2d):
+    if any(x > 0 for x in [gcc_thresh, patch_thresh, id_perc, dist_thresh]):
+        print('\tApplying thresholds', flush = True)
+        print('\t\t' + str(len(gcfs)) + ' GCFs before', flush = True)
+        newGCFs, newGCFOmes, newGCFHGxs = {}, {}, {}
+        for i0, gcf in gcfs.items():
+            check = False # have we added a new list
+            hgxc = gcf_hgxs[i0]
+            omesc = gcf_omes[i0]
+            for x, omes in gcf.items():
+                if hgx2omes2gcc[hgxc][omesc] >= gcc_thresh \
+                    and logg2d[omesc] >= dist_thresh \
+                    and omes2patch[omesc] >= patch_thresh \
+                    and hgx2omes2id[hgxc][omesc] >= id_perc:
+                    newGCFs[gcf] = locs
+                    newGCFOmes[gcf] = omesc
+                    newGCFHGxs[gcf] = hgxc
+
+        return newGCFs, newGCFOmes, newGCFHGxs
+
 
 def read_tune_file(tune_file, gene2hg, ome2i):
     with open(tune_file, 'r') as raw:
@@ -257,7 +311,7 @@ def read_tune_file(tune_file, gene2hg, ome2i):
 def main(
     db, hg_file, out_dir, plusminus = 1, hg_dir = None, hgx_dir = None,
     hgp_perc = 0.2, clus_perc = 0.7, hgx_perc = 0.7,
-    id_perc = 30, inflation = 1.5, #pos_perc = 30
+    id_perc = 30, inflation = 1.5, pos_perc = 0,
     minimum_omes = 2, samples = 10000, pfam = None,
     min_gcf_id = 0.3, simfun = hgx2gcfs.overlap,
     constraint_path = None, aligner = 'diamond',
@@ -268,7 +322,8 @@ def main(
     near_single_copy_genes = [], tree_path = None, 
     verbose = False, sim = 'overlap', tune_file = None,
     dist_type = 'tmd', uniq_sp = False, partition_rank = None,
-    min_merge_perc = 0, algn_sens = ''
+    min_merge_perc = 0, algn_sens = '', min_gene_id = 30,
+    fallback = False, min_heat_len = 25
     ):
     """
     The general workflow:
@@ -302,12 +357,12 @@ def main(
                                               tree_path, hg_file, plusminus, 
                                               hgp_perc, clus_perc,
                                               hgx_perc, f'{aligner}${algn_sens}', 
-                                              id_perc, # pos_perc, 
+                                              id_perc, pos_perc, 
                                               patch_thresh, gcc_thresh,
-                                              samples, n50thresh, flag,
+                                              samples, n50thresh, flag, min_gene_id,
                                               min_gcf_id, inflation, sim, 
                                               tune_file, dist_type, uniq_sp, partition,
-                                              min_merge_perc, hg_dir, hgx_dir)
+                                              min_merge_perc, min_heat_len, hg_dir, hgx_dir)
 
     ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_dict = \
         db2microsyntree.main(db, hg_file, out_dir, wrk_dir,
@@ -476,7 +531,8 @@ def main(
             inflation = inflation, min_gcf_id = min_gcf_id, algn_sens = algn_sens,
             min_omes = 2, cpus = cpus, simfun = simfun, printexit = printexit,
             dist_func = dist_func, uniq_sp = uniq_sp, min_merge_perc = min_merge_perc,
-            skipalgn = skipalgn
+            skipalgn = skipalgn, minid = min_gene_id, fallback = fallback,
+            min_heat_len = min_heat_len
             )
         with open(wrk_dir + 'gcfs.pickle', 'wb') as pickout:
             pickle.dump([gcfs, gcf_omes, gcf_hgxs, gcf2clan], pickout)
@@ -546,42 +602,37 @@ def main(
 
 
     print('\nVII. Quantifying GCF gene committment and intrafamily similarity', flush = True)
-    hgx2omes2gcc, hgx2omes2id = evo_conco.gcc_main( 
-                            #, hgx2omes2pos = evo_conco.gcc_main(
+    hgx2omes2gcc, hgx2omes2id, hgx2omes2pos = evo_conco.gcc_main( 
                             hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
                             aligner, db, gene2hg, plusminus, hg2gene, 
                             old_path = 'hgx2omes2id.full.pickle',
                             gcfs = gcfs, gcf_hgxs = gcf_hgxs,
+                            minid = min_gene_id, fallback = fallback,
                             gcf_omes = gcf_omes, printexit = printexit,
                             skipalgn = skipalgn, cpus = cpus
                             )
     # this is the output directory for hgx2gcf and evo_conco
     hg_dir = f'{wrk_dir}hg/'
 
-    if any(x > 0 for x in [gcc_thresh, patch_thresh, id_perc]): #pos_perc]):
-        print('\tApplying thresholds', flush = True)
-        print('\t\t' + str(len(gcfs)) + ' GCFs before', flush = True)
-        newGCFs, newGCFOmes, newGCFHGxs = {}, {}, {}
-        for i0, gcf in gcfs.items():
-            check = False # have we added a new list
-            hgxc = gcf_hgxs[i0]
-            omesc = gcf_omes[i0]
-            for x, omes in gcf.items():
-                if hgx2omes2gcc[hgxc][omesc] >= gcc_thresh \
-                    and omes2patch[omesc] >= patch_thresh \
-                    and hgx2omes2id[hgxc][omesc] >= id_perc: #\
-#                    and hgx2omes2id[hgxc][omesc] >= pos_perc:
-                    if check:
-                        newGCFs[i0][x] = omes
-                    else:
-                        newGCFs[i0] = {x: omes}
-                        check = True
-            if check:
-                newGCFOmes[i0] = gcf_omes[i0]
-                newGCFHGxs[i0] = hgxc
-        gcfs, gcf_omes, gcf_hgxs = \
-            newGCFs, newGCFOmes, newGCFHGxs
-        print('\t\t' + str(len(gcfs)) + ' GCFs after', flush = True)
+    logg2d_prep = {}
+    for omesc in gcf_omes.values():
+        logg2d_prep[omesc] = log(omes2dist[omesc])
+    maxgcfd = max(logg2d_prep.values()) # max observed, even of those truncated/removed
+    mingcfd = min(logg2d_prep.values())
+    denom = maxgcfd - mingcfd
+    logg2d = {k: (v - mingcfd)/denom for k, v in logg2d_prep.items()} 
+    if hgx2omes2pos:
+        new_gcf_data = threshold_gcf_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, 
+                                          gcfs, gcf_hgxs, gcf_omes, omes2patch, 
+                                          hgx2omes2gcc, hgx2omes2id, hgx2omes2pos,
+                                          dist_thresh, logg2d)
+    else:
+        new_gcf_data = threshold_gcf_wopos(gcc_thresh, patch_thres, id_perc, gcfs,
+                                           gcf_hgxs, gcf_omes, omes2patch,
+                                           hgx2omes2gcc, hgx2omes2id, dist_thresh, logg2d)
+    if new_gcf_data:
+        gcfs, gcf_omes, gcf_hgxs = new_gcf_data
+        print(f'\t\t{len(gcfs)} GCFs pass', flush = True)
 
 
     hgx2dnds = {}
@@ -597,12 +648,11 @@ def main(
 
     print('\nIIX. Writing and annotating clusters', flush = True)
     output_data.output_gcfs(db, wrk_dir, gcfs, gcf_omes, 
-         i2ome, out_dir, gcf_hgxs,
-         omes2dist, hgx2omes2gcc, omes2patch, hgx2omes2id,
-#         hgx2omes2pos, 
-         gene2hg, plusminus, ome2i,
+         i2ome, out_dir, logg2d, gcf_hgxs,
+         omes2dist, omes2patch, hgx2omes2gcc, hgx2omes2id,
+         hgx2omes2pos, gene2hg, plusminus, ome2i,
          gcf2clan, pfam_path = pfam, dnds_dict = {}, 
-         dist_thresh = dist_thresh, cpus = cpus)
+         cpus = cpus)
 
 
 if __name__ == '__main__':
@@ -667,21 +717,26 @@ if __name__ == '__main__':
 
 
     fam_opt = parser.add_argument_group('Gene cluster family parameters')
-    fam_opt.add_argument('-a', '--aligner', default = 'mmseqs',
-        help = f'Alignment algorithm: {aligners}; DEFAULT: mmseqs')
+    fam_opt.add_argument('-a', '--aligner', default = 'diamond',
+        help = f'Alignment algorithm: {aligners}; DEFAULT: diamond')
     fam_opt.add_argument('-sa', '--sensitive_align',
         help = f'[diamond ultra-sensitive] or [mmseqs -s 7.5 --num_iterations 3]')
     fam_opt.add_argument('-s', '--similarity', default = 'sorensen',
-        help = 'GCF similarity metric: [J]accard, [O]verlap, [S]orensen. ' \
+        help = 'GCF similarity metric: [J]accard, [O]verlap, [S]orensen; ' \
              + 'DEFAULT: Sorensen')
-    fam_opt.add_argument('-mi', '--minimum_id', type = float, default = 30,
+    fam_opt.add_argument('-mg', '--minimum_gene_id', type = float, default = 45,
+        help = 'Percent [30 < value < 100] ID minimum between gene for loci; ' \
+             + 'DEFAULT: 45')
+    fam_opt.add_argument('-ml', '--minimum_loc_id', type = float, default = 30,
         help = 'Percent [0 < value < 100] ID minimum between loci for GCF. ' \
              + 'DEFAULT: 30')
+    fam_opt.add_argument('-ms', '--minimum_merge_size', type = int, default = 30,
+        help = 'Minimum merged locus size to invoke -mm; DEFAULT: 30')
     fam_opt.add_argument('-mm', '--maximum_merge', type = float, default = 0,
         help = 'Percent [0 < value < 100] microsynteny distance difference maximum ' \
              + 'for merging loci in family network')
     fam_opt.add_argument('-I', '--inflation', default = 1.5, type = float,
-        help = 'MCL inflation during family detection. DEFAULT: 1.5')
+        help = 'MCL inflation during family detection; DEFAULT: 1.5')
     fam_opt.add_argument('-T', '--tune', 
         help = 'Tune inflation to subset data of clusters represented ' \
              + 'in a tab-delimited ' \
@@ -698,8 +753,8 @@ if __name__ == '__main__':
         help = 'Pseudonull percentile [0 < value < 100] of GCF microsynteny distances')
     thr_opt.add_argument('-ip', '--id_percent', default = 0, type = float,
         help = 'Percent [0 < value < 100] identity minimum for gene cluster family')
-#    thr_opt.add_argument('-pp', '--pos_percent', default = 0, type = float,
- #       help = 'Percent [0 < value < 100] positive minimum for gene cluster family')
+    thr_opt.add_argument('-pp', '--pos_percent', default = 0, type = float,
+        help = 'Percent [0 < value < 100] positive minimum for gene cluster family')
     thr_opt.add_argument('-pt', '--patch_threshold', default = 0, type = float,
         help = "Threshold [0 < value < 1] of gene cluster family " \
              + " patchiness scores")
@@ -717,14 +772,16 @@ if __name__ == '__main__':
                              + 'for parallelization and stop')
     run_opt.add_argument('--skip', action = 'store_true', 
                         help = 'Ignore missing HG alignments as assumed failures')
-
+    run_opt.add_argument('--fallback', action = 'store_true',
+                        help = 'Fallback to diamond from failed alignments')
     run_opt.add_argument('-n', '--new', action = 'store_true', 
         help = 'Rerun with new parameters and overwrite incompatible data')
     run_opt.add_argument('--compress', action = 'store_true', help = 'Compress run')
     run_opt.add_argument('--cpus', default = 1, type = int)
 
     dir_opt = parser.add_argument_group('Alternative directories')
-    dir_opt.add_argument('-o', '--output_dir', help = 'Alternative/resume directory')
+    dir_opt.add_argument('-o', '--output_dir', 
+        help = 'Output/resume directory; DEFAULT: hg2clus_YYYYmmdd')
     dir_opt.add_argument('-hg', '--hg_dir', help = 'HG faa dir, format <HG>.faa')
     dir_opt.add_argument('-hgx', '--hgx_dir', 
         help = 'HGx alignment DB and results dir, format <HG>.out and <HG>.dmnd/<HG>.mmseqs')
@@ -774,7 +831,7 @@ if __name__ == '__main__':
         sys.exit(43)
 
     execs = ['mafft', 'hmmsearch', 'mcl',
-             'iqtree']
+             'mcxdump', 'mcxload', 'iqtree']
     if args.aligner.lower() not in aligners:
         eprint(f'\nERROR: invalid -a: {args.aligner}',
                flush = True)
@@ -786,7 +843,14 @@ if __name__ == '__main__':
         else:
             algn_sens = ''
         execs.append(aligner)
-     
+        if aligner == 'mmseqs' and args.pos_percent:
+            eprint(f'\nERROR: -a mmseqs and -pp are incompatible',
+                   flush = True)
+            sys.exit(613)
+    
+    if args.fallback:
+        if 'diamond' not in set(execs):
+            execs.append('diamond')
 
     if args.orthofinder:
         of_out = format_path(args.orthofinder)
@@ -815,6 +879,10 @@ if __name__ == '__main__':
         execs.append('mmseqs')
 
     hgx_dir = format_path(args.hgx_dir)
+
+    if args.minimum_gene_id < 30:
+        eprint('\nERROR: -mg must be > 30', flush = True)
+        sys.exit(107)
 
     if args.tune:
         tune_file = format_path(args.tune)
@@ -862,7 +930,7 @@ if __name__ == '__main__':
         'Similarity index': sim,
         'Inflation': args.inflation, 'Tune clusters': tune_file,
         'GCF percentile': args.gcf_percentile, 
-        'Minimum family %id': args.id_percent, #'Minimum family %pos': args.pos_percent,
+        'Minimum family %id': args.id_percent, 'Minimum family %pos': args.pos_percent,
         'Patchiness threshold': args.patch_threshold, 'GCC threshold': args.gcc_threshold,
         'Distance threshold': args.md_threshold, 'Null partitions': partition,
         'Null samples': args.null_sample, #'Calculate dN/dS': args.dnds, 
@@ -927,7 +995,7 @@ if __name__ == '__main__':
         cpus = args.cpus, hg_dir = hg_dir, inflation = args.inflation,
         hgp_perc = hgp_perc, hgx_dir = hgx_dir, #clus_thresh = args.clus_threshold,
         clus_perc = clus_perc, aligner = aligner,#seed_thresh = args.seed_threshold,
-        id_perc = args.id_percent, #pos_perc = args.pos_percent,
+        id_perc = args.id_percent, pos_perc = args.pos_percent,
         hgx_perc = hgx_perc, pfam = pfam, samples = args.null_sample,
         partition_file = args.null_partitions, #        run_dnds = args.dnds, 
         n50thresh = args.n50, near_single_copy_genes = focal_genes,
@@ -935,11 +1003,13 @@ if __name__ == '__main__':
         constraint_path = constraint_path, simfun = simfun,
         patch_thresh = args.patch_threshold, method = method,
         printexit = args.stop, skipalgn = args.skip, flag = bool(not args.new),
-        min_gcf_id = args.minimum_id / 100, sim = sim, 
+        min_gcf_id = args.minimum_loc_id / 100, sim = sim, 
         tree_path = format_path(args.tree), tune_file = tune_file,
         dist_thresh = args.md_threshold, uniq_sp = uniq_sp,
         dist_type = dist, partition_rank = partition_rank, 
-        min_merge_perc = min_merge_perc, algn_sens = algn_sens
+        min_merge_perc = min_merge_perc, algn_sens = algn_sens,
+        min_gene_id = args.minimum_gene_id, fallback = args.fallback,
+        min_heat_len = args.minimum_merge_size
         )
 
     outro(start_time)

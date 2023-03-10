@@ -10,10 +10,12 @@ from ast import literal_eval
 from cogent3 import PhyloNode, load_tree
 from collections import defaultdict
 from itertools import combinations
+from datetime import datetime
 from mycotools.acc2fa import dbmain as acc2fa
 from mycotools.lib.biotools import gff2list, dict2fa, fa2dict
 from mycotools.lib.kontools import format_path, eprint, collect_files
 
+# NEED to add new MCL output files to removal
 
 def init_log(
     log_file, log_dict
@@ -31,14 +33,16 @@ def init_log(
                 + f'hgx_percentile\t{log_dict["hgx_percentile"]}\n' \
                 + f'aligner\t{log_dict["aligner"]}\n' \
                 + f'gcf_percentile\t{log_dict["gcf_percentile"]}\n' \
+                + f'gene_id\t{log_dict["gene_id"]}\n' \
                 + f'gcf_id\t{log_dict["gcf_id"]}\n' \
                 + f'gcf_sim\t{log_dict["gcf_sim"]}\n' \
                 + f'orig_gcf_id\t{log_dict["gcf_id"]}\n' \
+                + f'min_heat_len\t{log_dict["min_heat_len"]}\n' \
                 + f'min_merge_perc\t{log_dict["min_merge_perc"]}\n' \
                 + f'inflation\t{log_dict["inflation"]}\n' \
                 + f'tuning\t{log_dict["tuning"]}\n' \
                 + f'id_percent\t{log_dict["id_percent"]}\n' \
-#                + f'pos_percent\t{log_dict["pos_percent"]}\n' \
+                + f'pos_percent\t{log_dict["pos_percent"]}\n' \
                 + f'patch_threshold\t{log_dict["patch_threshold"]}\n' \
                 + f'gcc_threshold\t{log_dict["gcc_threshold"]}\n' \
                 + f'partition\t{log_dict["partition"]}\n' \
@@ -178,9 +182,15 @@ def read_log(
     try:
         if not log_res['hgx_percentile_II']:
             init_discrep.append('-xp')
-            log_res['min_merge_perc'] = False
+            log_res['min_heat_len'] = False
     except KeyError:
         init_discrep.append('-xp')
+    try:
+        if not log_res['min_heat_len']:
+            log_res['min_merge_perc'] = False
+            init_discrep.append('-ms')
+    except KeyError:
+        init_discrep.append('-ms')
     try:
         if not log_res['min_merge_perc']:
             init_discrep.append('-mm')
@@ -190,10 +200,16 @@ def read_log(
     try:
         if not log_res['aligner']:
             init_discrep.append('-a')
-            log_res['gcf_sim'] = False
+            log_res['gene_id'] = False
     except KeyError:
         log_res['aligner'] = False
         init_discrep.append('-a')
+    try:
+        if not log_res['gene_id']:
+            init_discrep.append('-mg')
+            log_res['gcf_sim'] = False
+    except KeyError:
+        init_discrep.append('-mg')
     try:
         if not log_res['gcf_sim']:
             init_discrep.append('-s')
@@ -202,10 +218,10 @@ def read_log(
         init_discrep.append('-s')
     try:
         if not log_res['orig_gcf_id']:
-            init_discrep.append('-s')
+            init_discrep.append('-ml')
             log_res['inflation'] = False
     except KeyError:
-        init_discrep.append('-s')
+        init_discrep.append('-ml')
     try:
         if not log_res['inflation']:
             init_discrep.append('-I/-T')
@@ -226,7 +242,6 @@ def read_log(
         log_res['hg_dir'] = True
     if 'hgx_dir' not in log_res:
         log_res['hgx_dir'] = True
-        
 
     return log_res, inflation, init_discrep
 
@@ -281,15 +296,20 @@ def rm_old_data(
                  os.remove(f'{wrk_dir}{group}.pickle')       
     if not log_res['aligner']:
         hgx_dir = f'{wrk_dir}hgx/'
-        shutil.rmtree(hgx_dir)
+        eprint('\tWARNING: alignment software changed, old alignments retained:', flush = True)
+        eprint(f'\t\t{hgx_dir}', flush = True)
+ #       shutil.rmtree(hgx_dir)
     if not log_res['orig_gcf_id']:
         gcf_dir = f'{wrk_dir}gcf/'
         adj_rows = collect_files(gcf_dir, 'tmp.w')
         adj_rows.extend(collect_files(gcf_dir, 'tmp.r'))
         adj_rows.extend(collect_files(gcf_dir, 'tmp'))
         row_file = wrk_dir + 'gcf/loci.adj'
-        if os.path.isfile(row_file):
-            todel.append(row_file)
+        mci_file = wrk_dir + 'gcf/loci.mci'
+        mcl_rows = wrk_dir + 'gcf/mcl_rows.tsv'
+        for f in [row_file, mci_file, mcl_rows]:
+            if os.path.isfile(row_file):
+                todel.append(row_file)
         hgx_files = ['hgx2omes2gcc.full.pickle',
                      'hgx2omes2id.full.pickle']#,
 #                     'hgx2omes2pos.full.pickle']
@@ -302,7 +322,7 @@ def rm_old_data(
         if os.path.isfile(gcfs_file):
             os.remove(gcfs_file)
         mcl_res = f'{wrk_dir}gcf/loci.clus'
-        tosave.append(mcl_res)
+        tosave.extend([mcl_res, mcl_res + '.tmp'])
     if not log_res['gcf_percentile']:
         clus_file = out_dir + 'gcfs.tsv.gz'
         kern_file = out_dir + 'hgxs.tsv.gz'
@@ -377,26 +397,35 @@ def log_check(log_dict, log_path, out_dir, wrk_dir, flag = True):
 
     if not os.path.isfile(log_path):
         log_res = {x: False for x in log_dict}
-        rm_old_data(log_res, out_dir, wrk_dir)
+        try:
+            rm_old_data(log_res, out_dir, wrk_dir)
+        except KeyError:
+            eprint('\nWARNING: missing log, rerunning without deleting', flush = True)
         init_log(log_path, log_dict)
     log_res, inflation, init_discrep = read_log(log_path, log_dict)
     if any(not log_res[x] for x in log_res):
-        if not flag:
-            print(f'\n{init_discrep[0]} changed; Initializing new run', flush = True)
-            rm_old_data(log_res, out_dir, wrk_dir)
-            init_log(log_path, log_dict)
+        failed = set([x for x, v in log_res.items() if not v])
+        for skip in ['patch_threshold', 'gcc_threshold',
+                     'id_percent', 'pos_percent']:
+            if skip in failed:
+                failed.remove(skip)
+        if failed:
+            try:
+                if not flag:
+                    print(f'\n{init_discrep[0]} changed; removing data to checkpoint', flush = True)
+                    rm_old_data(log_res, out_dir, wrk_dir)
+                    init_log(log_path, log_dict)
+                else:
+                    eprint('\nERROR: -n not called and incompatible parameters: \
+                            \n\t' + init_discrep[0], flush = True)
+                    sys.exit(15)
+            # irrelevant missing discrepancy
+            except IndexError:
+                init_log(log_path, log_dict)
         else:
-            failed = set([x for x, v in log_res.items() if not v])
-            for skip in ['patch_threshold', 'gcc_threshold',
-                         'id_percent']:
-#                         'pos_percent', 'id_percent']:
-                if skip in failed:
-                    failed.remove(skip)
-            if failed:
-                eprint('\nERROR: -n not called and incompatible parameters: \
-                        \n\t' + init_discrep[0], flush = True)
-                sys.exit(15)
-
+            print(f'\nGCF thresholds changed; outputting new results', flush = True)
+            init_log(log_path, log_dict)
+    
     return log_res, inflation
 
 
@@ -572,7 +601,27 @@ def symlink_files(f0, f1):
     os.symlink(f0, f1)
 
 
-def load_ome2fa(db):
+def load_ome2fa(db, cpus = 1):
+#    big_fa = {}
+#    with mp.Pool(processes = cpus) as pool:
+ #       fa_dicts = pool.map(fa2dict, 
+  #                          tqdm((row['faa'] for row in db.values()), 
+   #                         total = len(db)))
+    #    pool.close()
+     #   pool.join()
+#    for res in fa_dicts:
+ #       big_fa = {**big_fa, **res}
+    fas = []
+    for row in tqdm(db.values(), total = len(db)):
+        fas.append(fa2dict(row['faa']))
+    big_fa = {}
+    for fa in fas:
+        for nam, seq in fa.items():
+            big_fa[nam] = seq
+
+    return big_fa
+
+def load_ome2fa_mp(db, cpus = 1):
     big_fa = {}
     with mp.Pool(processes = cpus) as pool:
         fa_dicts = pool.map(fa2dict, 
@@ -582,9 +631,16 @@ def load_ome2fa(db):
         pool.join()
     for res in fa_dicts:
         big_fa = {**big_fa, **res}
+
     return big_fa
 
 def big_acc2fa(db, hg_dir, hgs, hg2gene, big_fa, cpus = 1):
+    for hg in tqdm(hgs, total = len(hgs)):
+        write_hg_fa(f'{hg_dir}{hg}.faa', big_fa, hg2gene[hg])
+
+
+
+def big_acc2fa_mp(db, hg_dir, hgs, hg2gene, big_fa, cpus = 1):
     big_dict = mp.Manager().dict(big_fa)
     with mp.Pool(processes = cpus) as pool:
         pool.starmap(write_hg_fa, tqdm(((f'{hg_dir}{hg}.faa',
@@ -617,8 +673,8 @@ def hg_fa_mngr(wrk_dir, hg_dir, hgs,
                 pool.close()
                 pool.join()
         else:
-            big_fa = load_ome2fa(db)
-            big_acc2fa(db, new_hg_dir, hgs, hg2gene, big_fa, cpus)
+            big_fa = load_ome2fa(db, cpus = cpus)
+            big_acc2fa(db, new_hg_dir, missing_hgs, hg2gene, big_fa, cpus)
     else: # predetermined hg input
         hg_fa_cmds = []
         orthofinder = False
@@ -701,11 +757,12 @@ def sha_tune_file(tune_file):
 
 def init_run(db, out_dir, near_single_copy_genes, constraint_path,
              tree_path, hg_file, plusminus, seed_perc, clus_perc,
-             hgx_perc, aligner, id_perc, #pos_perc,
+             hgx_perc, aligner, id_perc, pos_perc,
              patch_thresh, gcc_thresh,
-             samples, n50thresh, flag, min_gcf_id, inflation, simfun,
+             samples, n50thresh, flag, min_gene_id, min_gcf_id, inflation, simfun,
              tune_file, dist_type, uniq_sp, partition, min_merge_perc,
-             hg_dir, hgx_dir):
+             min_heat_len, hg_dir, hgx_dir):
+
     wrk_dir = out_dir + 'working/'
     if not os.path.isdir(wrk_dir):
         os.mkdir(wrk_dir)
@@ -732,13 +789,14 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
         'hg_file': hg_file, 'plusminus': plusminus, 'dist_type': dist_type,
         'uniq_sp': bool(uniq_sp),
         'hgp_percentile': seed_perc, 'hgx_percentile': hgx_perc, 
-        'aligner': aligner,
+        'aligner': aligner, 'gene_id': min_gene_id,
         'orig_gcf_id': None, 'gcf_id': min_gcf_id, 'gcf_sim': str(simfun).lower(),
         'gcf_percentile': clus_perc, 'id_percent': id_perc,
-        #'pos_percent': pos_perc, 
+        'pos_percent': pos_perc, 
         'patch_threshold': patch_thresh,
         'gcc_threshold': gcc_thresh, 'inflation': inflation,
-        'tuning': tune_sha, 'partition': partition, 'min_merge_perc': min_merge_perc,
+        'tuning': tune_sha, 'partition': partition, 
+        'min_heat_len': min_heat_len, 'min_merge_perc': min_merge_perc,
         'null_samples': samples, 'n50': n50thresh, 'hg_dir': hg_dir,
         'hgx_dir': hgx_dir}
 
@@ -746,13 +804,23 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
 
     # symlink files on an individual basis so the new dir is writeable without
     # propagating new changes back to the reference dir
-    if log_dict['hg_dir'] and not os.path.isdir(wrk_dir + 'hg/'):
-        os.mkdir(wrk_dir + 'hg/')
-        for i in collect_files(log_dict['hg_dir'], '*'):
-            os.symlink(i, wrk_dir + 'hg/' + os.path.basename(i))
-    if log_dict['hgx_dir'] and not os.path.isdir(wrk_dir + 'hgx/'):
-        os.mkdir(wrk_dir + 'hgx/')
-        for i in collect_files(log_dict['hgx_dir'], '*'):
-            os.symlink(i, wrk_dir + 'hgx/' + os.path.basename(i))
+    hg_dir, hgx_dir = wrk_dir + 'hg/', wrk_dir + 'hgx/'
+
+    existing_hg = set(os.path.basename(x) for x in collect_files(hg_dir, 'faa'))
+    existing_hgx = set(os.path.basename(x) for x in collect_files(hgx_dir, 'out'))
+    if log_dict['hg_dir']:
+        if not os.path.isdir(hg_dir):
+            os.mkdir(wrk_dir + 'hg/')
+        prev_hg = set(os.path.basename(x) for x in collect_files(log_dict['hg_dir'], 'faa'))
+        missing_hg = prev_hg.difference(existing_hg)
+        for i in list(missing_hg):
+            os.symlink(log_dict['hg_dir'] + i, wrk_dir + 'hg/' + i)
+    if log_dict['hgx_dir']:
+        if not os.path.isdir(hgx_dir):
+            os.mkdir(wrk_dir + 'hgx/')
+        prev_hgx = set(os.path.basename(x) for x in collect_files(log_dict['hgx_dir'], 'out'))
+        missing_hgx = prev_hgx.difference(existing_hgx)
+        for i in list(missing_hgx):
+            os.symlink(log_dict['hgx_dir'] + i, wrk_dir + 'hgx/' + i)
 
     return wrk_dir, nul_dir, inflation

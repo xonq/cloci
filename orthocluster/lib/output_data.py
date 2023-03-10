@@ -424,34 +424,57 @@ def output_hgxs(hgx2dist, hgx2omes, hgx2i, i2ome, out_dir):
         for entry in hgx_output:
             out.write('\n' + '\t'.join([str(x) for x in entry]))
 
-
-def output_gcfs(db, wrk_dir, gcfs, gcf_omes, i2ome, out_dir, gcf_hgxs,
-         omes2dist, hgx2omes2gcc, omes2patch, hgx2omes2id,
-#         hgx2omes2pos, 
-         gene2hg, plusminus, ome2i,
-         gcf2clan, pfam_path = None, dnds_dict = {}, dist_thresh = 0, cpus = 1):
-
-    print('\tWriting cluster scores', flush = True)
-    logg2d = {}
-    for omesc in gcf_omes.values():
-        logg2d[omesc] = log(omes2dist[omesc])
-    maxgcfd = max(logg2d.values()) # max observed, even of those truncated/removed
-    mingcfd = min(logg2d.values())
-    denom = maxgcfd - mingcfd
-    
+def write_gcfs_txt_wpos(gcf_hgxs, gcf_omes, logg2d, 
+                        gcf2clan, omes2patch, 
+                        hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, i2ome,
+                        out_dir):
     gcf_output = []
     for i, gcf_hgx in gcf_hgxs.items():
         omesc = gcf_omes[i]
-        nml_log_tmd = (logg2d[omesc] - mingcfd)/denom
-        if nml_log_tmd >= dist_thresh:
+        try:
             gcf_output.append([
                 ','.join([str(x) for x in gcf_hgx]), i, gcf2clan[i],
-                nml_log_tmd, omes2patch[omesc], 
+                logg2d[omesc], omes2patch[omesc], 
                 hgx2omes2gcc[gcf_hgx][omesc],
-                hgx2omes2id[gcf_hgx][omesc], #hgx2omes2pos[gcf_hgx][omesc],
+                hgx2omes2id[gcf_hgx][omesc], hgx2omes2pos[gcf_hgx][omesc],
                 ','.join([str(i2ome[x]) for x in omesc])#,
          #        dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
                 ])
+        except KeyError:
+             gcf_output.append([
+                ','.join([str(x) for x in gcf_hgx]), i, gcf2clan[i],
+                logg2d[omesc], omes2patch[omesc], 
+                hgx2omes2gcc[gcf_hgx][omesc],
+                hgx2omes2id[gcf_hgx][omesc], 'na',
+                ','.join([str(i2ome[x]) for x in omesc])#,
+         #        dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
+                ])
+    gcf_output = sorted(gcf_output, key = lambda x: x[3], reverse = True)
+    with gzip.open(out_dir + 'gcfs.tsv.gz', 'wt') as out:
+        out.write('#hgs\tgcf\tclan\tnrm_log_tmd\tpatchiness' \
+                + '\tgcc\tmmi\tmmp\tomes') #\tmmp\tomes') #+ \
+            #'selection_coef\tmean_dnds\tog_dnds\t' + \
+         #   'total_dist'
+#            )
+        for entry in gcf_output:
+            out.write('\n' + '\t'.join([str(x) for x in entry]))
+    return gcf_output
+
+def write_gcfs_txt_wopos(gcf_hgxs, gcf_omes, logg2d, 
+                        gcf2clan, omes2patch, 
+                        hgx2omes2gcc, hgx2omes2id, i2ome,
+                        out_dir):
+    gcf_output = []
+    for i, gcf_hgx in gcf_hgxs.items():
+        omesc = gcf_omes[i]
+        gcf_output.append([
+            ','.join([str(x) for x in gcf_hgx]), i, gcf2clan[i],
+            logg2d[omesc], omes2patch[omesc], 
+            hgx2omes2gcc[gcf_hgx][omesc],
+            hgx2omes2id[gcf_hgx][omesc],
+            ','.join([str(i2ome[x]) for x in omesc])#,
+     #        dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
+            ])
 
     gcf_output = sorted(gcf_output, key = lambda x: x[3], reverse = True)
     with gzip.open(out_dir + 'gcfs.tsv.gz', 'wt') as out:
@@ -462,6 +485,25 @@ def output_gcfs(db, wrk_dir, gcfs, gcf_omes, i2ome, out_dir, gcf_hgxs,
 #            )
         for entry in gcf_output:
             out.write('\n' + '\t'.join([str(x) for x in entry]))
+    return gcf_output
+
+
+def output_gcfs(db, wrk_dir, gcfs, gcf_omes, i2ome, out_dir, logg2d, gcf_hgxs,
+         omes2dist, omes2patch, hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, 
+         gene2hg, plusminus, ome2i, gcf2clan, 
+         pfam_path = None, dnds_dict = {}, cpus = 1):
+
+    print('\tWriting cluster scores', flush = True)
+    if hgx2omes2pos:
+        gcf_output = write_gcfs_txt_wpos(gcf_hgxs, gcf_omes, logg2d, 
+                            gcf2clan, omes2patch, 
+                            hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, i2ome,
+                            out_dir)
+    else:
+        gcf_output = write_gcfs_txt_wopos(gcf_hgxs, gcf_omes, logg2d, 
+                            gcf2clan, omes2patch, 
+                            hgx2omes2gcc, hgx2omes2id, i2ome,
+                            out_dir)
 
     if dnds_dict:
         axes = [[],[],[],[],[]]
