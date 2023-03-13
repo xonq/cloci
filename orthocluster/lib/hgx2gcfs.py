@@ -410,6 +410,8 @@ def clan_to_gcf_sim(
             Q.put(None)
         clan_arr = clan_arr.tocsr()
         adj_arr = clan_arr @ clan_arr.transpose()
+        # less than two gene overlap is set to 0
+        adj_arr.data[adj_arr.data < 2] = 0
         hits = np.split(adj_arr.indices, adj_arr.indptr)[1:-1]
         if not cpus > 1 or True:
             with open(f'{finished_file}.w', 'a') as out:
@@ -450,69 +452,82 @@ def clan_to_gcf_sim(
 
 def merge_clan_loci(preclan_loci, gene2hg, min_sim, hgx2dist_path, min_heat_len = 25):
 
-    vclan_loci = copy.deepcopy(preclan_loci)
-    out_clan_loci, outclanHGx, outclanI = defaultdict(list), defaultdict(list), defaultdict(list)
-    for clan, loci in preclan_loci.items():
-        while loci: # exhaustively merge overlapping loci
-            # the locus for pairwise comparisons is the first
-            loc0, hgxs0, allHGxs, locI0 = set(loci[0][0]), loci[0][1], loci[0][2], loci[0][3]
-            locIntersect = None
-            # for all other loci
-            for i1, loc1d in enumerate(loci[1:]):
-                loc1, hgxs1, allHGxs1, locI1 = set(loc1d[0]), loc1d[1], loc1d[2], loc1d[3]
-                locIntersect = loc0.intersection(loc1)
-                # if any genes overlap between these loci
-                if locIntersect:
-                    # grab the overlap and add it to the end of the loci list
-                    newHGx = list(hgxs0)
-                    newHGx.extend(list(hgxs1))
-                    allHGxs.extend(allHGxs1)
-                    loci.append([list(loc1.union(loc0)), newHGx, allHGxs, locI0 + locI1])
-                    break
-            if locIntersect: # if there was overlap, delete the overlappers
-                del loci[0]
-                del loci[i1] # don't add 1 because we removed the first and i1 relative to 1
-            else: # no more overlap for this locus, add to the final output
-                out_clan_loci[clan].append(sorted(loc0))
-                outclanHGx[clan].append(tuple(sorted(set(allHGxs))))
-                outclanI[clan].append(locI0)
-#                outclanHGx[clan].append(tuple(sorted(set(hgxs0))))
-                del loci[0]
+    if min_heat_len > 3:
+        vclan_loci = copy.deepcopy(preclan_loci)
+        out_clan_loci = defaultdict(lambda: defaultdict(list))
+        out_clan_hgx = defaultdict(lambda: defaultdict(list))
+        outclanI = defaultdict(lambda: defaultdict(list))
+        for clan, scaf_dict in preclan_loci.items():
+            for scaf, loci in scaf_dict.items():
+                while loci: # exhaustively merge overlapping loci
+                    # the locus for pairwise comparisons is the first
+                    loc0, hgxs0, allHGxs, locI0 = set(loci[0][0]), loci[0][1], loci[0][2], loci[0][3]
+                    locIntersect = None
+                    # for all other loci
+                    for i1, loc1d in enumerate(loci[1:]):
+                        loc1, hgxs1, allHGxs1, locI1 = set(loc1d[0]), loc1d[1], loc1d[2], loc1d[3]
+                        locIntersect = loc0.intersection(loc1)
+                        # if any genes overlap between these loci
+                        if locIntersect:
+                            # grab the overlap and add it to the end of the loci list
+                            newHGx = list(hgxs0)
+                            newHGx.extend(list(hgxs1))
+                            allHGxs.extend(allHGxs1)
+                            loci.append([list(loc1.union(loc0)), newHGx, allHGxs, locI0 + locI1])
+                            break
+                    if locIntersect: # if there was overlap, delete the overlappers
+                        del loci[0]
+                        del loci[i1] # don't add 1 because we removed the first and i1 relative to 1
+                    else: # no more overlap for this locus, add to the final output
+                        out_clan_loci[scaf][clan].append(sorted(loc0))
+                        out_clan_hgx[scaf][clan].append(tuple(sorted(set(allHGxs))))
+                        outclanI[scaf][clan].append(locI0)
+        #                out_clan_hgx[clan].append(tuple(sorted(set(hgxs0))))
+                        del loci[0]
+    
+        # initiate the data structure for heat-based locus merging
+        todel = defaultdict(list)
+        n_loci = defaultdict(list)
+        for clan, scaf_dict in out_clan_loci.items():
+            for scaf, loci in scaf_dict.items():
+                for i, loc in enumerate(loci):
+                    if len(loc) >= min_heat_len:
+                        for locI in outclanI[clan][scaf][i]:
+                            n_loci[clan].append(vclan_loci[clan][scaf][locI])
+                        todel[clan].append((i, scaf))
+        for clan, td in todel.items():
+            for i, scaf in reversed(td):
+                del out_clan_loci[clan][scaf][i]
+                del out_clan_hgx[clan][scaf][i]
+    
+        if n_loci:
+            heat_clan_loci, heat_clan_hgx = \
+                merge_clan_loci_heat(n_loci, gene2hg, min_sim, hgx2dist_path)
+            for clan, scaf_dict in heat_clan_loci.items():
+                for scaf, loci in scaf_dict.items():
+                    out_clan_loci[clan][scaf].extend(loci)
+                    out_clan_hgx[clan][scaf].extend(heat_clan_hgx[clan])
+    else:
+        out_clan_loci, out_clan_hgx = merge_clan_loci_heat(preclan_loci, gene2hg, 
+                                                           min_sim, hgx2dist_path)
 
-    # initiate the data structure for heat-based locus merging
-    todel = defaultdict(list)
-    n_loci = defaultdict(list)
-    for clan, loci in out_clan_loci.items():
-        for i, loc in enumerate(loci):
-            if len(loc) >= min_heat_len:
-                for locI in outclanI[clan][i]:
-                    n_loci[clan].append(vclan_loci[clan][locI])
-                todel[clan].append(i)
-    for clan, td in todel.items():
-        for i in reversed(td):
-            del out_clan_loci[clan][i]
-            del outclanHGx[clan][i]
+    clan_loci = {clan: list(chain(*list(scaf_dict.values()))) \
+                 for clan, scaf_dict in out_clan_loci.items()}
+    clan_hgx = {clan: list(chain(*list(scaf_dict.values()))) \
+                for clan, scaf_dict in out_clan_hgx.items()}
 
-    if n_loci:
-        heat_clan_loci, heat_clan_hgx, heat_hg_loci = \
-            merge_clan_loci_heat(n_loci, gene2hg, min_sim, hgx2dist_path)
-        for clan, loci in heat_clan_loci.items():
-            out_clan_loci[clan].extend(loci)
-            outclanHGx[clan].extend(heat_clan_hgx[clan])
-            
-
-    out_hg_loci = {}
-    for clan, loci in out_clan_loci.items():
-        out_hg_loci[clan] = []
+    hg_loci = {}
+    for clan, loci in clan_loci.items():
+        hg_loci[clan] = []
         for locus in loci:
-            out_hg_loci[clan].append([])
+            hg_loci[clan].append([])
             for gene in locus:
                 try:
-                    out_hg_loci[clan][-1].append(gene2hg[gene])
+                    hg_loci[clan][-1].append(gene2hg[gene])
                 except KeyError:
-                    out_hg_loci[clan][-1].append(None)
+                    hg_loci[clan][-1].append(None)
 
-    return out_clan_loci, outclanHGx, out_hg_loci
+    return clan_loci, clan_hgx, hg_loci
 
 
 def merge_clan_loci_heat(preclan_loci, gene2hg, min_sim, hgx2dist_path):
@@ -520,118 +535,88 @@ def merge_clan_loci_heat(preclan_loci, gene2hg, min_sim, hgx2dist_path):
         hgx2dist = pickle.load(raw)
 
     gene2hgx = defaultdict(list)
-    out_clan_loci, outclanHGx = defaultdict(list), defaultdict(list)
-    for clan, loci in preclan_loci.items():
-        for i, loc_d in enumerate(loci):
-            loc, hgx = loc_d[0], loc_d[1]
-            loci[i].append(hgx2dist[hgx])
-            [gene2hgx[x].append(hgx) for x in loc]
-        loci = sorted(loci, key = lambda x: x[-1], reverse = True)
-        merge, check_loci = True, loci
-        while merge: # need to rerun to verify
-            loci = copy.deepcopy(check_loci)
-            check_loci, merge = [], False
-            while loci: # exhaustively merge overlapping loci
-                # the locus for pairwise comparisons is the first
-                loc0, hgxs0, allHGxs, dist0 = set(loci[0][0]), loci[0][1], loci[0][2], loci[0][-1]
-                locIntersect = None
-                # for all other loci
-                for i1, loc1d in enumerate(loci[1:]):
-                    loc1, hgxs1, allHGxs1, dist1 = set(loc1d[0]), loc1d[1], loc1d[2], loc1d[-1]
-                    locIntersect = loc0.intersection(loc1)
-                    # if any genes overlap between these loci
-                    if locIntersect:
-                        # compile the distances of the overlapping HGx genes
-#                        inter_hgxs = []
-#                        [inter_hgxs.extend(gene2hgx[gene]) for gene in list(locIntersect)]
- #                       inter_hgx0 = [x for x in inter_hgxs if x in set(allHGxs)]
-  #                      inter_hgx1 = [x for x in inter_hgxs if x in set(allHGxs1)]
-   #                     inter_dists0 = [hgx2dist[x] for x in inter_hgx0]
-    #                    inter_dists1 = [hgx2dist[x] for x in inter_hgx1]
-     #                   min0, max0 = min(inter_dists0), max(inter_dists0)
-      #                  min1, max1 = min(inter_dists1), max(inter_dists1)
-                        # do the ranges of observed distances overlap?
-      #                  if min1 <= min0 <= max1 or min1 <= max0 <= max1 \
-       #                     or min0 <= min1 <= max0 or min0 <= max1 <= max0:  
-        #                    # grab the overlap and add it to the end of the loci list
-         #                   newHGx = list(hgxs0)
-          #                  newHGx.extend(list(hgxs1))
-           #                 allHGxs.extend(allHGxs1)
-            #                newdists = dists0 + dists1
-             #               loci.insert(0, [list(loc1.union(loc0)), newHGx, allHGxs, newdists])
-              #              break
-               #         else:
-                            # determine the closest bounds of the two distance lists
-                #            min_list, max_list = [min0, min1], [max0, max1]
-                 #           sml_up_bound = min(max_list)
-                  #          lrg_low_bound = max(min_list)
+    out_clan_loci = defaultdict(lambda: defaultdict(list))
+    out_clan_hgx = defaultdict(lambda: defaultdict(list))
+    for clan, scaf_dict in preclan_loci.items():
+        for scaf, loci in scaf_dict.items():
+            for i, loc_d in enumerate(loci):
+                loc, hgx = loc_d[0], loc_d[1]
+                loci[i].append(hgx2dist[hgx])
+                [gene2hgx[x].append(hgx) for x in loc]
+            loci = sorted(loci, key = lambda x: x[-1], reverse = True)
+            merge, check_loci = True, loci
+            while merge: # need to rerun to verify
+                loci = copy.deepcopy(check_loci)
+                check_loci, merge = [], False
+                while loci: # exhaustively merge overlapping loci
+                    # the locus for pairwise comparisons is the first
+                    loc0, hgxs0, allHGxs, dist0 = set(loci[0][0]), loci[0][1], loci[0][2], loci[0][-1]
+                    locIntersect = None
+                    # for all other loci
+                    for i1, loc1d in enumerate(loci[1:]):
+                        loc1, hgxs1, allHGxs1, dist1 = set(loc1d[0]), loc1d[1], loc1d[2], loc1d[-1]
+                        locIntersect = loc0.intersection(loc1)
+                        # if any genes overlap between these loci
+                        if locIntersect:
                             # are they similar enough?
-                        if dist1/dist0 >= min_sim:
-#                            if sml_up_bound/lrg_low_bound >= min_sim:
-                                # grab the overlap and add it to the end of the loci list
-                            newHGx = list(hgxs0)
-                            newHGx.extend(list(hgxs1))
-                            allHGxs.extend(allHGxs1)
- #                           newdists = dists0 + dists1
-                            loci.insert(0, [list(loc1.union(loc0)), newHGx, allHGxs, dist0])
-                            break
-                        else:
-                            locIntersect = None
-                if locIntersect: # if there was overlap, delete the overlappers
-                    merge = True
-                    del loci[1]
-                    del loci[i1 + 1] # don't add 1 because we removed the first and i1 relative to 1
-                else:
-                    check_loci.append(loci[0])
-                    del loci[0]
-
-        loci = check_loci
-        # give the remaining overlapping genes to the highest distance group
-        # will need to add the new HGxs in the end
-        for i0, locd0 in enumerate(loci):
-            loc0, hgx0, ahgx0, dist0 = set(locd0[0]), locd0[1], locd0[2], locd0[-1]
-            for i1, locd1 in enumerate(loci[i0+1:]):
-                loc1, hgx1, ahgx1, dist1 = set(locd1[0]), locd1[1], locd1[2], locd1[-1]
-                locIntersection = loc0.intersection(loc1)
-                if locIntersection:
-# currently this doesnt check if there are others of the same hg that are removed in the
-# overlap - ideally, this should check if there are other members of the same hg before
-# removing them IF they are not part of the overlap
-                    hg_intersection = set(gene2hg[gene] for gene in list(locIntersection) \
-                                          if gene in gene2hg)
-                    if dist0 > dist1:
+                            if dist1/dist0 >= min_sim:
+    #                            if sml_up_bound/lrg_low_bound >= min_sim:
+                                    # grab the overlap and add it to the end of the loci list
+                                newHGx = list(hgxs0)
+                                newHGx.extend(list(hgxs1))
+                                allHGxs.extend(allHGxs1)
+     #                           newdists = dists0 + dists1
+                                loci.insert(0, [list(loc1.union(loc0)), newHGx, allHGxs, dist0])
+                                break
+                            else:
+                                locIntersect = None
+                    if locIntersect: # if there was overlap, delete the overlappers
+                        merge = True
+                        del loci[1]
+                        del loci[i1 + 1] # don't add 1 because we removed the first and i1 relative to 1
+                    else:
+                        check_loci.append(loci[0])
+                        del loci[0]
+    
+            loci = sorted(check_loci, key = lambda x: x[-1], reverse = True)
+            # give the remaining overlapping genes to the highest distance group
+            # will need to add the new HGxs in the end
+            for i0, locd0 in enumerate(loci):
+                loc0, hgx0, ahgx0, dist0 = set(locd0[0]), locd0[1], locd0[2], locd0[3]
+                for i1, locd1 in enumerate(loci[i0+1:]):
+                    loc1, hgx1, ahgx1, dist1 = set(locd1[0]), locd1[1], locd1[2], locd1[3]
+                    locIntersection = loc0.intersection(loc1)
+                    if locIntersection:
+    # currently this doesnt check if there are others of the same hg that are removed in the
+    # overlap - ideally, this should check if there are other members of the same hg before
+    # removing them IF they are not part of the overlap
+                        hg_intersection = set(gene2hg[gene] for gene in list(locIntersection) \
+                                              if gene in gene2hg)
                         loci[i1 + 1 + i0][0] = list(loc1.difference(loc0))
- #                       loci[i1 + 1 + i0][1] = list(set(hgx1).difference(hg_intersection))
+    #                     loci[i1 + 1 + i0][1] = list(set(hgx1).difference(hg_intersection))
                         loci[i1 + 1 + i0][2] = [tuple(sorted(set(x).difference(hg_intersection))) \
                                                 for x in ahgx1]
-                    else:
-                        new_loc = list(loc0.difference(loc1))
-#                        hgx0 = list(set(hgx0).difference(hg_intersection))
-                        ahgx0 = [tuple(sorted(set(x).difference(hg_intersection))) \
-                                 for x in ahgx0]
-                        loci[i0] = [new_loc, hgx0, ahgx0, dist0]
-                        loc0 = set(new_loc)
+    
+            for locI in range(len(loci) - 1, -1, -1):
+                locx = loci[locI]
+                loc, hgx, ahgx = locx[0], locx[1], locx[2]
+                out_loc = [loc, [x for x in ahgx if x]]
+                if len(out_loc[0]) > 1:
+                    out_clan_loci[clan][scaf].append(sorted(out_loc[0]))
+                    out_clan_hgx[clan][scaf].append(tuple(sorted(set(out_loc[1]))))
+        #                out_clan_hgx[clan].append(tuple(sorted(set(hgxs0))))
 
-        for locx in loci:
-            loc, hgx, ahgx = locx[0], locx[1], locx[2]
-            out_loc = [loc, [x for x in ahgx if len(x) > 2]]
-            if out_loc[1] and len(out_loc[0]) > 2:
-                out_clan_loci[clan].append(sorted(out_loc[0]))
-                outclanHGx[clan].append(tuple(sorted(set(out_loc[1]))))
-    #                outclanHGx[clan].append(tuple(sorted(set(hgxs0))))
-
-    out_hg_loci = {}
-    for clan, loci in out_clan_loci.items():
-        out_hg_loci[clan] = []
-        for locus in loci:
-            out_hg_loci[clan].append([])
-            for gene in locus:
-                try:
-                    out_hg_loci[clan][-1].append(gene2hg[gene])
-                except KeyError:
-                    out_hg_loci[clan][-1].append(None)
-
-    return out_clan_loci, outclanHGx, out_hg_loci
+#    out_hg_loci = {}
+ #   for clan, loci in out_clan_loci.items():
+  #      out_hg_loci[clan] = []
+   #     for locus in loci:
+    #        out_hg_loci[clan].append([])
+     #       for gene in locus:
+      #          try:
+       #             out_hg_loci[clan][-1].append(gene2hg[gene])
+        #        except KeyError:
+         #           out_hg_loci[clan][-1].append(None)
+    return out_clan_loci, out_clan_hgx #, out_hg_loci
 
 
 
@@ -644,7 +629,7 @@ def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus,
     gff_list, protoclus, clus_out = gff2list(gff_path), {}, []
     cds_dict = input_parsing.compileCDS(gff_list, os.path.basename(gff_path).replace('.gff3',''))
 
-    preclan_loci, loc_index = defaultdict(list), defaultdict(int)
+    preclan_loci, loc_index = defaultdict(lambda: defaultdict(list)), defaultdict(int)
     for scaf in cds_dict:
         for i0, seq0 in enumerate(cds_dict[scaf]):
             if seq0 in ome_sig_clus: # if the og is part of a significant seed
@@ -672,15 +657,15 @@ def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus,
                         # found
                             end = i1 + 1
                     hgx = tuple(sorted(sig_clus[0]))
-                    preclan_loci[clan].append([
+                    preclan_loci[clan][scaf].append([
                          locus[start:end], hgx, [hgx], [loc_index[clan]]
                          ])
                     loc_index[clan] += 1
 
-    out_clan_loci, outclanHGx, out_hg_loci = merge_clan_loci(preclan_loci, gene2hg,
+    out_clan_loci, out_clan_hgx, out_hg_loci = merge_clan_loci(preclan_loci, gene2hg,
                                                              min_merge_perc, hgx2dist_path,
                                                              min_heat_len)
-    return ome, out_clan_loci, outclanHGx, out_hg_loci
+    return ome, out_clan_loci, out_clan_hgx, out_hg_loci
 
 
 def read_to_write(out_h, in_adj, min_gcf):
@@ -856,8 +841,8 @@ def classify_gcfs(
     if not checkdir(hgx_dir, unzip = True, rm = True):
         os.mkdir(hgx_dir)
 
-    groupI = wrk_dir + 'group.I.pickle'
-    groupII = wrk_dir + 'group.II.pickle'
+    groupI = wrk_dir + 'gene2hgx.pickle'
+    groupII = wrk_dir + 'hgcs.pickle'
 
     if not os.path.isfile(groupI):
         print('\tAggregating HGxs with overlapping loci', flush = True)
@@ -971,7 +956,7 @@ def classify_gcfs(
     print('\tClassifying HGx clans into GCFs', flush = True)
     clanFile = wrk_dir + 'clan2loci.'
     if not os.path.isfile(clanFile + 'hg.json.gz'):
-        print('\t\tPreparing loci extraction', flush = True)
+        print('\t\tPreparing locus extraction', flush = True)
         ome2clus2extract = defaultdict(dict)
         for i, clan in enumerate(clans):
             for hgx, omes in clan.items():
@@ -985,7 +970,7 @@ def classify_gcfs(
                     # {ome: {gene: [[set(hgx), clanI]]}}
 
         print('\t\tExtracting clan loci', flush = True)
-        with mp.get_context('fork').Pool(processes = cpus) as pool:
+        with mp.get_context('forkserver').Pool(processes = cpus) as pool:
             hash_res = pool.starmap(hash_clan_loci, 
                                     tqdm(((ome, db[ome]['gff3'], clus2extract,
                                           gene2hg, clusplusminus, min_merge_perc,
@@ -996,45 +981,46 @@ def classify_gcfs(
             pool.close()
             pool.join()
 
-        clanLoci = defaultdict(list)
-        clanHGx4gcfs = defaultdict(list)
-        clanHGloci = defaultdict(list)
-        for ome, out_clan_loci, outclanHGx, outclanHGloci in hash_res:
+        print('\t\tWriting clan loci', flush = True)
+        clan_loci = defaultdict(list)
+        clan_hgx4gcfs = defaultdict(list)
+        clan_hg_loci = defaultdict(list)
+        for ome, out_clan_loci, out_clan_hgx, out_clan_hg_loci in hash_res:
             for clan in out_clan_loci:
-                clanLoci[clan].extend(out_clan_loci[clan])
-                clanHGx4gcfs[clan].extend(outclanHGx[clan])
-                clanHGloci[clan].extend(outclanHGloci[clan])
+                clan_loci[clan].extend(out_clan_loci[clan])
+                clan_hgx4gcfs[clan].extend(out_clan_hgx[clan])
+                clan_hg_loci[clan].extend(out_clan_hg_loci[clan])
 
-        write_json(clanLoci, clanFile + 'json.gz')
-        write_json(clanHGx4gcfs, clanFile + 'hgx.json.gz')
-        write_json(clanHGloci, clanFile + 'hg.json.gz')
+        write_json(clan_loci, clanFile + 'json.gz')
+        write_json(clan_hgx4gcfs, clanFile + 'hgx.json.gz')
+        write_json(clan_hg_loci, clanFile + 'hg.json.gz')
     else:
         print('\t\tLoading clan loci', flush = True)
-        clanLoci = {int(k): tuple(v) for k,v in sorted(
+        clan_loci = {int(k): tuple(v) for k,v in sorted(
                 read_json(clanFile + 'json.gz').items(), 
                 key = lambda x: len(x[1]), reverse = True)}
-        clanHGx4gcfs = {int(k): tuple([tuple(i) for i in v]) \
+        clan_hgx4gcfs = {int(k): tuple([tuple(i) for i in v]) \
                         for k,v in read_json(clanFile + 'hgx.json.gz').items()}
-        clanHGloci = {int(k): tuple(v) \
+        clan_hg_loci = {int(k): tuple(v) \
                       for k, v in read_json(clanFile + 'hg.json.gz').items()}
 
-    # dict(clanLoci) = {int(clanI): ((ome0_gene0, ome0_gene1,)...,)}
-    # dict(clanHGx4gcfs) = {int(clanI): ((og0, og1, ogn,)...,)}
-    # dict(clanHGloci) = {int(clanI): ((ome0_gene0_og, ome0_gene1_og,)...,)}
+    # dict(clan_loci) = {int(clanI): ((ome0_gene0, ome0_gene1,)...,)}
+    # dict(clan_hgx4gcfs) = {int(clanI): ((og0, og1, ogn,)...,)}
+    # dict(clan_hg_loci) = {int(clanI): ((ome0_gene0_og, ome0_gene1_og,)...,)}
 
     # need to move up to before writing
-    clanLoci = {k: v for k,v in sorted(clanLoci.items(), key = lambda x: len(x[1]), reverse = True)}
-    clanHGx4gcfs = [clanHGx4gcfs[k] for k in clanLoci]
-    clanHGloci = [clanHGloci[k] for k in clanLoci]
-    clanLoci = [v for v in clanLoci.values()]
+    clan_loci = {k: v for k,v in sorted(clan_loci.items(), key = lambda x: len(x[1]), reverse = True)}
+    clan_hgx4gcfs = [clan_hgx4gcfs[k] for k in clan_loci]
+    clan_hg_loci = [clan_hg_loci[k] for k in clan_loci]
+    clan_loci = [v for v in clan_loci.values()]
 
     gcf_dir = wrk_dir + 'gcf/' 
     if not os.path.isdir(gcf_dir):
         os.mkdir(gcf_dir)
 
     print('\t\tOutputting HG fastas', flush = True)
-#    hgs_prep = set(chain(*list(chain(*list(clanHGloci.values())))))
-    hgs_prep = list(chain(*list(chain(*clanHGloci))))
+#    hgs_prep = set(chain(*list(chain(*list(clan_hg_loci.values())))))
+    hgs_prep = list(chain(*list(chain(*clan_hg_loci))))
     hg_count = Counter(hgs_prep)
     if None in hg_count:
         del hg_count[None]
@@ -1051,8 +1037,8 @@ def classify_gcfs(
 
 
     print('\t\tCalling GCFs', flush = True)
-    clan_lens = [len(v) for v in clanLoci]
-#    print('\t\t\t' + str(sum([len(v) for v in list(clanLoci.values())])) \
+    clan_lens = [len(v) for v in clan_loci]
+#    print('\t\t\t' + str(sum([len(v) for v in list(clan_loci.values())])) \
     print(f'\t\t\t{sum(clan_lens)}' \
         + ' loci', flush = True)
     m, adj_mtr = mp.Manager(), gcf_dir + 'loci.adj'
@@ -1060,21 +1046,20 @@ def classify_gcfs(
         cpus = 2
 
 
-    # if the min_gcf_id is greater than 33% then 
-    # at least HGx overlaps < 2 can be eliminated
-    min_overlap = round((min_gcf_id * 3) - 0.5)
+#    min_overlap = round((min_gcf_id * 2) - 0.5)
+    min_overlap = 2 # need at least two genes of overlap to call it a cluster
     index, cmds = 0, []
 
     loci, hgxXloci, loc2clan = {}, {}, {}
-    for clanI, locs in enumerate(clanLoci):
+    for clanI, locs in enumerate(clan_loci):
         cmds.append([
-            db, clanI, locs, clanHGloci[clanI],
+            db, clanI, locs, clan_hg_loci[clanI],
             hg_dir, hgx_dir, gcf_dir, index, minid, min_gcf_id,
             simfun, min_overlap
             ])
         for i, locus in enumerate(locs):
-            loci[index] = clanLoci[clanI][i]
-            hgxXloci[index] = clanHGx4gcfs[clanI][i]
+            loci[index] = clan_loci[clanI][i]
+            hgxXloci[index] = clan_hgx4gcfs[clanI][i]
             loc2clan[index] = clanI
             index += 1
 
@@ -1087,7 +1072,7 @@ def classify_gcfs(
         if not os.path.isfile(f'{gcf_dir}0.sadj.tmp.r'):
             print(f'\t\t\t\tRunning clan 0', flush = True)
             Q = mp.Manager().Queue()
-            procs = [mp.Process(target=clan_to_gcf_sim, #db, 0, clanLoci[0], clanHGloci[0],
+            procs = [mp.Process(target=clan_to_gcf_sim, #db, 0, clan_loci[0], clan_hg_loci[0],
                             #g_dir, hgx_dir, gcf_dir, 0, minid, min_gcf_id,
                             #simfun, min_overlap, 
                             args=(*cmds[0], cpus - 1, Q))]
