@@ -508,20 +508,20 @@ def output_gcfs(db, wrk_dir, gcfs, gcf_omes, i2ome, out_dir, logg2d, gcf_hgxs,
     if dnds_dict:
         axes = [[],[],[],[],[]]
     else:
-        axes = [[],[],[]]
+        axes = [[],[],[], []]
     labels = []
 
     for entry in gcf_output:
         labels.append(
-            ['GCF:', str(entry[1]) + ' | Omes: ' + entry[-1] + ' | HGs: ' + str(entry[0])]
+            ['GCF:', str(entry[1]) + ' | Omes: ' + entry[-1]]
             )
         axes[0].append(entry[5])
         axes[1].append(entry[4])
         axes[2].append(entry[3])
+        axes[3].append(entry[6])
     print('\tOutputting scatter plots', flush = True)
-    axes_labels = [
-        'Distribution Patchiness', 'Gene Cluster Commitment', 'Log Microsynteny Distance' #,
-        ]
+    axes_labels = ['Distribution Patchiness', 'Gene Commitment', 'Log Microsynteny Distance',
+                   'Mean Minimum Identity']
 
     fig = mk_subplots(labels, axes, axes_labels, alpha = 0.6)
     fig.write_html(out_dir + 'metrics.html')
