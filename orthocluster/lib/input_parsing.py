@@ -308,8 +308,8 @@ def rm_old_data(
         mci_file = wrk_dir + 'gcf/loci.mci'
         mcl_rows = wrk_dir + 'gcf/mcl_rows.tsv'
         for f in [row_file, mci_file, mcl_rows]:
-            if os.path.isfile(row_file):
-                todel.append(row_file)
+            if os.path.isfile(f):
+                todel.append(f)
         hgx_files = ['hgx2omes2gcc.full.pickle',
                      'hgx2omes2id.full.pickle']#,
 #                     'hgx2omes2pos.full.pickle']
