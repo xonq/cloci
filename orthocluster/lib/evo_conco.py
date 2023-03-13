@@ -1,6 +1,7 @@
 import os
 import sys
 import pickle
+import datetime
 import subprocess
 import multiprocessing as mp
 from tqdm import tqdm
@@ -219,16 +220,22 @@ def hg_parse_and_calc(hg, hg_dict, hgx_dir, pos_data = True):
     except FileNotFoundError:
         return None, None
 
-    # sort each query by percent ID (should maybe have a coverage filter)
-    gene2algn = {
-        k: sorted(v, key = lambda x: x[1], reverse = True) \
-        for k,v in gene2algn.items()
-        } 
+    # sort each query preferably by percent positives
+    try:
+        gene2algn = {
+            k: sorted(v, key = lambda x: x[2], reverse = True) \
+            for k,v in gene2algn.items()
+            } 
+    # otherwise run it by positives
+    except IndexError:
+        gene2algn = {k: sorted(v, key = lambda x: x[1], reverse = True) \
+                     for k, v in gene2algn.items()}
     res = defaultdict(dict)
 
     for gcf, genes in hg_dict.items():
         gene_set = set(genes)
-        hgx_gene_len = len(gene_set)
+        # disregard the self from the length
+        hgx_gene_len = len(gene_set) - 1
         for gene in genes:
             ome = gene[:gene.find('_')] # identify the ome
             if gene not in res[gcf]:
@@ -242,110 +249,19 @@ def hg_parse_and_calc(hg, hg_dict, hgx_dir, pos_data = True):
             hits, res, gene2algn = top_hits_func(gene, gcf, gene_set, hits, 
                                                  gene2algn, res, ome)
     
-            # if there are missing hits
-            if hgx_gene_len - len(res[gcf][gene][1]) - 1 > 0:
+            # if there are missing hits (which means we are disregarding
+            # missing alignments)
+            if hgx_gene_len - len(res[gcf][gene][1]) > 0:
                 # then get the percent of observed hits that are valid
                 hit_len = res[gcf][gene][0] + len(res[gcf][gene][1])
                 res[gcf][gene][0] = hit_len / (hit_len + res[gcf][gene][0])
             else:
-                # the score for this HG and ome is the total of the genes in this
-                # hgx divided by the total + the failed genes
-                res[gcf][gene][0] = hgx_gene_len / (hgx_gene_len + res[gcf][gene][0])
+                # the GCC for this HG and ome is the total of the genes in this
+                # HG (disregarding self) divided by the total + the failed genes
+                res[gcf][gene][0] = hgx_gene_len \
+                                  / (hgx_gene_len + res[gcf][gene][0])
     
     return hg, hg_sim_func(res)
-
-
-def hgx2omes2gcc_calc(
-    hgx, omesI, omes, hgxDict, hgx_dir, pos_data = True
-    ):
-
-    if pos_data:
-        parse_func = parse_algn_wpos
-        top_hits_func = get_top_hits_wpos 
-        sim_func = sim_calc_wpos
-        mms_func = mms_calcs_wpos
-    else:
-        parse_func = parse_algn_wopos
-        top_hits_func = get_top_hits_wopos
-        sim_func = sim_calc_wopos
-        mms_func = mms_calcs_wopos
-
-    res = {}
-    for hg, qs in hgxDict.items():
-        hgx_genes, hgx_omes = set(qs), set([q[:q.find('_')] for q in qs])
-        # grab the length of the genes associated with this HG
-        hgx_gene_len = len(hgx_genes)
-        if hgx_gene_len == 1: # no homologs
-            continue
-        try:
-            gene2algn = parse_func(hgx_dir, hg, hgx_genes)
-            res[hg] = {}
-        except ValueError:
-            if not pos_data:
-                eprint(f'\nERROR: malformatted output file: {hg}', flush = True)
-                sys.exit(123)
-            else:
-                parse_func = parse_algn_wopos
-                top_hits_func = get_top_hits_wopos
-                sim_func = sim_calc_wopos
-                mms_func = mms_calcs_wopos
-                        # dict(gene2algn) = {query: [(sbj, id)]}
-        # if the file doesnt exist at this point then something went wrong with
-        # the alignment. for mmseqs, this can happen if the genes are too small
-        # relative to the default kmer length or other errors (~0.5% alignments)
-        except FileNotFoundError:
-            continue
-        # sort each query by percent ID (should maybe have a coverage filter)
-        gene2algn = {
-            k: sorted(v, key = lambda x: x[1], reverse = True) \
-            for k,v in gene2algn.items()
-            } 
-
-        # what about paralogs within the same group?
-        for gene in qs: # for each gene in the hgx_genes
-            ome = gene[:gene.find('_')] # identify the ome
-            if ome not in res[hg]:
-                res[hg][ome] = [0, {}]
-
-            # to identify if the subject is in the family of omes
-            hits = {gene}
-            # while all cluster homologs aren't accounted for and there remain hits
-            if gene not in gene2algn:
-                continue
-            hits, res, gene2algn = top_hits_func(gene, hgx_genes, hg,
-                                                hits, gene2algn, res, ome)
-
-            # if there are missing hits
-            if hgx_gene_len - len(res[hg][ome][1]) - 1 > 0:
-#                res[hg][ome][0] = 0
-                # then get the percent of observed hits that are valid
-                hit_len = res[hg][ome][0] + len(res[hg][ome][1])
-                res[hg][ome][0] = hit_len / (hit_len + res[hg][ome][0])
-            else:
-                # the score for this HG and ome is the total of the genes in this
-                # hgx divided by the total + the failed genes
-                res[hg][ome][0] = hgx_gene_len / (hgx_gene_len + res[hg][ome][0])
-
-    # populate a binary response dictionary for each ome and its genes that are
-    # in the shared HGx; 0 = the HG's best blast hit in this ome is not another
-    # ome code that shares the HGx, 1 = the HG's best blast hit is another ome
-    # code that share the HGx
-    omeScores, sim_dict = sim_func(res)
-    try:
-        # average score of each hg (perhaps needs to be weighted by presence)
-        # sum of percent top hits that're in GCF adjusted number of hgs appear
-        # in) averaged over number of omes
-        gccScore = 0
-        ome_av = [sum(v.values())/len(v) for ome, v in omeScores.items()]
-        gccScore = sum(ome_av)/len(omeScores)
-    except ZeroDivisionError:
-        # why is this happening?
-#        print(f'\t{hgx} {ome_av}')
-        gccScore = 0
-
-    gcf_min_id, gcf_min_pos = mms_func(sim_dict)
-
-    return hgx, omesI, gccScore, gcf_min_id, gcf_min_pos
 
 
 def gcc_mngr(
@@ -362,23 +278,36 @@ def gcc_mngr(
         gcf_hgx = gcf_hgxs[fam]
         omesc = gcf_omes[fam]
         if gcf_hgx not in d2id_:
-            if omesc not in d2id_[gcf_hgx]:
-                clus_hgs[fam] = [gcf_hgx, defaultdict(list)]
-        # are some gcf_hgx HGs relics of the original hgx and thus only contain one gene?
-        # would lower evo_conco scores
-                gcf_hgx_set = set(gcf_hgx)
-                for loc in loci:
-                    for gene in loc:
-                        try:
-                            hg = gene2hg[gene]
-                        except KeyError:
-                            continue
-                        if hg in gcf_hgx_set:
-                            clus_hgs[fam][1][hg].append(gene)
+            clus_hgs[fam] = [gcf_hgx, defaultdict(list)]
+    # are some gcf_hgx HGs relics of the original hgx and thus only contain one gene?
+    # would lower evo_conco scores
+            gcf_hgx_set = set(gcf_hgx)
+            for loc in loci:
+                for gene in loc:
+                    try:
+                        hg = gene2hg[gene]
+                    except KeyError:
+                        continue
+                    if hg in gcf_hgx_set:
+                        clus_hgs[fam][1][hg].append(gene)
+        elif omesc not in d2id_[gcf_hgx]:
+            clus_hgs[fam] = [gcf_hgx, defaultdict(list)]
+    # are some gcf_hgx HGs relics of the original hgx and thus only contain one gene?
+    # would lower evo_conco scores
+            gcf_hgx_set = set(gcf_hgx)
+            for loc in loci:
+                for gene in loc:
+                    try:
+                        hg = gene2hg[gene]
+                    except KeyError:
+                        continue
+                    if hg in gcf_hgx_set:
+                        clus_hgs[fam][1][hg].append(gene)
+
             # {fam: [hgx, {hg: set(seqs)}}
 
     clus_hgs = {
-        fam: [d[0], {hg: set(v) for hg, v in d[1].items()}] \
+        fam: [d[0], {hg: set(v) for hg, v in d[1].items() if len(set(v)) > 1}] \
         for fam, d in clus_hgs.items()
         } # make sets from it
     hg2genes = defaultdict(dict)
@@ -394,7 +323,7 @@ def gcc_mngr(
                                total = len(hg2genes)))
         pool.close()
         pool.join()
-  
+
     print('\tQuantifying', flush = True)
     gcf_res = defaultdict(dict)
     for hg, hg_res in hg_results:
@@ -434,9 +363,9 @@ def gcc_mngr(
             hgx2omes2pos[hgx][omes] = pos
 
     hgx2omes2pos = dict(hgx2omes2pos)
-    return {**hgx2omes2gcc, **d2gcc}, \
-        {**hgx2omes2id, **d2id_}, \
-        {**hgx2omes2pos, **d2pos}
+    return {**d2gcc, **hgx2omes2gcc}, \
+        {**d2id_, **hgx2omes2id}, \
+        {**d2pos, **hgx2omes2pos}
 
 
 def find_missing_algns(hgs, hgx_dir):
