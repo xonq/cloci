@@ -208,10 +208,32 @@ def threshold_hgx(hgx2omes, hgx2loc, omes2dist,
     hgx2loc = {v: hgx2loc[v] for v in i2hgx.values()}
     return hgx2omes, hgx2loc, hgx2dist, i2hgx, hgx2i
 
+def threshold_gcf_by_dist(dist_thresh, gcfs, gcf_hgxs, gcf_omes, omes2dist):
+    logg2d_prep = {}
+    for omesc in gcf_omes.values():
+        logg2d_prep[omesc] = log(omes2dist[omesc])
+    maxgcfd = max(logg2d_prep.values()) # max observed, even of those truncated/removed
+    mingcfd = min(logg2d_prep.values())
+    denom = maxgcfd - mingcfd
+    logg2d = {k: (v - mingcfd)/denom for k, v in logg2d_prep.items()} 
+    if dist_thresh:
+        print('\tApplying distance threshold', flush = True)
+        newGCFs, newGCFOmes, newGCFHGxs = {}, {}, {}
+        for gcf, locs in gcfs.items():
+            hgxc = gcf_hgxs[gcf]
+            omesc = gcf_omes[gcf]
+            if logg2d[omesc] >= dist_thresh:
+                newGCFs[gcf] = locs
+                newGCFOmes[gcf] = omesc
+                newGCFHGxs[gcf] = hgxc
+
+    return newGCFs, newGCFOmes, newGCFHGxs, logg2d
+
+
 def threshold_gcf_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, gcfs,
                        gcf_hgxs, gcf_omes, omes2patch, hgx2omes2gcc,
-                       hgx2omes2id, hgx2omes2pos, dist_thresh, logg2d):
-    if any(x > 0 for x in [gcc_thresh, patch_thresh, id_perc, pos_perc, dist_thresh]):
+                       hgx2omes2id, hgx2omes2pos):
+    if any(x > 0 for x in [gcc_thresh, patch_thresh, id_perc, pos_perc]):
         print('\tApplying thresholds', flush = True)
         print('\t\t' + str(len(gcfs)) + ' GCFs before', flush = True)
         newGCFs, newGCFOmes, newGCFHGxs = {}, {}, {}
@@ -230,7 +252,6 @@ def threshold_gcf_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, gcfs,
                     newGCFHGxs[gcf] = hgxc
             except TypeError:
                  if hgx2omes2gcc[hgxc][omesc] >= gcc_thresh \
-                    and logg2d[omesc] >= dist_thresh \
                     and omes2patch[omesc] >= patch_thresh \
                     and hgx2omes2id[hgxc][omesc] >= id_perc:
                     newGCFs[gcf] = locs
@@ -240,23 +261,20 @@ def threshold_gcf_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, gcfs,
 
 def threshold_gcf_wopos(gcc_thresh, patch_thresh, id_perc, gcfs,
                        gcf_hgxs, gcf_omes, omes2patch,
-                       hgx2omes2gcc, hgx2omes2id, dist_thresh, logg2d):
-    if any(x > 0 for x in [gcc_thresh, patch_thresh, id_perc, dist_thresh]):
+                       hgx2omes2gcc, hgx2omes2id):
+    if any(x > 0 for x in [gcc_thresh, patch_thresh, id_perc]):
         print('\tApplying thresholds', flush = True)
         print('\t\t' + str(len(gcfs)) + ' GCFs before', flush = True)
         newGCFs, newGCFOmes, newGCFHGxs = {}, {}, {}
-        for i0, gcf in gcfs.items():
-            check = False # have we added a new list
-            hgxc = gcf_hgxs[i0]
-            omesc = gcf_omes[i0]
-            for x, omes in gcf.items():
-                if hgx2omes2gcc[hgxc][omesc] >= gcc_thresh \
-                    and logg2d[omesc] >= dist_thresh \
-                    and omes2patch[omesc] >= patch_thresh \
-                    and hgx2omes2id[hgxc][omesc] >= id_perc:
-                    newGCFs[gcf] = locs
-                    newGCFOmes[gcf] = omesc
-                    newGCFHGxs[gcf] = hgxc
+        for gcf, locs in gcfs.items():
+            hgxc = gcf_hgxs[gcf]
+            omesc = gcf_omes[gcf]
+            if hgx2omes2gcc[hgxc][omesc] >= gcc_thresh \
+                and omes2patch[omesc] >= patch_thresh \
+                and hgx2omes2id[hgxc][omesc] >= id_perc:
+                newGCFs[gcf] = locs
+                newGCFOmes[gcf] = omesc
+                newGCFHGxs[gcf] = hgxc
 
         return newGCFs, newGCFOmes, newGCFHGxs
 
@@ -310,7 +328,7 @@ def read_tune_file(tune_file, gene2hg, ome2i):
 
 def main(
     db, hg_file, out_dir, plusminus = 1, hg_dir = None, hgx_dir = None,
-    hgp_perc = 0.2, clus_perc = 0.7, hgx_perc = 0.7,
+    hgp_perc = 0.2, clus_perc = 0, hgx_perc = 0.7,
     id_perc = 30, inflation = 1.5, pos_perc = 0,
     minimum_omes = 2, samples = 10000, pfam = None,
     min_gcf_id = 0.3, simfun = hgx2gcfs.overlap,
@@ -433,7 +451,7 @@ def main(
                 out.write('\t'.join([str(x) for x in line]) + '\n')
         print('\t\t' + str(len(top_hgs)) + ' significant HG pairs', flush = True)
         top_hgs = [(x[0], x[1]) for x in top_hgs]
-    elif not os.path.isfile(wrk_dir + 'hgx2omes.pickle'): # load previous hg pairs
+    elif not os.path.isfile(wrk_dir + 'hgx2loc.pickle'): # load previous hg pairs
         print('\tLoading previous seed HG pairs', flush = True)
         top_hgs = input_parsing.load_seedScores(out_dir + 'hgps.tsv.gz')
         print('\t\t' + str(len(top_hgs)) + ' significant HG pairs', flush = True)
@@ -556,38 +574,44 @@ def main(
                                         cpus, omes2dist, func = treecalcs.calc_tmd,
                                         uniq_sp = db, i2ome = i2ome)
 
+    gcfs, gcf_omes, gcf_hgxs, logg2d = threshold_gcf_by_dist(dist_thresh, gcfs, gcf_hgxs, 
+                                                             gcf_omes, omes2dist)
+    if dist_thresh:
+        print(f'\t{len(gcfs)} GCFs pass threshold', flush = True)
+
+
+
     # this is a crude pseudo cluster family expectedness check; its pseudo because the HGx
     # is now the conglomerate of the extracted loci's, and if that locus is derived from
     # multiple HGxs or the set of omes with that locus is truncated relative to the original
     # HGx then it is not obtained in the same way the null distribution was constructed;
     # nevertheless, this is a liberal mechanism that will remove edge cases to reduce computation
     # If the user doesn't want this, then remove the family percentile argument.
-    todel = []
-    for i, omes in gcf_omes.items():
-        dist = omes2dist[omes]
-        parts = set(ome2partition[x] for x in omes)
-        if None in parts:
-            parts = parts.remove(None)
-            if not parts:
-                continue
+ #   todel = []
+#    for i, omes in gcf_omes.items():
+  #      dist = omes2dist[omes]
+   #     parts = set(ome2partition[x] for x in omes)
+    #    if None in parts:
+     #       parts = parts.remove(None)
+      #      if not parts:
+       #         continue
         # get the threshold corresponding to the maximum sized HGx 
         # in the family, and the minimum lineages' value [liberal]
 #        max_len = max([len(x) for x in gcfs[i]])
-        max_len = len(gcf_hgxs[i]) # get the len of the complete HGx
+   #     max_len = len(gcf_hgxs[i]) # get the len of the complete HGx
         # if its too big, we cant evaluate its pseudo-expectedness, so pass
-        if max_len <= plusminus * 2 + 1:
-            clus_score = min([clus_scores_list[v][max_len] \
-                              for v in list(parts)])
-            if not dist > clus_score:
-                todel.append(i)
+    #    if max_len <= plusminus * 2 + 1:
+     #       clus_score = min([clus_scores_list[v][max_len] \
+      #                        for v in list(parts)])
+       #     if not dist > clus_score:
+        #        todel.append(i)
 
-    todel.reverse()
-    for i in todel:
-        del gcf_omes[i]
-        del gcfs[i]
-        del gcf_hgxs[i]
-        del gcf2clan[i]
-    print(f'\t{len(gcfs)} GCFs pass threshold', flush = True)
+#    todel.reverse()
+ #   for i in todel:
+  #      del gcf_omes[i]
+   #     del gcfs[i]
+    #    del gcf_hgxs[i]
+     #   del gcf2clan[i]
 
     runOmes = [
         omes for omes in gcf_omes.values()
@@ -614,22 +638,15 @@ def main(
     # this is the output directory for hgx2gcf and evo_conco
     hg_dir = f'{wrk_dir}hg/'
 
-    logg2d_prep = {}
-    for omesc in gcf_omes.values():
-        logg2d_prep[omesc] = log(omes2dist[omesc])
-    maxgcfd = max(logg2d_prep.values()) # max observed, even of those truncated/removed
-    mingcfd = min(logg2d_prep.values())
-    denom = maxgcfd - mingcfd
-    logg2d = {k: (v - mingcfd)/denom for k, v in logg2d_prep.items()} 
+
     if hgx2omes2pos:
         new_gcf_data = threshold_gcf_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, 
                                           gcfs, gcf_hgxs, gcf_omes, omes2patch, 
-                                          hgx2omes2gcc, hgx2omes2id, hgx2omes2pos,
-                                          dist_thresh, logg2d)
+                                          hgx2omes2gcc, hgx2omes2id, hgx2omes2pos)
     else:
         new_gcf_data = threshold_gcf_wopos(gcc_thresh, patch_thres, id_perc, gcfs,
                                            gcf_hgxs, gcf_omes, omes2patch,
-                                           hgx2omes2gcc, hgx2omes2id, dist_thresh, logg2d)
+                                           hgx2omes2gcc, hgx2omes2id)
     if new_gcf_data:
         gcfs, gcf_omes, gcf_hgxs = new_gcf_data
         print(f'\t\t{len(gcfs)} GCFs pass', flush = True)
@@ -749,8 +766,8 @@ if __name__ == '__main__':
     thr_opt.add_argument('-xp', '--hgx_percentile', type = int,
         help = 'Null percentile [0 < value < 100] of HGx microsynteny distances. ' \
              + 'Must be less than -fp; DEFAULT: 65', default = 65)
-    thr_opt.add_argument('-fp', '--gcf_percentile', type = int, default = 0, 
-        help = 'Pseudonull percentile [0 < value < 100] of GCF microsynteny distances')
+#    thr_opt.add_argument('-fp', '--gcf_percentile', type = int, default = 0, 
+ #       help = 'Pseudonull percentile [0 < value < 100] of GCF microsynteny distances')
     thr_opt.add_argument('-ip', '--id_percent', default = 0, type = float,
         help = 'Percent [0 < value < 100] identity minimum for gene cluster family')
     thr_opt.add_argument('-pp', '--pos_percent', default = 0, type = float,
@@ -805,8 +822,8 @@ if __name__ == '__main__':
         root = []
         root_txt = 'midpoint'
 
-    if not args.hgx_percentile:
-        args.hgx_percentile = args.gcf_percentile # set the default
+ #   if not args.hgx_percentile:
+#        args.hgx_percentile = args.gcf_percentile # set the default
 
     if args.maximum_merge:
         min_merge_perc = args.maximum_merge/100
@@ -929,7 +946,7 @@ if __name__ == '__main__':
         'HGx percentile': args.hgx_percentile, 'GCF aligner': f'{aligner} {algn_sens}',
         'Similarity index': sim,
         'Inflation': args.inflation, 'Tune clusters': tune_file,
-        'GCF percentile': args.gcf_percentile, 
+#        'GCF percentile': args.gcf_percentile, 
         'Minimum family %id': args.id_percent, 'Minimum family %pos': args.pos_percent,
         'Patchiness threshold': args.patch_threshold, 'GCC threshold': args.gcc_threshold,
         'Distance threshold': args.md_threshold, 'Null partitions': partition,
@@ -946,12 +963,12 @@ if __name__ == '__main__':
   #      sys.exit(4)
 
     findExecs(execs, exit = set(execs))
-    if args.gcf_percentile < args.hgx_percentile and args.gcf_percentile:
-        print('\nERROR: HGx percentile is greater than GCF percentile',
-            flush = True)
-        sys.exit(3)
-    elif not args.gcf_percentile:
-        args.gcf_percentile = args.hgx_percentile
+#    if args.gcf_percentile < args.hgx_percentile and args.gcf_percentile:
+ #       print('\nERROR: HGx percentile is greater than GCF percentile',
+  #          flush = True)
+   #     sys.exit(3)
+    #elif not args.gcf_percentile:
+     #   args.gcf_percentile = args.hgx_percentile
 
     start_time = intro('homologs to clusters - hg2clus', args_dict, 
                        'Zachary Konkel, Laura Kubatko, Jason Slot')
@@ -975,10 +992,10 @@ if __name__ == '__main__':
         hgp_perc = float('.' + str(args.hgp_percentile))
     else:
         hgp_perc = float('.0' + str(args.hgp_percentile))
-    if len(str(args.gcf_percentile)) > 1:
-        clus_perc = float('.' + str(args.gcf_percentile))
-    else:
-        clus_perc = float('.0' + str(args.gcf_percentile))   
+#    if len(str(args.gcf_percentile)) > 1:
+ #       clus_perc = float('.' + str(args.gcf_percentile))
+  #  else:
+   #     clus_perc = float('.0' + str(args.gcf_percentile))   
     if len(str(args.hgx_percentile)) > 1:
         hgx_perc = float('.' + str(args.hgx_percentile))
     else:
@@ -994,7 +1011,8 @@ if __name__ == '__main__':
         db, homogroups, out_dir, plusminus = args.window,
         cpus = args.cpus, hg_dir = hg_dir, inflation = args.inflation,
         hgp_perc = hgp_perc, hgx_dir = hgx_dir, #clus_thresh = args.clus_threshold,
-        clus_perc = clus_perc, aligner = aligner,#seed_thresh = args.seed_threshold,
+  #      clus_perc = clus_perc, aligner = aligner,#seed_thresh = args.seed_threshold,
+        aligner = aligner,
         id_perc = args.id_percent, pos_perc = args.pos_percent,
         hgx_perc = hgx_perc, pfam = pfam, samples = args.null_sample,
         partition_file = args.null_partitions, #        run_dnds = args.dnds, 
