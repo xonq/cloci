@@ -226,36 +226,39 @@ def gen_pair_nulls(db, phylo, ome2i, wrk_dir, nul_dir, seed_perc, ome2pairs,
         with open(wrk_dir + 'omes2dist.pickle', 'rb') as raw:
             omes2dist = pickle.load(raw)
 
-    # create null distribution for orthogroup pairs
-    final_partition = len(partition_omes) - 1 
-    pair_nulls, omes2dist = [], {}
-    if not os.path.isfile(f'{nul_dir}2.null.{final_partition}.txt'):
-        print('\tGenerating null distributions', flush = True)
-        for i, omes in enumerate(partition_omes):
-            omes2dist, pair_null = gen_nulls(
-                db, i2ome, ome2pairs, phylo,
-                omes, samples = samples, 
-                dist_func = dist_func, uniq_sp = uniq_sp,
-                cpus = cpus
-                )
-            n_f = f'{nul_dir}2.null.{i}.txt'
-            with open(f'{n_f}.tmp', 'w') as out:
-                out.write('\n'.join([str(i0) for i0 in pair_null]))
-            shutil.move(f'{n_f}.tmp', n_f)
-            pair_nulls.append(pair_null)
-        with open(wrk_dir + 'omes2dist.pickle', 'wb') as out:
-            pickle.dump(omes2dist, out)
-    else: # or just load what is available
-        if os.path.isfile(wrk_dir + 'omes2dist.pickle'):
-            with open(wrk_dir + 'omes2dist.pickle', 'rb') as raw:
-                omes2dist = pickle.load(raw)
-        for i, omes in enumerate(partition_omes):
-            with open(f'{nul_dir}2.null.{i}.txt', 'r') as raw:
-               pair_nulls.append([float(x.rstrip()) for x in raw])
-    min_pair_scores = []
-    for i, pair_null in enumerate(pair_nulls):
-        scores_i = round(seed_perc * len(pair_null) + .5)
-        min_pair_scores.append(pair_null[scores_i])
+    if not os.path.isfile(f'{wrk_dir}hgx2loc.pickle'):
+        # create null distribution for orthogroup pairs
+        final_partition = len(partition_omes) - 1 
+        pair_nulls, omes2dist = [], {}
+        if not os.path.isfile(f'{nul_dir}2.null.{final_partition}.txt'):
+            print('\tGenerating null distributions', flush = True)
+            for i, omes in enumerate(partition_omes):
+                omes2dist, pair_null = gen_nulls(
+                    db, i2ome, ome2pairs, phylo,
+                    omes, samples = samples, 
+                    dist_func = dist_func, uniq_sp = uniq_sp,
+                    cpus = cpus
+                    )
+                n_f = f'{nul_dir}2.null.{i}.txt'
+                with open(f'{n_f}.tmp', 'w') as out:
+                    out.write('\n'.join([str(i0) for i0 in pair_null]))
+                shutil.move(f'{n_f}.tmp', n_f)
+                pair_nulls.append(pair_null)
+            with open(wrk_dir + 'omes2dist.pickle', 'wb') as out:
+                pickle.dump(omes2dist, out)
+        else: # or just load what is available
+            if os.path.isfile(wrk_dir + 'omes2dist.pickle'):
+                with open(wrk_dir + 'omes2dist.pickle', 'rb') as raw:
+                    omes2dist = pickle.load(raw)
+            for i, omes in enumerate(partition_omes):
+                with open(f'{nul_dir}2.null.{i}.txt', 'r') as raw:
+                   pair_nulls.append([float(x.rstrip()) for x in raw])
+        min_pair_scores = []
+        for i, pair_null in enumerate(pair_nulls):
+            scores_i = round(seed_perc * len(pair_null) + .5)
+            min_pair_scores.append(pair_null[scores_i])
+    else:
+        min_pair_scores = None
 
     return partition_omes, ome2partition, \
            omes2dist, min_pair_scores
