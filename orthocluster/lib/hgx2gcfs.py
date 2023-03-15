@@ -578,7 +578,8 @@ def merge_clan_loci_heat(preclan_loci, gene2hg, min_sim, hgx2dist_path):
                         check_loci.append(loci[0])
                         del loci[0]
     
-            loci = sorted(check_loci, key = lambda x: x[-1], reverse = True)
+            loci = [x + [] for x in \
+                    sorted(check_loci, key = lambda x: x[-1], reverse = True)]
             # give the remaining overlapping genes to the highest distance group
             # will need to add the new HGxs in the end
             for i0, locd0 in enumerate(loci):
@@ -596,26 +597,22 @@ def merge_clan_loci_heat(preclan_loci, gene2hg, min_sim, hgx2dist_path):
     #                     loci[i1 + 1 + i0][1] = list(set(hgx1).difference(hg_intersection))
                         loci[i1 + 1 + i0][2] = [tuple(sorted(set(x).difference(hg_intersection))) \
                                                 for x in ahgx1]
+                        loci[i1 + 1 + i0][4].append(i0)
     
             for locI in range(len(loci) - 1, -1, -1):
                 locx = loci[locI]
                 loc, hgx, ahgx = locx[0], locx[1], locx[2]
+                mergeI = min(locx[3])
                 out_loc = [loc, [x for x in ahgx if x]]
                 if len(out_loc[0]) > 1:
                     out_clan_loci[clan][scaf].append(sorted(out_loc[0]))
                     out_clan_hgx[clan][scaf].append(tuple(sorted(set(out_loc[1]))))
-        #                out_clan_hgx[clan].append(tuple(sorted(set(hgxs0))))
+                else:
+                    out_clan_loci[clan][scaf][mergeI][0].extend(loc)
+                    out_clan_loci[clan][scaf][mergeI][1] = \
+                        tuple(sorted(set(hgx).union(set(out_clan_loci[scaf][mergeI][1]))))
+                    out_clan_hgx[clan][scaf][mergeI][2].extend(ahgx)
 
-#    out_hg_loci = {}
- #   for clan, loci in out_clan_loci.items():
-  #      out_hg_loci[clan] = []
-   #     for locus in loci:
-    #        out_hg_loci[clan].append([])
-     #       for gene in locus:
-      #          try:
-       #             out_hg_loci[clan][-1].append(gene2hg[gene])
-        #        except KeyError:
-         #           out_hg_loci[clan][-1].append(None)
     return out_clan_loci, out_clan_hgx #, out_hg_loci
 
 
