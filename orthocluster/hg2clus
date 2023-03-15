@@ -218,16 +218,17 @@ def threshold_gcf_by_dist(dist_thresh, gcfs, gcf_hgxs, gcf_omes, omes2dist):
     logg2d = {k: (v - mingcfd)/denom for k, v in logg2d_prep.items()} 
     if dist_thresh:
         print('\tApplying distance threshold', flush = True)
-        newGCFs, newGCFOmes, newGCFHGxs = {}, {}, {}
+        new_gcfs, new_gcf_omes, new_gcf_hgxs = {}, {}, {}
         for gcf, locs in gcfs.items():
             hgxc = gcf_hgxs[gcf]
             omesc = gcf_omes[gcf]
             if logg2d[omesc] >= dist_thresh:
-                newGCFs[gcf] = locs
-                newGCFOmes[gcf] = omesc
-                newGCFHGxs[gcf] = hgxc
-
-    return newGCFs, newGCFOmes, newGCFHGxs, logg2d
+                new_gcfs[gcf] = locs
+                new_gcf_omes[gcf] = omesc
+                new_gcf_hgxs[gcf] = hgxc
+        return new_gcfs, new_gcf_omes, new_gcf_hgxs, logg2d
+    else:
+        return gcfs, gcf_omes, gcf_hgxs
 
 
 def threshold_gcf_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, gcfs,
@@ -236,7 +237,7 @@ def threshold_gcf_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, gcfs,
     if any(x > 0 for x in [gcc_thresh, patch_thresh, id_perc, pos_perc]):
         print('\tApplying thresholds', flush = True)
         print('\t\t' + str(len(gcfs)) + ' GCFs before', flush = True)
-        newGCFs, newGCFOmes, newGCFHGxs = {}, {}, {}
+        new_gcfs, new_gcf_omes, new_gcf_hgxs = {}, {}, {}
         for gcf, locs in gcfs.items():
             check = False # have we added a new list
             hgxc = gcf_hgxs[gcf]
@@ -247,17 +248,17 @@ def threshold_gcf_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, gcfs,
                     and omes2patch[omesc] >= patch_thresh \
                     and hgx2omes2id[hgxc][omesc] >= id_perc \
                     and hgx2omes2pos[hgxc][omesc] >= pos_perc:
-                    newGCFs[gcf] = locs
-                    newGCFOmes[gcf] = omesc
-                    newGCFHGxs[gcf] = hgxc
+                    new_gcfs[gcf] = locs
+                    new_gcf_omes[gcf] = omesc
+                    new_gcf_hgxs[gcf] = hgxc
             except TypeError:
                  if hgx2omes2gcc[hgxc][omesc] >= gcc_thresh \
                     and omes2patch[omesc] >= patch_thresh \
                     and hgx2omes2id[hgxc][omesc] >= id_perc:
-                    newGCFs[gcf] = locs
-                    newGCFOmes[gcf] = omesc
-                    newGCFHGxs[gcf] = hgxc
-        return newGCFs, newGCFOmes, newGCFHGxs
+                    new_gcfs[gcf] = locs
+                    new_gcf_omes[gcf] = omesc
+                    new_gcf_hgxs[gcf] = hgxc
+        return new_gcfs, new_gcf_omes, new_gcf_hgxs
 
 def threshold_gcf_wopos(gcc_thresh, patch_thresh, id_perc, gcfs,
                        gcf_hgxs, gcf_omes, omes2patch,
@@ -265,18 +266,18 @@ def threshold_gcf_wopos(gcc_thresh, patch_thresh, id_perc, gcfs,
     if any(x > 0 for x in [gcc_thresh, patch_thresh, id_perc]):
         print('\tApplying thresholds', flush = True)
         print('\t\t' + str(len(gcfs)) + ' GCFs before', flush = True)
-        newGCFs, newGCFOmes, newGCFHGxs = {}, {}, {}
+        new_gcfs, new_gcf_omes, new_gcf_hgxs = {}, {}, {}
         for gcf, locs in gcfs.items():
             hgxc = gcf_hgxs[gcf]
             omesc = gcf_omes[gcf]
             if hgx2omes2gcc[hgxc][omesc] >= gcc_thresh \
                 and omes2patch[omesc] >= patch_thresh \
                 and hgx2omes2id[hgxc][omesc] >= id_perc:
-                newGCFs[gcf] = locs
-                newGCFOmes[gcf] = omesc
-                newGCFHGxs[gcf] = hgxc
+                new_gcfs[gcf] = locs
+                new_gcf_omes[gcf] = omesc
+                new_gcf_hgxs[gcf] = hgxc
 
-        return newGCFs, newGCFOmes, newGCFHGxs
+        return new_gcfs, new_gcf_omes, new_gcf_hgxs
 
 
 def read_tune_file(tune_file, gene2hg, ome2i):
