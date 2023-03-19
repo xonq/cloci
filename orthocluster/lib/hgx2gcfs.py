@@ -4,10 +4,10 @@ import copy
 import shutil
 import pickle
 import subprocess
-import networkx as nx
 import numpy as np
 import multiprocessing as mp
 from tqdm import tqdm
+from graph_tool.all import *
 from datetime import datetime
 from itertools import combinations, chain
 from scipy.sparse import lil_matrix, csr_matrix, save_npz, load_npz
@@ -15,7 +15,7 @@ from collections import defaultdict, Counter
 from mycotools.lib.biotools import gff2list, dict2fa
 from mycotools.lib.kontools import write_json, read_json, collect_files, \
                                    checkdir, eprint
-from orthocluster.orthocluster.lib import input_parsing, treecalcs, evo_conco
+from orthocluster.orthocluster.lib import input_parsing, treecalcs, evo_conco, output_data
 
 
 # NEED fallback option for BLAST
@@ -185,7 +185,33 @@ def acquire_clus_gcf_sim_noq(
     return
 
 
-def gen_blastids_mp(hg, genes, hgx_dir, minid):#, blast_ids_mngr):
+def rnd2_gen_blastids_mp(hg, group_dict, hgx_dir, grp_dir, minid):#, blast_ids_mngr):
+    gene_set = set(chain(*list(group_dict.values())))
+    gene_len = len(gene_set)
+    algn_base = f'{hgx_dir}{hg}.out'
+    json_out = f'{grp_dir}/algn/{hg}.json'
+    if not os.path.isfile(json_out):
+        try:
+            hg_dict = parse_blast(algn_base, gene_len, gene_set, minid)
+            new_hg_dict = defaultdict(dict)
+            for g, genes in group_dict.items():
+                for g0, g1 in combinations(sorted(genes), 2):
+                    try:
+                        new_hg_dict[g0][g1] = hg_dict[g0][g1]
+                    except KeyError:
+                        pass
+                    try:
+                        new_hg_dict[g1][g0] = hg_dict[g1][g0] 
+                    except KeyError:
+                        pass
+            write_json(new_hg_dict, json_out + '.tmp')
+            os.rename(json_out + '.tmp', json_out)
+        except FileNotFoundError:
+            pass
+
+
+
+def gen_blastids_mp(hg, genes, hgx_dir, grp_dir, minid):#, blast_ids_mngr):
     # CURRENTLY NOT SETUP FOR ANY OTHER CLANS THAN 0
     # would need to incorporate clanI in the output json
     # or else it runs the risk of using a failed runs' old jsons
@@ -193,7 +219,7 @@ def gen_blastids_mp(hg, genes, hgx_dir, minid):#, blast_ids_mngr):
     gene_set = set(genes)
     gene_len = len(gene_set)
     algn_base = f'{hgx_dir}{hg}.out'
-    json_out = f'{hgx_dir}../gcf/algn/{hg}.json'
+    json_out = f'{grp_dir}/algn/{hg}.json'
     if not os.path.isfile(json_out):
         try:
             hg_dict = parse_blast(algn_base, gene_len, gene_set, minid)
@@ -309,8 +335,140 @@ def gcf_sim_mp_mngr(adj_mat, sim_file, max_complete, loci, hgLoci, index,
     write_proc.join()
 
 
+def loc2loc_sim_mngr(clan_arr, finished_file, max_complete, loci, hgLoci,
+                     index, blast_ids, mingcfid, simfun):
+    clan_arr = clan_arr.tocsr()
+    adj_arr = clan_arr @ clan_arr.transpose()
+    # less than two gene overlap is set to 0
+    adj_arr.data[adj_arr.data < 2] = 0
+    hits = np.split(adj_arr.indices, adj_arr.indptr)[1:-1]
+    with open(f'{finished_file}.w', 'a') as out:
+        for ti0, overlap_loci in enumerate(hits):
+            i0 = ti0 + max_complete
+            try:
+                loc0, hgL0 = loci[i0], hgLoci[i0]
+            except IndexError:
+                continue
+            sHGl0 = set([x for x in hgL0 if x is not None])
+            for ti1 in overlap_loci[:]:
+                if ti1 > ti0:
+                    i1 = ti1 + max_complete
+                    loc1, hgL1 = loci[i1], hgLoci[i1]
+                    sHGl1 = set([x for x in hgL1 if x is not None])
+                    data = acquire_clus_gcf_sim_noq(i0, i1, index, loc0,
+                                                    loc1, hgL0, hgL1,
+                                                    sHGl0, sHGl1, blast_ids,
+                                                    mingcfid = mingcfid,
+                                                    simfun = simfun)
+               
+                    if data:
+                        out.write(data)
+                out.flush()
 
-def clan_to_gcf_sim(
+def open_prev_res(finished_file, index):
+    # identify the last definitively known clan
+    with open(f'{finished_file}.w1', 'w') as out:
+        with open(f'{finished_file}.w', 'r') as raw:
+            data, max_complete = [], 0
+            for line in raw:
+                d = line.rstrip().split()
+                try:
+                    if d[0] != data[-1][0]:
+                        out.write('\n'.join([' '.join(x) for x in data]) \
+                                + '\n')
+                        out.flush()
+                        max_complete = int(data[0][0]) - index
+                        data = []
+                except IndexError: # first line
+                    pass
+                data.append(d)
+    shutil.move(f'{finished_file}.w1', f'{finished_file}.w')
+    return max_complete
+
+def rnd2_loc2loc_sim(gcf_dir, group_loci, group_hg_loci, group2hgx,
+                     hgx_dir, minid, mingcfid, simfun, cpus = 1):
+
+    finished_file = f'{gcf_dir}loci.adj.tmp'
+    # is this clan already completed?
+    if os.path.isfile(finished_file) or os.path.isfile(finished_file + '.r'):
+        return
+    # was this clan partially written?
+    elif os.path.isfile(f'{finished_file}.w'):
+        os.remove(f'{finished_file}.w')
+
+    # only examine loci that have not been completed
+    index, hgxXloci, loc2group, loci, hg_loci, groups = 0, {}, {}, {}, {}, []
+    for gI, locs in enumerate(group_loci):
+        groups.append([index, -1])
+        for i, locus in enumerate(locs):
+            hgs = group_hg_loci[gI][i]
+            hg_loci[index] = hgs
+            hg_loc = set(hgs)
+            loci[index] = group_loci[gI][i]
+            hgxXloci[index] = tuple(sorted([x for x in \
+                                   list(hg_loc.intersection(group2hgx[gI])) \
+                                   if x is not None]))
+            loc2group[index] = gI
+            index += 1
+        groups[-1][1] = index
+
+    ghg2i = defaultdict(dict)
+    blast_hash = defaultdict(lambda: defaultdict(list))
+    for g,v in enumerate(groups):
+        i0, i1 = v
+        for i2 in range(i0, i1):
+            locus = loci[i2]
+            hgs = hg_loci[i2]
+            for i4, hg in enumerate(hgs):
+                if hg is not None:
+                    blast_hash[hg][g].append(locus[i4])
+                    if hg not in ghg2i[g]:
+                        ghg2i[g][hg] = len(ghg2i[g])
+
+    clan_arrs = []
+    for g, v in enumerate(groups):
+        i0, i1 = v
+        clan_arr = lil_matrix((i1 - i0, len(ghg2i[g])), dtype=bool)
+        for i2 in range(i0, i1):
+            hgs = hg_loci[i2]
+            for hg in hgs:
+                if hg is not None:
+                    clan_arr[i2 - i0, ghg2i[g][hg]] = True
+        clan_arrs.append(clan_arr)
+
+
+    blast_ids = defaultdict(dict)
+    print('\t\t\t\t\tLoading alignment results', flush = True)
+    if not os.path.isdir(f'{gcf_dir}algn/'):
+        os.mkdir(f'{gcf_dir}algn/')
+    jsons = collect_files(f'{gcf_dir}algn/', 'json')
+    finished_hgs = set(int(os.path.basename(x).replace('.json', '')) \
+                    for x in jsons)
+    missing_hgs = set(blast_hash.keys()).difference(finished_hgs)
+    if missing_hgs:
+        blast_hash = {k: blast_hash[k] for k in list(missing_hgs)}
+        with mp.get_context('forkserver').Pool(processes = cpus) as pool:
+            pool.starmap(rnd2_gen_blastids_mp, 
+                         ((hg, group_dict, hgx_dir, gcf_dir, minid) \
+                           for hg, group_dict in blast_hash.items()))
+            pool.close()
+            pool.join()
+    blast_ids = read_gcf_sim_jsons(f'{gcf_dir}algn/')
+
+    # could be expedited by multiprocessing a writer and numba njit the math
+    if blast_ids:
+        for g, v in enumerate(groups):
+            i0, i1 = v
+            clan_arr = clan_arrs[g]
+            loc2loc_sim_mngr(clan_arr, finished_file, i0, loci, hg_loci,
+                             0, blast_ids, mingcfid, simfun)
+        # the file is now complete
+        shutil.move(f'{gcf_dir}loci.adj.tmp.w', f'{gcf_dir}loci.adj.tmp')
+
+    return loci, hgxXloci, loc2group
+
+
+def calc_loc2loc_sim(
     db, clanI, loci, hgLoci, hg_dir, hgx_dir, gcf_dir, index,
     minid = 30, mingcfid = 0.15, simfun = overlap, min_overlap = 2,
     cpus = 1, Q = None
@@ -322,28 +480,11 @@ def clan_to_gcf_sim(
         return
     # was this clan partially written?
     elif os.path.isfile(f'{finished_file}.w'):
-        # identify the last definitively known clan
-        with open(f'{finished_file}.w1', 'w') as out:
-            with open(f'{finished_file}.w', 'r') as raw:
-                data, max_complete = [], 0
-                for line in raw:
-                    d = line.rstrip().split()
-                    try:
-                        if d[0] != data[-1][0]:
-                            out.write('\n'.join([' '.join(x) for x in data]) \
-                                    + '\n')
-                            out.flush()
-                            max_complete = int(data[-1][0]) - index
-                            data = []
-                    except IndexError: # first line
-                        pass
-                    data.append(d)
-        shutil.move(f'{finished_file}.w1', f'{finished_file}.w')
+        max_complete = open_prev_res(finished_file, index)
     # nothing completed
     else:
         max_complete = 0
 
-         
     blast_hash = defaultdict(list)
     # only examine loci that have not been completed
     hg2i = {}
@@ -355,9 +496,9 @@ def clan_to_gcf_sim(
                 blast_hash[hg].append(locus[i1])
                 if hg not in hg2i:
                     hg2i[hg] = len(hg2i)
-    clan_arr = lil_matrix((len(loci), len(blast_hash)), dtype=bool)
-    for i in range(max_complete, len(loci)):
-        hgs = hgLoci[i]
+    clan_arr = lil_matrix((len(loci) - max_complete, len(blast_hash)), dtype=bool)
+    for i, v in enumerate(loci[max_complete:]):
+        hgs = hgLoci[i + max_complete]
         for i1, hg in enumerate(hgs):
             if hg is not None:
                 clan_arr[i, hg2i[hg]] = True
@@ -375,11 +516,6 @@ def clan_to_gcf_sim(
                                                 minid)
                 except FileNotFoundError:
                     pass
-#                    print(f'\t\t\t\tAttempting to BLAST {hg}', flush = True)
- #                   blast = run_hgx_blast(hg_dir, hg, genes, hgx_dir, 
-  #                                blastp = 'blastp', cpus = 1)
-   #                 if blast:
-    #                    blast_ids[hg] = parse_blast(algn_base, gene_len, gene_set)
 
     else:
         print('\t\t\t\t\tLoading alignment results', flush = True)
@@ -390,57 +526,29 @@ def clan_to_gcf_sim(
                         for x in jsons)
         missing_hgs = set(blast_hash.keys()).difference(finished_hgs)
         if missing_hgs:
-#            blast_ids_mngr = mp.Manager().dict({hg: {} for hg in blast_hash})
             blast_hash = {k: blast_hash[k] for k in list(missing_hgs)}
             with mp.get_context('forkserver').Pool(processes = cpus) as pool:
                 pool.starmap(gen_blastids_mp, 
-                             ((hg, genes, hgx_dir, minid) \
+                             ((hg, genes, hgx_dir, gcf_dir, minid) \
                                for hg, genes in blast_hash.items() \
                                if len(genes) > 1))
                 pool.close()
                 pool.join()
         blast_ids = read_gcf_sim_jsons(f'{gcf_dir}algn/')
-#           blast_ids = dict(blast_ids_mngr)
-#            write_json(blast_ids, json_f)
 
     # could be expedited by multiprocessing a writer and numba njit the math
     if blast_ids:
         if cpus > 1:
             print('\t\t\t\t\tCalculating locus similarity', flush = True)
             Q.put(None)
-        clan_arr = clan_arr.tocsr()
-        adj_arr = clan_arr @ clan_arr.transpose()
-        # less than two gene overlap is set to 0
-        adj_arr.data[adj_arr.data < 2] = 0
-        hits = np.split(adj_arr.indices, adj_arr.indptr)[1:-1]
-        if not cpus > 1 or True:
-            with open(f'{finished_file}.w', 'a') as out:
-                for ti0, overlap_loci in enumerate(hits):
-                    i0 = ti0 + max_complete
-                    try:
-                        loc0, hgL0 = loci[i0], hgLoci[i0]
-                    except IndexError:
-                        continue
-                    sHGl0 = set([x for x in hgL0 if x is not None])
-                    for ti1 in overlap_loci[:]:
-                        if ti1 > ti0:
-                            i1 = ti1 + max_complete
-                            loc1, hgL1 = loci[i1], hgLoci[i1]
-                            sHGl1 = set([x for x in hgL1 if x is not None])
-                            data = acquire_clus_gcf_sim_noq(i0, i1, index, loc0,
-                                                            loc1, hgL0, hgL1,
-                                                            sHGl0, sHGl1, blast_ids,
-                                                            mingcfid = mingcfid,
-                                                            simfun = simfun)
-                       
-                            if data:
-                                out.write(data)
-                        out.flush()
-        else:
-            gcf_sim_mp_mngr(hits, f'{finished_file}.w', 
-                            max_complete, loci, hgLoci, index, 
-                            blast_ids, gcf_dir, f'{gcf_dir}mtrx/', mingcfid, 
-                            simfun, chunkscale = 100, cpus = cpus)
+        loc2loc_sim_mngr(clan_arr, finished_file, max_complete, loci, hgLoci,
+                         index, blast_ids, mingcfid, simfun)
+
+#        else:
+ #           gcf_sim_mp_mngr(hits, f'{finished_file}.w', 
+  #                          max_complete, loci, hgLoci, index, 
+   #                         blast_ids, gcf_dir, f'{gcf_dir}mtrx/', mingcfid, 
+    #                        simfun, chunkscale = 100, cpus = cpus)
         # begin appending to temporary writing output
         # the file is now complete
         shutil.move(f'{gcf_dir}{clanI}.sadj.tmp.w', f'{gcf_dir}{clanI}.sadj.tmp')
@@ -578,7 +686,7 @@ def merge_clan_loci_heat(preclan_loci, gene2hg, min_sim, hgx2dist_path):
                         check_loci.append(loci[0])
                         del loci[0]
     
-            loci = [x + [] for x in \
+            loci = [x + [[]] for x in \
                     sorted(check_loci, key = lambda x: x[-1], reverse = True)]
             # give the remaining overlapping genes to the highest distance group
             # will need to add the new HGxs in the end
@@ -597,23 +705,43 @@ def merge_clan_loci_heat(preclan_loci, gene2hg, min_sim, hgx2dist_path):
     #                     loci[i1 + 1 + i0][1] = list(set(hgx1).difference(hg_intersection))
                         loci[i1 + 1 + i0][2] = [tuple(sorted(set(x).difference(hg_intersection))) \
                                                 for x in ahgx1]
-                        loci[i1 + 1 + i0][4].append(i0)
-    
-            for locI in range(len(loci) - 1, -1, -1):
-                locx = loci[locI]
-                loc, hgx, ahgx = locx[0], locx[1], locx[2]
-                mergeI = min(locx[3])
-                out_loc = [loc, [x for x in ahgx if x]]
-                if len(out_loc[0]) > 1:
-                    out_clan_loci[clan][scaf].append(sorted(out_loc[0]))
-                    out_clan_hgx[clan][scaf].append(tuple(sorted(set(out_loc[1]))))
-                else:
-                    out_clan_loci[clan][scaf][mergeI][0].extend(loc)
-                    out_clan_loci[clan][scaf][mergeI][1] = \
-                        tuple(sorted(set(hgx).union(set(out_clan_loci[scaf][mergeI][1]))))
-                    out_clan_hgx[clan][scaf][mergeI][2].extend(ahgx)
+                        # collect the index of the merge for later
+                        loci[i1 + 1 + i0][-1].append(i0)
 
-    return out_clan_loci, out_clan_hgx #, out_hg_loci
+            for locI, locx in enumerate(loci):   
+#            for locI in range(len(loci) - 1, -1, -1):
+#                locx = loci[locI]
+                loc, ahgx = locx[0], [x for x in locx[2] if x]
+                loc_len = len(loc)
+                if loc_len > 1:
+                    out_clan_loci[clan][scaf].append(sorted(loc))
+                    out_clan_hgx[clan][scaf].append(tuple(sorted(set(ahgx))))
+                # award single gene locus to what it is derived from merging into
+                elif loc_len == 1:
+                    mergeI = locx[-1][0]
+                    # if this isnt a nested merge
+                    if out_clan_loci[clan][scaf][mergeI]:
+                        out_clan_loci[clan][scaf][mergeI].extend(loc)
+                        out_clan_hgx[clan][scaf][mergeI] = \
+                            tuple(sorted(set(list(out_clan_hgx[clan][scaf][mergeI]) \
+                                               + ahgx)))
+                    out_clan_loci[clan][scaf].append(None)
+                    out_clan_hgx[clan][scaf].append(None)
+                else:
+                    out_clan_loci[clan][scaf].append(None)
+                    out_clan_hgx[clan][scaf].append(None)
+
+    clan_loci, clan_hgx = {}, {}
+    for clan, scaf_dict in out_clan_loci.items():
+        clan_loci[clan], clan_hgx[clan] = {}, {}
+        for scaf, loci in scaf_dict.items():
+            clan_loci[clan][scaf], clan_hgx[clan][scaf] = [], []
+            for i, loc in enumerate(loci):
+                if loc:
+                    clan_loci[clan][scaf].append(loc)
+                    clan_hgx[clan][scaf].append(out_clan_hgx[clan][scaf][i])
+
+    return clan_loci, clan_hgx #, out_hg_loci
 
 
 
@@ -675,8 +803,8 @@ def read_to_write(out_h, in_adj, min_gcf):
     out_h.flush()
 
 
-def write_adj_matrix(out_file, gcf_dir, min_gcf_id):
-    comp_gcf_id = round(float(min_gcf_id) * 100)
+def write_adj_matrix(out_file, gcf_dir, min_loc_id):
+    comp_gcf_id = round(float(min_loc_id) * 100)
     with open(out_file + '.tmp', 'w') as out:
         # get previously read adjacency matrices
         init_files = collect_files(gcf_dir, 'sadj.tmp.r')
@@ -777,7 +905,7 @@ def mcl2gcfs(gcf_dir, loci, hgxXloci, ome2i, inflation,
             for locI in locIs:
                 loc = loci[locI]
                 locs.append((loc, locI))
-                hgxs = tuple([tuple(hgx) for hgx in hgxXloci[locI]])
+                hgxs = hgxXloci[locI]
                 # really should be done above to make hgxs formatted right
                 omeI = ome2i[loc[0][:loc[0].find('_')]]
 #                [gcfs[-1][hgx].append(omeI) for hgx in hgxs]
@@ -788,7 +916,7 @@ def mcl2gcfs(gcf_dir, loci, hgxXloci, ome2i, inflation,
 #                gcfs[-1] = {k: sorted(set(v)) for k,v in gcfs[-1].items()}
                 if gcfs[-1]:
                     gcfs[-1] = tuple([tuple(x) for x in gcfs[-1]])
-                    gcf_hgxs[-1] = tuple(sorted(set(chain(*gcf_hgxs[-1]))))
+                    gcf_hgxs[-1] = tuple(sorted(set(gcf_hgxs[-1])))
                     gcf_omes.append(tuple(sorted(set(gcfOme_list))))
 #                    gcf_hgxs.append(tuple(sorted(set(chain(*list(gcfs[-1].keys()))))))
   #                  gcf_omes.append(tuple(sorted(set(chain(*list(gcfs[-1].values()))))))
@@ -820,6 +948,170 @@ def mcl2gcfs(gcf_dir, loci, hgxXloci, ome2i, inflation,
            {i: v for i, v in enumerate(list_gcf2clan)}
 
 
+def hash_ome_lg_loc(gff_path, ome2loci):
+    # order the loci in each scaffold
+    cds_dict = input_parsing.compileCDS(gff2list(gff_path),
+                                        os.path.basename(gff_path).replace('.gff3',''))
+    scaf2gene2i = {}
+    for scaf, prots in cds_dict.items():
+        scaf2gene2i[scaf] = {}
+        for i, gene in enumerate(prots):
+            scaf2gene2i[scaf][gene] = i
+   
+    scaf2locs = output_data.clus2scaf(cds_dict, ome2loci)
+    gcf2scaf2locs = defaultdict(lambda: defaultdict(list))
+    for scaf, locs in scaf2locs.items():
+        for loc, gcf in locs:
+            gcf2scaf2locs[gcf][scaf].append(loc)
+    
+    gcf2locs = {}
+    for gcf, scaf_dict in gcf2scaf2locs.items():
+        gcf2locs[gcf] = []
+        for scaf, locs in scaf_dict.items():
+            for i0, loc0 in enumerate(locs[:-1]):
+                i1, loc1 = i0 + 1, locs[i0 + 1]
+                top_i = scaf2gene2i[scaf][loc0[-1]]
+                bot_i = scaf2gene2i[scaf][loc0[0]]
+                if bot_i - top_i == 1:
+                    locs[i1] = loc0 + loc1
+                else:
+                    gcf2locs[gcf].append(loc0)
+            gcf2locs[gcf].append(locs[-1])
+
+    return gcf2locs
+
+
+def lg_loc_mngr(db, lgs, gene2hg, cpus = 1):
+    omes2loci = defaultdict(list)
+    for lg, locs in lgs.items():
+        for loc in locs:
+            ome = loc[0][:loc[0].find('_')]
+            omes2loci[ome].append((loc, lg))
+
+    with mp.get_context('forkserver').Pool(processes = cpus) as pool:
+        lg_loci = pool.starmap(hash_ome_lg_loc,
+                               tqdm(((db[ome]['gff3'], omes2loci[ome]) \
+                                     for ome in db.keys()), 
+                                    total = len(db)))
+
+    lg2locs = defaultdict(list)
+    lg2hg_locs = defaultdict(list)
+    lg2hgxs_locs = defaultdict(list)
+    for res in lg_loci:
+        for lg, locs in res.items():
+            for loc in locs:
+                hg_loc = []
+                for gene in loc:
+                    try:
+                        hg_loc.append(gene2hg[gene])
+                    except KeyError:
+                        hg_loc.append(None)
+                lg2locs[lg].append(loc)
+                lg2hg_locs[lg].append(hg_loc)
+
+    return lg2locs, lg2hg_locs    
+#            db, clanI, locs, clan_hg_loci[clanI],
+ #           hg_dir, hgx_dir, gcf_dir, index, minid, min_loc_id,
+  #          simfun, min_overlap
+
+def refine_group(db, ome2i, group_hg_loci, group_loci,
+                 hg_dir, hgx_dir, wrk_dir, grp_dir, minid, min_loc_id,
+                 simfun, inflation, tune, min_omes, cpus = 1, rnd = 1):
+
+    m, adj_mtr = mp.Manager(), grp_dir + 'loci.adj'
+    if cpus < 2:
+        cpus = 2
+
+#    min_overlap = round((min_loc_id * 2) - 0.5)
+    min_overlap = 2 # need at least two genes of overlap to call it a cluster
+    index, cmds = 0, []
+
+    protog2h = {gI: Counter(chain(*hg_locs)) \
+                for gI, hg_locs in enumerate(group_hg_loci)}
+    group2hgx = {gI: set([k for k, v in h.items() if v > 1]) \
+                 for gI, h in protog2h.items()}
+
+    if rnd != 2:
+        loci, hgxXloci, loc2group = {}, {}, {}
+        for gI, locs in enumerate(group_loci):
+            if not os.path.isfile(f'{grp_dir}{gI}.sadj.tmp.r'):
+                cmds.append([
+                    db, gI, locs, group_hg_loci[gI],
+                    hg_dir, hgx_dir, grp_dir, index, minid, min_loc_id,
+                    simfun, min_overlap
+                    ])
+            for i, locus in enumerate(locs):
+                hg_loc = set(group_hg_loci[gI][i])
+                loci[index] = group_loci[gI][i]
+                hgxXloci[index] = tuple(sorted([x for x in \
+                                       list(hg_loc.intersection(group2hgx[gI])) \
+                                       if x is not None]))
+                loc2group[index] = gI
+                index += 1
+        if not os.path.isfile(adj_mtr):
+            W = mp.Process(target = write_adj_matrix, 
+                           args = (adj_mtr, grp_dir, min_loc_id))
+            W.start()
+    #        print(f'\t\t\t{max([len(x) for x in )} loci in clan 0', flush = True)
+            procs = []
+
+            if cmds:
+                if len(cmds[0][2]) > 30000 and cmds[0][1] == 0:
+                    print(f'\t\t\t\tRunning group 0', flush = True)
+                    Q = mp.Manager().Queue()
+                    procs = [mp.Process(target=calc_loc2loc_sim,
+                                    args=(*cmds[0], cpus - 1, Q))]
+                    procs[0].start()
+                    Q.get()
+                    print('\t\t\t\tRunning all groups', flush = True)
+                    del cmds[0]
+                with mp.get_context('forkserver').Pool(processes = cpus - 1) as pool:
+                    pool.starmap(calc_loc2loc_sim, tqdm(cmds, total = len(cmds), miniters = 1))
+                    pool.close()
+                    pool.join()
+                if procs:
+                    procs[0].join()
+                    procs[0].close()
+            with open(f'{grp_dir}done.sadj.tmp', 'w') as out:
+                pass
+            W.join()
+    else:
+        if not os.path.isfile(f'{grp_dir}loci.adj.tmp') \
+            and not os.path.isfile(f'{grp_dir}loci.adj'):
+            loci, hgxXloci, loc2group = rnd2_loc2loc_sim(grp_dir, group_loci, 
+                                                  group_hg_loci, group2hgx,
+                                                  hgx_dir, minid, min_loc_id, simfun,
+                                                  cpus)
+            os.rename(f'{grp_dir}loci.adj.tmp', f'{grp_dir}loci.adj')
+
+    satisfied = False
+    if tune:
+        inflation = 1.1
+    while not satisfied:
+        if tune:
+            inflation += 0.1
+            if inflation > 3:
+                break
+        satisfied, grps, grp_hgxs, grp_omes, lilg2bigg = mcl2gcfs(grp_dir, loci,
+                                                           hgxXloci, ome2i, 
+                                                           inflation, loc2group,
+                                                           tune, min_omes,
+                                                           cpus)
+    if tune:
+        if not satisfied:
+            eprint('\nERROR: tuning failed to recover clusters', flush = True)
+            sys.exit(135)
+        inf_strp = str(inflation * 10)[:2]
+        inf_str = inf_strp[0] + '.' + inf_strp[1]
+        with open(f'{wrk_dir}../log.txt', 'r') as raw:
+            d = raw.read().replace('inflation\tNone', 'inflation\t' + inf_str)
+        with open(f'{wrk_dir}../log.txt', 'w') as out:
+            out.write(d)
+
+    return grps, grp_hgxs, grp_omes, lilg2bigg
+
+
+
 def classify_gcfs(
     hgx2loc, db, gene2hg, i2hgx, hgx2i,
     phylo, ome2i, hgx2omes, hg_dir, hgx_dir,
@@ -827,7 +1119,7 @@ def classify_gcfs(
     hg2gene, omes2dist = {}, clusplusminus = 3,
     inflation = 1.5, min_hgx_overlap = 1, min_omes = 2, 
     minid = 30, cpus = 1, algorithm = 'diamond',
-    min_gcf_id = 0.3, simfun = overlap, printexit = False,
+    min_loc_id = 0.3, simfun = overlap, printexit = False,
     tune = False, dist_func = treecalcs.calc_tmd,
     uniq_sp = False, min_merge_perc = 0, algn_sens = '',
     skipalgn = False, fallback = False, min_heat_len = 25
@@ -919,16 +1211,24 @@ def classify_gcfs(
             matrix[i0, i1] = True
             matrix[i1, i0] = True
         print('\t\tIsolating subgraphs (HGx clans)', flush = True)
-        network = nx.from_scipy_sparse_matrix(matrix)
-        subgraphs = [network.subgraph(c) for c in nx.connected_components(network)]
+        g = Graph(directed = False)
+        idx = matrix.nonzero()
+        g.add_edge_list(np.transpose(matrix.nonzero()))
+        components = label_components(g)[0]
+        subgraph_is = sorted(set(components.a))
+#        network = nx.from_scipy_sparse_matrix(matrix)
+ #       subgraphs = [network.subgraph(c) for c in nx.connected_components(network)]
         # use .copy() after iterator to copy
         clans, clanOmes, clanHGxs = [], [], []
-        for sg in subgraphs:
+#        for sg in subgraphs:
+        for sgi in subgraph_is:
+            sg = GraphView(g, vfilt = components.a == sgi)
             clans.append({})
             clanOmes.append([])
             clanHGxs.append([])
-            for id_ in list(sg.nodes):
-                hgx = i2hgx[id_]
+#            for id_ in list(sg.nodes):
+            for id_ in sg.vertices():
+                hgx = i2hgx[int(id_)]
                 omes = hgx2omes[hgx]
                 clans[-1][hgx] = omes # storing in a hash to allow future
                 # manipulation
@@ -980,24 +1280,24 @@ def classify_gcfs(
 
         print('\t\tWriting clan loci', flush = True)
         clan_loci = defaultdict(list)
-        clan_hgx4gcfs = defaultdict(list)
+#        clan_hgx4gcfs = defaultdict(list)
         clan_hg_loci = defaultdict(list)
         for ome, out_clan_loci, out_clan_hgx, out_clan_hg_loci in hash_res:
             for clan in out_clan_loci:
                 clan_loci[clan].extend(out_clan_loci[clan])
-                clan_hgx4gcfs[clan].extend(out_clan_hgx[clan])
+ #               clan_hgx4gcfs[clan].extend(out_clan_hgx[clan])
                 clan_hg_loci[clan].extend(out_clan_hg_loci[clan])
 
         write_json(clan_loci, clanFile + 'json.gz')
-        write_json(clan_hgx4gcfs, clanFile + 'hgx.json.gz')
+  #      write_json(clan_hgx4gcfs, clanFile + 'hgx.json.gz')
         write_json(clan_hg_loci, clanFile + 'hg.json.gz')
     else:
         print('\t\tLoading clan loci', flush = True)
         clan_loci = {int(k): tuple(v) for k,v in sorted(
                 read_json(clanFile + 'json.gz').items(), 
                 key = lambda x: len(x[1]), reverse = True)}
-        clan_hgx4gcfs = {int(k): tuple([tuple(i) for i in v]) \
-                        for k,v in read_json(clanFile + 'hgx.json.gz').items()}
+   #     clan_hgx4gcfs = {int(k): tuple([tuple(i) for i in v]) \
+    #                    for k,v in read_json(clanFile + 'hgx.json.gz').items()}
         clan_hg_loci = {int(k): tuple(v) \
                       for k, v in read_json(clanFile + 'hg.json.gz').items()}
 
@@ -1007,13 +1307,16 @@ def classify_gcfs(
 
     # need to move up to before writing
     clan_loci = {k: v for k,v in sorted(clan_loci.items(), key = lambda x: len(x[1]), reverse = True)}
-    clan_hgx4gcfs = [clan_hgx4gcfs[k] for k in clan_loci]
+    #clan_hgx4gcfs = [clan_hgx4gcfs[k] for k in clan_loci]
     clan_hg_loci = [clan_hg_loci[k] for k in clan_loci]
     clan_loci = [v for v in clan_loci.values()]
 
     gcf_dir = wrk_dir + 'gcf/' 
     if not os.path.isdir(gcf_dir):
         os.mkdir(gcf_dir)
+    lg_dir = gcf_dir + 'lg/'
+    if not os.path.isdir(lg_dir):
+        os.mkdir(lg_dir)
 
     print('\t\tOutputting HG fastas', flush = True)
 #    hgs_prep = set(chain(*list(chain(*list(clan_hg_loci.values())))))
@@ -1031,95 +1334,42 @@ def classify_gcfs(
                         skipalgn = skipalgn, #minid = minid, let minid be at locus step
                         fallback = fallback, cpus = cpus)
 
-
-
-    print('\t\tCalling GCFs', flush = True)
+    print('\t\tCalling LGs', flush = True)
     clan_lens = [len(v) for v in clan_loci]
 #    print('\t\t\t' + str(sum([len(v) for v in list(clan_loci.values())])) \
     print(f'\t\t\t{sum(clan_lens)}' \
         + ' loci', flush = True)
-    m, adj_mtr = mp.Manager(), gcf_dir + 'loci.adj'
-    if cpus < 2:
-        cpus = 2
+    print(f'\t\t\t{max(clan_lens)}' \
+        + ' loci in clan 0', flush = True)
+    lgs, lg_hgxs, lg_omes, lg2clan = refine_group(
+                 db, ome2i, clan_hg_loci, clan_loci,
+                 hg_dir, hgx_dir, wrk_dir, lg_dir, minid, min_loc_id,
+                 simfun, inflation, tune, min_omes, cpus = cpus)
+    print('\t\t\t' + str(len(lgs)) + ' LGs', flush = True)
 
+    print('\t\tMerging loci', flush = True)
+    lg2locs, lg2hg_locs = lg_loc_mngr(db, lgs, gene2hg, cpus)
+    lg_locs = {k: v for k,v in sorted(lg2locs.items(), key = lambda x: len(x[1]), reverse = True)}
+    lg_hg_loci = [lg2hg_locs[k] for k in lg_locs]
+    lg_locs = [v for v in lg_locs.values()]
 
-#    min_overlap = round((min_gcf_id * 2) - 0.5)
-    min_overlap = 2 # need at least two genes of overlap to call it a cluster
-    index, cmds = 0, []
-
-    loci, hgxXloci, loc2clan = {}, {}, {}
-    for clanI, locs in enumerate(clan_loci):
-        cmds.append([
-            db, clanI, locs, clan_hg_loci[clanI],
-            hg_dir, hgx_dir, gcf_dir, index, minid, min_gcf_id,
-            simfun, min_overlap
-            ])
-        for i, locus in enumerate(locs):
-            loci[index] = clan_loci[clanI][i]
-            hgxXloci[index] = clan_hgx4gcfs[clanI][i]
-            loc2clan[index] = clanI
-            index += 1
-
-
-    if not os.path.isfile(adj_mtr):
-        W = mp.Process(target = write_adj_matrix, 
-                       args = (adj_mtr, gcf_dir, min_gcf_id))
-        W.start()
-        print(f'\t\t\t{max(clan_lens)} loci in clan 0', flush = True)
-        if not os.path.isfile(f'{gcf_dir}0.sadj.tmp.r'):
-            print(f'\t\t\t\tRunning clan 0', flush = True)
-            Q = mp.Manager().Queue()
-            procs = [mp.Process(target=clan_to_gcf_sim, #db, 0, clan_loci[0], clan_hg_loci[0],
-                            #g_dir, hgx_dir, gcf_dir, 0, minid, min_gcf_id,
-                            #simfun, min_overlap, 
-                            args=(*cmds[0], cpus - 1, Q))]
-            procs[0].start()
-            Q.get()
-            print('\t\t\t\tRunning all clans', flush = True)
-        else:
-            procs = []
-        del cmds[0]
-        with mp.get_context('forkserver').Pool(processes = cpus - 1) as pool:
-            pool.starmap(clan_to_gcf_sim, tqdm(cmds, total = len(cmds)))
-            pool.close()
-            pool.join()
-        if procs:
-            procs[0].join()
-            procs[0].close()
-        with open(f'{gcf_dir}done.sadj.tmp', 'w') as out:
-            pass
-        W.join()
-
-
-    satisfied = False
-    if tune:
-        inflation = 1.1
-    while not satisfied:
-        if tune:
-            inflation += 0.1
-            if inflation > 3:
-                break
-        satisfied, gcfs, gcf_hgxs, gcf_omes, gcf2clan = mcl2gcfs(gcf_dir, loci,
-                                                           hgxXloci, ome2i, 
-                                                           inflation, loc2clan,
-                                                           tune, min_omes,
-                                                           cpus)
-    if tune:
-        if not satisfied:
-            eprint('\nERROR: tuning failed to recover clusters', flush = True)
-            sys.exit(135)
-        inf_strp = str(inflation * 10)[:2]
-        inf_str = inf_strp[0] + '.' + inf_strp[1]
-        with open(f'{wrk_dir}../log.txt', 'r') as raw:
-            d = raw.read().replace('inflation\tNone', 'inflation\t' + inf_str)
-        with open(f'{wrk_dir}../log.txt', 'w') as out:
-            out.write(d)
-
+    print('\t\tCalling GCFs', flush = True)
+    lg_lens = [len(v) for v in lg_locs]
+#    print('\t\t\t' + str(sum([len(v) for v in list(clan_loci.values())])) \
+    print(f'\t\t\t{sum(lg_lens)}' \
+        + ' loci', flush = True)
+    print(f'\t\t\t{max(lg_lens)}' \
+        + ' loci in LG 0', flush = True)
+    gcfs, gcf_hgxs, gcf_omes, gcf2lg = refine_group(
+                 db, ome2i, lg_hg_loci, lg_locs,
+                 hg_dir, hgx_dir, wrk_dir, gcf_dir, minid, min_loc_id,
+                 sorensen, inflation, tune, min_omes, cpus = cpus, rnd = 2)
     print('\t\t\t' + str(len(gcfs)) + ' GCFs', flush = True)
+
     omes2dist = treecalcs.update_dists(
         phylo, {gcf_hgxs[i]: omes for i, omes in gcf_omes.items()},
         cpus = cpus, omes2dist = omes2dist, func = dist_func, 
         uniq_sp = uniq_sp, i2ome = i2ome
         )
 
-    return gcfs, gcf_hgxs, gcf_omes, gcf2clan, omes2dist
+    return gcfs, gcf_hgxs, gcf_omes, gcf2lg, omes2dist
