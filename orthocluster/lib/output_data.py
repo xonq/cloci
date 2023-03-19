@@ -172,7 +172,7 @@ def merge_clusters(clus_out, cds_dict):
     return comp_clus, change
 
 
-def clus2scaf(cds_dict, clusters, gene2hg):
+def clus2scaf(cds_dict, clusters):
 
     gene2scaf, index_map = {}, {}
     for scaf, genes in cds_dict.items():
@@ -193,7 +193,7 @@ def clus2scaf(cds_dict, clusters, gene2hg):
      #           hgs.append('')
       #  clus_info = [hgs, ord_loc, {gcf}]
         
-        clus_out[scaf].append([ord_loc, {gcf}])
+        clus_out[scaf].append([ord_loc, gcf])
 
     return clus_out 
 
@@ -202,15 +202,19 @@ def write_clusters(clusters, ome, out_file, gff_path, gene2hg, clusplusminus = 1
     cds_dict = input_parsing.compileCDS(gff2list(gff_path), 
                                         os.path.basename(gff_path).replace('.gff3',''))
 
-    clus_out = clus2scaf(cds_dict, clusters, gene2hg)
-    change = True
-    while change: # so long as there is a single merge
-        clus_out, change = merge_clusters(clus_out, cds_dict) # attempt to merge clusters
+    clus_out = clus2scaf(cds_dict, clusters)
+    merge_out = defaultdict(list)
+    for scaf, locs in clus_out.items():
+        for loc, gcf in locs:
+            merge_out[scaf].append([loc, {gcf}])
+  #  change = True
+#    while change: # so long as there is a single merge
+ #       clus_out, change = merge_clusters(clus_out, cds_dict) # attempt to merge clusters
 #    clus_out = sorted(clus_out, key = lambda x: len(x[0]), reverse = True)
     # sort the clusters by the size of the OG combination tuple highest to
     # lowest
 
-    for scaf, clusters in clus_out.items():
+    for scaf, clusters in merge_out.items():
         mapping = {v: i for i, v in enumerate(cds_dict[scaf])}
         clusters = sorted(clusters, key = lambda pair: mapping[pair[0][0]])
         for i, clus in enumerate(clusters):
