@@ -547,7 +547,7 @@ def main(
             ome2i, hgx2omes, hg_dir, hgx_dir, wrk_dir, ome2partition, 
             bord_scores_list, hg2gene, tune = tune, algorithm = aligner,
             omes2dist = omes2dist, clusplusminus = plusminus, 
-            inflation = inflation, min_gcf_id = min_gcf_id, algn_sens = algn_sens,
+            inflation = inflation, min_loc_id = min_gcf_id, algn_sens = algn_sens,
             min_omes = 2, cpus = cpus, simfun = simfun, printexit = printexit,
             dist_func = dist_func, uniq_sp = uniq_sp, min_merge_perc = min_merge_perc,
             skipalgn = skipalgn, minid = min_gene_id, fallback = fallback,
