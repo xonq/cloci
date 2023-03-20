@@ -228,7 +228,7 @@ def threshold_gcf_by_dist(dist_thresh, gcfs, gcf_hgxs, gcf_omes, omes2dist):
                 new_gcf_hgxs[gcf] = hgxc
         return new_gcfs, new_gcf_omes, new_gcf_hgxs, logg2d
     else:
-        return gcfs, gcf_omes, gcf_hgxs
+        return gcfs, gcf_omes, gcf_hgxs, logg2d
 
 
 def threshold_gcf_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, gcfs,
