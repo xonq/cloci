@@ -971,7 +971,7 @@ def hash_ome_lg_loc(gff_path, ome2loci):
             for i0, loc0 in enumerate(locs[:-1]):
                 i1, loc1 = i0 + 1, locs[i0 + 1]
                 top_i = scaf2gene2i[scaf][loc0[-1]]
-                bot_i = scaf2gene2i[scaf][loc0[0]]
+                bot_i = scaf2gene2i[scaf][loc1[0]]
                 if bot_i - top_i == 1:
                     locs[i1] = loc0 + loc1
                 else:
