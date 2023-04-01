@@ -122,6 +122,12 @@ def calc_tmd_uniq_omes(phylo, omes, o_omes):
         print(omes, '\n', phylo)
 
 
+def calc_branch_sim(phylo, omes0, omes1):
+    tmd_union = calc_tmd(phylo, list(set(omes0).union(set(omes1))))[0]
+    tmd_inter = calc_tmd(phylo, list(set(omes0).intersection(set(omes1))))[0]
+    return tmd_inter/tmd_union
+
+
 def get_uniq_spp(db, iomes, i2ome):
     omes = {i2ome[x]: x for x in iomes}
     ab_omes = [re.search(r'([^\d+])\d', x)[1] for x in omes]
