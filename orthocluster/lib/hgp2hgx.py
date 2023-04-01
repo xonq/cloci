@@ -395,8 +395,8 @@ def hgp2hgx(db, wrk_dir, top_hgs, gene2hg, ome2i,
     #                f'{wrk_dir}hgx2loc.json.gz')
      #   shutil.move(f'{wrk_dir}hgx2omes.json.tmp.gz',
       #              f'{wrk_dir}hgx2omes.json.gz')
-#        with open(wrk_dir + 'hgx2omes.pickle', 'wb') as pickout:
- #           pickle.dump(hgx2omes, pickout)
+        with open(wrk_dir + 'hgx2omes.pickle', 'wb') as pickout:
+            pickle.dump(hgx2omes, pickout)
         formHGxTime = datetime.now() - form_clus_start
         pre_files = [os.path.basename(x) for x in collect_files(wrk_dir, 'txt')]
         todel = [x for x in pre_files if x.startswith('prehgx')]
