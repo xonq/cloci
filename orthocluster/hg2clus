@@ -2,17 +2,15 @@
 
 #NEED call OrthoFinder option
 #NEED use hg_dir from OrthoFinder in input_parsing/hgx2gcf, currently doesnt work
-#NEED to add tune parameter
-    # update log with inflation following successful tune
 #NEED to make gcc_mngr split different families with the same GCF
-#NEED to allow hard threshold for microsynteny distance
 #NEED locus-based GCF hypergeometric average
 #NEED TO ADD PERCENTILE TO OUTPUT
 #NEED to implement gff2svg
 #NEED to output to gbk
 #NEED to delete excess when checkpoints are reached
     # implement tarring effectively
-    # microsynteny array is expensive
+#NEED to rerun evo_conco if gcfs.pickle doesn't exist
+#NEED option to skip merging/extending modules
 
 import os
 import re
@@ -234,6 +232,7 @@ def threshold_gcf_by_dist(dist_thresh, gcfs, gcf_hgxs, gcf_omes, omes2dist):
 def threshold_gcf_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, gcfs,
                        gcf_hgxs, gcf_omes, omes2patch, hgx2omes2gcc,
                        hgx2omes2id, hgx2omes2pos):
+
     if any(x > 0 for x in [gcc_thresh, patch_thresh, id_perc, pos_perc]):
         print('\tApplying thresholds', flush = True)
         print('\t\t' + str(len(gcfs)) + ' GCFs before', flush = True)
@@ -244,7 +243,6 @@ def threshold_gcf_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, gcfs,
             omesc = gcf_omes[gcf]
             try:
                 if hgx2omes2gcc[hgxc][omesc] >= gcc_thresh \
-                    and logg2d[omesc] >= dist_thresh \
                     and omes2patch[omesc] >= patch_thresh \
                     and hgx2omes2id[hgxc][omesc] >= id_perc \
                     and hgx2omes2pos[hgxc][omesc] >= pos_perc:
@@ -537,6 +535,10 @@ def main(
 
     hgx_dir = f'{wrk_dir}hgx/'
 
+    # placeholder for legacy runs
+    if not os.path.isfile(f'{wrk_dir}hgx2omes.pickle'):
+        with open(wrk_dir + 'hgx2omes.pickle', 'wb') as out:
+            pickle.dump(hgx2omes, out)
 
     print('\nV. Calling gene cluster families (GCFs) from HGxs', flush = True)
     if not os.path.isfile(wrk_dir + 'gcfs.pickle'): # need to add this to
@@ -627,15 +629,16 @@ def main(
 
 
     print('\nVII. Quantifying GCF gene committment and intrafamily similarity', flush = True)
-    hgx2omes2gcc, hgx2omes2id, hgx2omes2pos = evo_conco.gcc_main( 
+    hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, gcfs = evo_conco.gcc_main( 
                             hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
-                            aligner, db, gene2hg, plusminus, hg2gene, 
+                            aligner, db, gene2hg, plusminus, hg2gene, phylo,
                             old_path = 'hgx2omes2id.full.pickle',
-                            gcfs = gcfs, gcf_hgxs = gcf_hgxs,
+                            gcfs = gcfs, gcf_hgxs = gcf_hgxs, gcf2clan = gcf2clan,
                             minid = min_gene_id, fallback = fallback,
                             gcf_omes = gcf_omes, printexit = printexit,
                             skipalgn = skipalgn, cpus = cpus
                             )
+
     # this is the output directory for hgx2gcf and evo_conco
     hg_dir = f'{wrk_dir}hg/'
 
