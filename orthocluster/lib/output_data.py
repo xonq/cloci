@@ -176,8 +176,9 @@ def clus2scaf(cds_dict, clusters):
 
     gene2scaf, index_map = {}, {}
     for scaf, genes in cds_dict.items():
-        index_map[scaf] = {v: i for i, v in enumerate(genes)}
-        for gene in genes:
+        index_map[scaf] = {}
+        for i, gene in enumerate(genes):
+            index_map[scaf][gene] = i
             gene2scaf[gene] = scaf
 
     clus_out = defaultdict(list)
@@ -195,7 +196,10 @@ def clus2scaf(cds_dict, clusters):
         
         clus_out[scaf].append([ord_loc, gcf])
 
-    return clus_out 
+    sorted_clus_out = {k: sorted(v, key = lambda x: index_map[k][x[0][0]]) \
+                       for k, v in clus_out.items()}
+
+    return sorted_clus_out 
 
 
 def write_clusters(clusters, ome, out_file, gff_path, gene2hg, clusplusminus = 10):
