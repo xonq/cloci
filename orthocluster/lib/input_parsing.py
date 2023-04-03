@@ -37,8 +37,8 @@ def init_log(
                 + f'gcf_id\t{log_dict["gcf_id"]}\n' \
                 + f'gcf_sim\t{log_dict["gcf_sim"]}\n' \
                 + f'orig_gcf_id\t{log_dict["gcf_id"]}\n' \
-                + f'min_heat_len\t{log_dict["min_heat_len"]}\n' \
-                + f'min_merge_perc\t{log_dict["min_merge_perc"]}\n' \
+                + f'topology_merge\t{log_dict["topology_merge"]}\n' \
+                + f'min_topology_sim\t{log_dict["min_topology_sim"]}\n' \
                 + f'inflation\t{log_dict["inflation"]}\n' \
                 + f'tuning\t{log_dict["tuning"]}\n' \
                 + f'id_percent\t{log_dict["id_percent"]}\n' \
@@ -182,21 +182,21 @@ def read_log(
     try:
         if not log_res['hgx_percentile_II']:
             init_discrep.append('-xp')
-            log_res['min_heat_len'] = False
+            log_res['topology_merge'] = False
     except KeyError:
         init_discrep.append('-xp')
     try:
-        if not log_res['min_heat_len']:
-            log_res['min_merge_perc'] = False
-            init_discrep.append('-ms')
+        if not log_res['topology_merge']:
+            log_res['min_topology_sim'] = False
+            init_discrep.append('-tm')
     except KeyError:
-        init_discrep.append('-ms')
+        init_discrep.append('-tm')
     try:
-        if not log_res['min_merge_perc']:
-            init_discrep.append('-mm')
+        if not log_res['min_topology_sim']:
+            init_discrep.append('-ts')
             log_res['gcf_sim'] = False
     except KeyError:
-        init_discrep.append('-mm')
+        init_discrep.append('-ts')
     try:
         if not log_res['aligner']:
             init_discrep.append('-a')
@@ -285,7 +285,7 @@ def rm_old_data(
         for group in groups:
              if os.path.isfile(f'{wrk_dir}{group}.pickle'):
                  os.remove(f'{wrk_dir}{group}.pickle')
-    if not log_res['min_merge_perc']:
+    if not log_res['min_topology_sim']:
         groups = ['group.III']
         clan_data = ['hg.json.gz', 'hgx.json.gz', 'json.gz']
         for file_ in clan_data:
@@ -760,8 +760,8 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
              hgx_perc, aligner, id_perc, pos_perc,
              patch_thresh, gcc_thresh,
              samples, n50thresh, flag, min_gene_id, min_gcf_id, inflation, simfun,
-             tune_file, dist_type, uniq_sp, partition, min_merge_perc,
-             min_heat_len, hg_dir, hgx_dir):
+             tune_file, dist_type, uniq_sp, partition, min_topology_sim,
+             topology_merge, hg_dir, hgx_dir):
 
     wrk_dir = out_dir + 'working/'
     if not os.path.isdir(wrk_dir):
@@ -796,7 +796,7 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
         'patch_threshold': patch_thresh,
         'gcc_threshold': gcc_thresh, 'inflation': inflation,
         'tuning': tune_sha, 'partition': partition, 
-        'min_heat_len': min_heat_len, 'min_merge_perc': min_merge_perc,
+        'topology_merge': topology_merge, 'min_topology_sim': min_topology_sim,
         'null_samples': samples, 'n50': n50thresh, 'hg_dir': hg_dir,
         'hgx_dir': hgx_dir}
 
