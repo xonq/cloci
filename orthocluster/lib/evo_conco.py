@@ -164,10 +164,11 @@ def mms_calcs_wopos(ids_dict):
         gcf_min_id = 0
     return gcf_min_id, None
 
-def hg_sim_calc_wpos(res, min_id):
+def hg_sim_calc_wpos(res, min_id, gcf2tot_con):
     output_data = {}
     for gcf, gene_info in res.items():
         output_data[gcf] = {}
+        tot_con = gcf2tot_con[gcf]
         for gene, data in gene_info.items():
             ome = gene[:gene.find('_')]
             ome_gcc = data[0]
@@ -180,17 +181,18 @@ def hg_sim_calc_wpos(res, min_id):
             else:
                 ome_mi, ome_mp = min_id, min_id
             if ome not in output_data[gcf]:
-                output_data[gcf][ome] = (ome_gcc, ome_mi, ome_mp)
+                output_data[gcf][ome] = (ome_gcc, ome_mi * tot_con, ome_mp * tot_con)
             # if there's a paralog, take the best gcc
             else:
                 if ome_gcc > output_data[gcf][ome][0]:
-                    output_data[gcf][ome] = (ome_gcc, ome_mi, ome_mp)
+                    output_data[gcf][ome] = (ome_gcc, ome_mi * tot_con, ome_mp * tot_con)
     return output_data
 
-def hg_sim_calc_wopos(res, min_id):
+def hg_sim_calc_wopos(res, min_id, gcf2tot_con):
     output_data = {}
     for gcf, gene_info in res.items():
         output_data[gcf] = {}
+        tot_con = gcf2tot_con[gcf]
         for gene, data in gene_info.items():
             ome = gene[:gene.find('_')]
             ome_gcc = data[0]
@@ -202,11 +204,11 @@ def hg_sim_calc_wopos(res, min_id):
             else:
                 ome_mi = min_id
             if ome not in output_data[gcf]:
-                output_data[gcf][ome] = (ome_gcc, ome_mi)
+                output_data[gcf][ome] = (ome_gcc, ome_mi * tot_con)
             # if there's a paralog, take the best gcc
             else:
                 if ome_gcc > output_data[gcf][ome][0]:
-                    output_data[gcf][ome] = (ome_gcc, ome_mi)
+                    output_data[gcf][ome] = (ome_gcc, ome_mi * tot_con)
     return output_data
 
 
@@ -311,7 +313,7 @@ def hg_parse_and_calc(hg, hg_dict, hgx_dir, phylo, ome2i, min_id = 30, pos_data 
                 gene_set.remove(failed_gene)
             genes = list(gene_set)
     
-    return hg, hg_sim_func(res, min_id), \
+    return hg, hg_sim_func(res, min_id, gcf2considered), \
            {gcf: dict(ome_dict) for gcf, ome_dict in todel_genes.items()}, \
            gcf2considered
 
@@ -408,6 +410,7 @@ def gcc_mngr(
     hgx2omes2id = defaultdict(dict)
     hgx2omes2pos = defaultdict(dict)
     for gcf, hg_dict in tqdm(gcf_res.items(), total = len(gcf_res)):
+        tot_considered = gcf2tot_considered[gcf]
         hgx, omes = gcf_hgxs[gcf], gcf_omes[gcf]
         gccs, ids, poss = [], [], []
         for hg, res in hg_dict.items():
@@ -420,10 +423,10 @@ def gcc_mngr(
             except TypeError:
                 poss.append(None)
 #        gcc = sum(gccs)/(len(gccs) * gcf2tot_considered[gcf])
-        gcc = sum(gccs)/gcf2tot_considered[gcf]
-        id_ = sum(ids)/len(ids)
+        gcc = sum(gccs)/tot_considered
+        id_ = sum(ids)/tot_considered
         try:
-            pos = sum(poss)/len(poss)
+            pos = sum(poss)/tot_considered
         except ValueError:
             pos = None
         except TypeError:
