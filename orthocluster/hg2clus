@@ -1,5 +1,8 @@
 #! /usr/bin/env python3
 
+#NEED to update intro
+#NEED to implement separate inflations and tune parameter
+#NEED to implement genome-based null
 #NEED call OrthoFinder option
 #NEED use hg_dir from OrthoFinder in input_parsing/hgx2gcf, currently doesnt work
 #NEED to make gcc_mngr split different families with the same GCF
@@ -339,8 +342,8 @@ def main(
     near_single_copy_genes = [], tree_path = None, 
     verbose = False, sim = 'overlap', tune_file = None,
     dist_type = 'tmd', uniq_sp = False, partition_rank = None,
-    min_merge_perc = 0, algn_sens = '', min_gene_id = 30,
-    fallback = False, min_heat_len = 25
+    min_branch_sim= 0, algn_sens = '', min_gene_id = 30,
+    fallback = False, merge_via_sim = False
     ):
     """
     The general workflow:
@@ -379,7 +382,7 @@ def main(
                                               samples, n50thresh, flag, min_gene_id,
                                               min_gcf_id, inflation, sim, 
                                               tune_file, dist_type, uniq_sp, partition,
-                                              min_merge_perc, min_heat_len, hg_dir, hgx_dir)
+                                              min_branch_sim, merge_via_sim, hg_dir, hgx_dir)
 
     ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_dict = \
         db2microsyntree.main(db, hg_file, out_dir, wrk_dir,
@@ -551,9 +554,9 @@ def main(
             omes2dist = omes2dist, clusplusminus = plusminus, 
             inflation = inflation, min_loc_id = min_gcf_id, algn_sens = algn_sens,
             min_omes = 2, cpus = cpus, simfun = simfun, printexit = printexit,
-            dist_func = dist_func, uniq_sp = uniq_sp, min_merge_perc = min_merge_perc,
+            dist_func = dist_func, uniq_sp = uniq_sp, min_branch_sim = min_branch_sim,
             skipalgn = skipalgn, minid = min_gene_id, fallback = fallback,
-            min_heat_len = min_heat_len
+            merge_via_sim = merge_via_sim
             )
         with open(wrk_dir + 'gcfs.pickle', 'wb') as pickout:
             pickle.dump([gcfs, gcf_omes, gcf_hgxs, gcf2clan], pickout)
@@ -751,11 +754,12 @@ if __name__ == '__main__':
     fam_opt.add_argument('-ml', '--minimum_loc_id', type = float, default = 30,
         help = 'Percent [0 < value < 100] ID minimum between loci for GCF. ' \
              + 'DEFAULT: 30')
-    fam_opt.add_argument('-ms', '--minimum_merge_size', type = int, default = 30,
-        help = 'Minimum merged locus size to invoke -mm; DEFAULT: 30')
-    fam_opt.add_argument('-mm', '--maximum_merge', type = float, default = 0,
-        help = 'Percent [0 < value < 100] microsynteny distance difference maximum ' \
-             + 'for merging loci in family network')
+    fam_opt.add_argument('-tm', '--topology_merge', action = 'store_true', default = False,
+        help = 'Merge loci with similar topologies prior to 1st MCL round via -ts')
+    fam_opt.add_argument('-ts', '--min_topology_sim', type = float, default = 80,
+        help = 'Percent [0 < value < 100] topology similarity (Jaccard) minimum ' \
+             + 'for singleton merging AND merging loci prior to HLG aggregation; ' \
+             + 'DEFAULT: 80')
     fam_opt.add_argument('-I', '--inflation', default = 1.5, type = float,
         help = 'MCL inflation during family detection; DEFAULT: 1.5')
     fam_opt.add_argument('-T', '--tune', 
@@ -829,10 +833,7 @@ if __name__ == '__main__':
  #   if not args.hgx_percentile:
 #        args.hgx_percentile = args.gcf_percentile # set the default
 
-    if args.maximum_merge:
-        min_merge_perc = args.maximum_merge/100
-    else:
-        min_merge_perc = 0
+    min_topology_sim = args.min_topology_sim/100
 
     if not args.similarity:
         simfun = hgx2gcfs.overlap # set default function
@@ -1029,9 +1030,9 @@ if __name__ == '__main__':
         tree_path = format_path(args.tree), tune_file = tune_file,
         dist_thresh = args.md_threshold, uniq_sp = uniq_sp,
         dist_type = dist, partition_rank = partition_rank, 
-        min_merge_perc = min_merge_perc, algn_sens = algn_sens,
+        min_branch_sim = min_topology_sim, algn_sens = algn_sens,
         min_gene_id = args.minimum_gene_id, fallback = args.fallback,
-        min_heat_len = args.minimum_merge_size
+        merge_via_sim = args.topology_merge
         )
 
     outro(start_time)
