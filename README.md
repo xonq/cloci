@@ -4,4 +4,5 @@ Identifying loci comprised of cooperative biological functions, or gene clusters
 <br /><br />
 
 ## APPROACH
+![HG2clus](https://gitlab.com/xonq/orthocluster/-/raw/master/etc/pipeline.png)
 
