@@ -3,6 +3,7 @@ import sys
 import copy
 import shutil
 import pickle
+import random
 import subprocess
 import numpy as np
 import multiprocessing as mp
@@ -137,6 +138,44 @@ def jaccard(interlen, len0, len1):
 def overlap(interlen, len0, len1):
     return interlen/min([len0, len1])
 
+def calc_loc2loc_sim_mat(
+    i0, i1, index, loc0, loc1, hgL0, hgL1, coef, blast_ids,
+    mingcfid = 0.15
+    ):
+
+    # Identify the overlapping HGs
+    hg_dict = defaultdict(lambda: [[], []])
+    for i, hg in enumerate(hgL0):
+        hg_dict[hg][0].append(loc0[i])
+    for i, hg in enumerate(hgL1):
+        hg_dict[hg][1].append(loc1[i])
+    hg_dict = {k: v for k, v in hg_dict.items() \
+               if v[0] and v[1]}
+
+    scores = []
+    for hg, gene_lists in hg_dict.items():
+        scores.append([])
+        # for each pairwise gene comparison
+        for gene0 in gene_lists[0]:
+            for gene1 in gene_lists[1]:
+                try:
+                    scores[-1].append(blast_ids[hg][gene0][gene1])
+                # if the genes are missing its a 0
+                # the alignment algorithm MUST output enough alignments
+                # for this is to reliably work on widely dispersed clusters
+                except KeyError: 
+                    pass
+    scores = [x for x in scores if x]
+    if scores:
+        maxScores = [max(i) for i in scores]
+        gcf_id = (sum(maxScores)/len(maxScores)) * coef
+        if gcf_id > mingcfid:
+            return f'{i0 + index}\t{i1 + index}\t{gcf_id}\n'
+        else:
+            return ''
+
+
+
 def acquire_clus_gcf_sim_noq(
     i0, i1, index, loc0, loc1, hgL0, hgL1, set0, set1, blast_ids,
     simfun = overlap, mingcfid = 0.15
@@ -158,18 +197,17 @@ def acquire_clus_gcf_sim_noq(
     scores = []
     for hg in inter_list:
         # check to verify the genes are recovered
-        if hg in hg_dict:
-            scores.append([])
-            # for each pairwise gene comparison
-            for gene0 in hg_dict[hg][0]:
-                for gene1 in hg_dict[hg][1]:
-                    try:
-                        scores[-1].append(blast_ids[hg][gene0][gene1])
-                    # if the genes are missing its a 0
-                    # the alignment algorithm MUST output enough alignments
-                    # for this is to reliably work on widely dispersed clusters
-                    except KeyError: 
-                        scores[-1].append(0)
+        scores.append([])
+        # for each pairwise gene comparison
+        for gene0 in hg_dict[hg][0]:
+            for gene1 in hg_dict[hg][1]:
+                try:
+                    scores[-1].append(blast_ids[hg][gene0][gene1])
+                # if the genes are missing its a 0
+                # the alignment algorithm MUST output enough alignments
+                # for this is to reliably work on widely dispersed clusters
+                except KeyError: 
+                    scores[-1].append(0)
     scores = [x for x in scores if x]
     if scores:
         maxScores = [max(i) for i in scores]
@@ -177,8 +215,8 @@ def acquire_clus_gcf_sim_noq(
         gcf_id = (sum(maxScores)/len(maxScores)) * coef
         if gcf_id > mingcfid:
             return f'{i0 + index}\t{i1 + index}\t{gcf_id}\n'
-
-    return
+        else:
+            return ''
 
 
 def rnd2_gen_blastids_mp(hg, group_dict, hgx_dir, grp_dir, minid):#, blast_ids_mngr):
@@ -336,27 +374,60 @@ def gcf_sim_mp_mngr(adj_mat, sim_file, max_complete, loci, hgLoci, index,
     write_proc.close()
     write_proc.join()
 
+def calc_overlap_matrix(adj_arr, clan_arr):
+    #INCORRECT! DOESN'T CURRENTLY USE MINIMUM!!!!!!
+    return adj_arr/clan_arr.sum(axis=1).T
+
+def calc_sorensen_matrix_sparse(adj_arr, clan_arr):
+    return 2 * adj_arr/(clan_arr.sum(axis=1) + clan_arr.sum(axis=1).T)
+
+def calc_sorensen_array(adj_arr, clan_arr):
+    return 2 * adj_arr/(clan_arr.sum(axis=1) + np.array([clan_arr.sum(axis=1)]).T)
+
+def matrix_sim_mngr(s_mat, out, loci, hgLoci, max_complete,
+                    blast_ids, index, mingcfid):
+    for ti0, row in enumerate(s_mat):
+        i0 = ti0 + max_complete
+        loc0, hgL0 = loci[i0], hgLoci[i0]
+        for ti1, v in enumerate(row):
+            i1 = ti1 + max_complete
+            loc1, hgL1 = loci[i1], hgLoci[i1]
+            data = calc_loc2loc_sim_mat(i0, i1, index, loc0,
+                                        loc1, hgL0, hgL1,
+                                        v, blast_ids,
+                                        mingcfid = mingcfid)
+            if data:
+                out.write(data)
+        out.flush()
+
+
+def rnd2_loc2loc_sim_mngr(clan_arr, finished_file, max_complete, loci, hgLoci,
+                     index, blast_ids, mingcfid, simfun):
+    adj_arr = np.triu(clan_arr @ clan_arr.T)
+    adj_arr[adj_arr < 2] = 0
+    s_mat = calc_sorensen_array(adj_arr, clan_arr)
+    np.fill_diagonal(s_mat, 0)
+    with open(f'{finished_file}.w', 'a') as out:
+        matrix_sim_mngr(s_mat, out, loci,
+                        hgLoci, max_complete, blast_ids, index, mingcfid)
+
+
 
 def loc2loc_sim_mngr(clan_arr, finished_file, max_complete, loci, hgLoci,
                      index, blast_ids, mingcfid, simfun):
     clan_arr = clan_arr.tocsr()
     # a matrix representing the cardinality of the intersection of hg_locs
     adj_arr = csr_matrix(triu(clan_arr @ clan_arr.transpose()))
-#    adj_arr = clan_arr @ clan_arr.transpose()
     # less than two gene overlap is set to 0
     adj_arr.data[adj_arr.data < 2] = 0
+
     hits = np.split(adj_arr.indices, adj_arr.indptr)[1:-1]
     with open(f'{finished_file}.w', 'a') as out:
         for ti0, overlap_loci in enumerate(hits):
             i0 = ti0 + max_complete
-#            try:
             loc0, hgL0 = loci[i0], hgLoci[i0]
-#            except IndexError:
- #               continue
             sHGl0 = set([x for x in hgL0 if x is not None])
             for ti1 in overlap_loci[:]:
-  #              if ti1 <= ti0: 
- #                   continue
                 i1 = ti1 + max_complete
                 loc1, hgL1 = loci[i1], hgLoci[i1]
                 sHGl1 = set([x for x in hgL1 if x is not None])
@@ -365,8 +436,7 @@ def loc2loc_sim_mngr(clan_arr, finished_file, max_complete, loci, hgLoci,
                                                 sHGl0, sHGl1, blast_ids,
                                                 mingcfid = mingcfid,
                                                 simfun = simfun)
-           
-                if data:
+                if data: 
                     out.write(data)
             out.flush()
 
@@ -419,10 +489,12 @@ def rnd2_loc2loc_mngr(gcf_dir, loci, hg_loci,
     for g, v in enumerate(groups):
         i0, i1 = v
         clan_arr = lil_matrix((i1 - i0, len(ghg2i[g])), dtype=bool)
+#        clan_arr = np.zeros((i1-i0, len(ghg2i[g])), dtype=np.int8)
         for i2 in range(i0, i1):
             hgs = hg_loci[i2]
             for hg in hgs:
                 if hg is not None:
+#                    clan_arr[i2 - i0, ghg2i[g][hg]] = 1
                     clan_arr[i2 - i0, ghg2i[g][hg]] = True
         clan_arrs.append(clan_arr)
 
@@ -549,67 +621,45 @@ def rnd1_loc2loc_mngr(
   #              os.remove(j_f)
 
 
-def merge_clan_loci(preclan_loci, gene2hg, min_sim, hgx2omes_path, hgx2dist_path, 
-                    scaf2gene2i, min_heat_len = 25, min_branch_sim = 0.5, phylo = None):
+def merge_clan_loci(preclan_loci, gene2hg, hgx2omes_path, hgx2dist_path, 
+                    scaf2gene2i, merge_via_sim = False, 
+                    min_branch_sim = 0.5, phylo = None):
 
-    if min_heat_len > 3:
-        vclan_loci = copy.deepcopy(preclan_loci)
+    derep_loci = dereplicate_loci(preclan_loci, gene2hg, 
+                                 hgx2omes_path, hgx2dist_path, scaf2gene2i,
+                                 min_branch_sim, phylo)
+
+    if merge_via_sim:
+        vclan_loci = copy.deepcopy(derep_loci)
         out_clan_loci = defaultdict(lambda: defaultdict(list))
         outclanI = defaultdict(lambda: defaultdict(list))
-        for clan, scaf_dict in preclan_loci.items():
+        for clan, scaf_dict in derep_loci.items():
             for scaf, loci in scaf_dict.items():
-                while loci: # exhaustively merge overlapping loci
-                    # the locus for pairwise comparisons is the first
-                    loc0, hgxs0, allHGxs, locI0 = set(loci[0][0]), loci[0][1], loci[0][2], loci[0][3]
-                    locIntersect = None
-                    # for all other loci
-                    for i1, loc1d in enumerate(loci[1:]):
-                        loc1, hgxs1, allHGxs1, locI1 = set(loc1d[0]), loc1d[1], loc1d[2], loc1d[3]
-                        locIntersect = loc0.intersection(loc1)
-                        # if any genes overlap between these loci
-                        if locIntersect:
-                            # grab the overlap and add it to the end of the loci list
-                            newHGx = list(hgxs0)
-                            newHGx.extend(list(hgxs1))
-                            allHGxs.extend(allHGxs1)
-                            loci.append([list(loc1.union(loc0)), newHGx, allHGxs, locI0 + locI1])
-                            break
-                    if locIntersect: # if there was overlap, delete the overlappers
-                        del loci[0]
-                        del loci[i1] # don't add 1 because we removed the first and i1 relative to 1
-                    else: # no more overlap for this locus, add to the final output
-                        out_clan_loci[scaf][clan].append(sorted(loc0))
-                        outclanI[scaf][clan].append(locI0)
-        #                out_clan_hgx[clan].append(tuple(sorted(set(hgxs0))))
-                        del loci[0]
-    
-        # initiate the data structure for heat-based locus merging
-        todel = defaultdict(list)
-        n_loci = defaultdict(list)
-        for clan, scaf_dict in out_clan_loci.items():
-            for scaf, loci in scaf_dict.items():
-                for i, loc in enumerate(loci):
-                    if len(loc) >= min_heat_len:
-                        for locI in outclanI[clan][scaf][i]:
-                            n_loci[clan].append(vclan_loci[clan][scaf][locI])
-                        todel[clan].append((i, scaf))
-        for clan, td in todel.items():
-            for i, scaf in reversed(td):
-                del out_clan_loci[clan][scaf][i]
-    
-        if n_loci:
-            heat_clan_loci = \
-                merge_clan_loci_heat(n_loci, gene2hg, min_sim, hgx2omes_path,
-                                     hgx2dist_path, scaf2gene2i, min_branch_sim,
-                                     phylo)
-            for clan, scaf_dict in heat_clan_loci.items():
-                for scaf, loci in scaf_dict.items():
-                    out_clan_loci[clan][scaf].extend(loci)
+                gene2i = scaf2gene2i[scaf]
+                while True:
+                    loc0, omes0 = loci[0]
+                    try:
+                        loc1, omes1 = loci[1]
+                    except IndexError:
+                        out_clan_loci[clan][scaf].append(loc0)
+                        break
+                    final_0 = gene2i[loc0[-1]]
+                    start_1 = gene2i[loc1[0]]
+                    if start_1 - final_0 == 1:
+                        branch_sim = treecalcs.calc_branch_sim(phylo, omes0, omes1)
+                        if branch_sim > min_branch_sim:
+                            loci[1] = [loc0 + loc1, list(set(omes0).union(set(omes1)))]
+                        else:
+                            out_clan_loci[clan][scaf].append(loc0)
+                    else:
+                        out_clan_loci[clan][scaf].append(loc0)
+                    loci.pop(0)
     else:
-        out_clan_loci = merge_clan_loci_heat(preclan_loci, gene2hg, 
-                                             min_sim, hgx2omes_path,
-                                             hgx2dist_path, scaf2gene2i,
-                                             min_branch_sim, phylo)
+        out_clan_loci = {}
+        for clan, scaf_dict in derep_loci.items():
+           out_clan_loci[clan] = {}
+           for scaf, loci in scaf_dict.items():
+               out_clan_loci[clan][scaf] = [x[0] for x in loci]
 
     clan_loci = {clan: list(chain(*list(scaf_dict.values()))) \
                  for clan, scaf_dict in out_clan_loci.items()}
@@ -628,9 +678,9 @@ def merge_clan_loci(preclan_loci, gene2hg, min_sim, hgx2omes_path, hgx2dist_path
     return clan_loci, hg_loci
 
 
-def merge_clan_loci_heat(preclan_loci, gene2hg, min_sim, 
-                         hgx2omes_path, hgx2dist_path, scaf2gene2i,
-                         min_branch_sim = 0.5, phylo = None):
+def dereplicate_loci(preclan_loci, gene2hg,
+                     hgx2omes_path, hgx2dist_path, scaf2gene2i,
+                     min_branch_sim = 0.5, phylo = None):
     with open(hgx2dist_path, 'rb') as raw:
         hgx2dist = pickle.load(raw)
     with open(hgx2omes_path, 'rb') as raw:
@@ -640,6 +690,7 @@ def merge_clan_loci_heat(preclan_loci, gene2hg, min_sim,
     out_clan_loci = defaultdict(lambda: defaultdict(list))
     for clan, scaf_dict in preclan_loci.items():
         for scaf, loci in scaf_dict.items():
+            gene2i = scaf2gene2i[scaf]
             for i, loc_d in enumerate(loci):
                 loc, hgx = loc_d[0], loc_d[1]
                 loci[i].append(hgx2dist[hgx])
@@ -648,59 +699,12 @@ def merge_clan_loci_heat(preclan_loci, gene2hg, min_sim,
                 [gene2hgx[x].append(hgx) for x in loc]
             # sort the scaffolds loci from highest to lowest TMD
             loci = sorted(loci, key = lambda x: x[-2], reverse = True)
-  #          check_loci = loci
-    #        merge, check_loci = True, loci
-            # placeholder, currently we don't want to merge this way
-            # in the future, this should be based on the sorensen/jaccard
-            # similarity of the phylogenetic distributions of the traits
-            # e.g. overlapping ome TMD / overall ome TMD
-        #    while merge: # need to rerun to verify
-         #       loci = copy.deepcopy(check_loci)
-          #      check_loci, merge = [], False
-           #     while loci: # exhaustively merge overlapping loci
-            #        # the locus for pairwise comparisons is the first
-             #       loc0, hgxs0, allHGxs, dist0 = set(loci[0][0]), loci[0][1], loci[0][2], loci[0][-1]
-              #      locIntersect = None
-               #     # for all other loci
-                #    for i1, loc1d in enumerate(loci[1:]):
-                 #       loc1, hgxs1, allHGxs1, dist1 = set(loc1d[0]), loc1d[1], loc1d[2], loc1d[-1]
-                  #      locIntersect = loc0.intersection(loc1)
-                        # if any genes overlap between these loci
-                   #     if locIntersect:
-                            # are they similar enough?
-                    #        if dist1/dist0 >= min_sim:
-    #                            if sml_up_bound/lrg_low_bound >= min_sim:
-                                    # grab the overlap and add it to the end of the loci list
-                     #           newHGx = list(hgxs0)
-                      #          newHGx.extend(list(hgxs1))
-                       #         allHGxs.extend(allHGxs1)
-     #                           newdists = dists0 + dists1
-                        #        loci.insert(0, [list(loc1.union(loc0)), newHGx, allHGxs, dist0])
-                         #       break
-                          #  else:
-                           #     locIntersect = None
-#                    if locIntersect: # if there was overlap, delete the overlappers
- #                       merge = True
-  #                      del loci[1]
-   #                     del loci[i1 + 1] # don't add 1 because we removed the first and i1 relative to 1
-    #                else:
-     #                   check_loci.append(loci[0])
-      #                  del loci[0]
-    
-            # add an empty list to each locus to populate with merge indices
-#            loci = [x + [[]] for x in \
- #                   sorted(check_loci, key = lambda x: x[-1], reverse = True)]
             # give the remaining overlapping genes to the highest distance group
             # will need to add the new HGxs in the end
-            final_loci = []
+            final_loci, singletons_prep = [], []
             while loci:
                 locd0 = loci[0]
                 loc0 = set(locd0[0])
-                if len(loc0) == 1:
-                    break
-#                overi, check = 1, True
-#                while check:
- #                   check = False
                 overi = 1
                 for i1, locd1 in enumerate(loci[1:]):
                     loc1 = set(locd1[0])
@@ -708,126 +712,105 @@ def merge_clan_loci_heat(preclan_loci, gene2hg, min_sim,
                     if locIntersection:
                         # index from the back because some may have hgx still
                         dist1, omes1 = locd1[-2], locd1[-1]
-#                        check = True
- #                       overi += i1
-    # currently this doesnt check if there are others of the same hg that are removed in the
-    # overlap - ideally, this should check if there are other members of the same hg before
-    # removing them IF they are not part of the overlap
                         # the loci are sorted from largest to lowest distribution, so
                         # we award the overlap to the largest TMD
-                        new_locs = [sorted(loc1.difference(loc0), 
-                                    key = lambda x: scaf2gene2i[scaf][x])]
-                        if not new_locs[0]:
-                            new_locs = []
-                        else:
+                        loc_dif = loc1.difference(loc0)
+                        # delete the initial version with overlap
+                        loci.pop(i1+overi)
+                        overi -= 1
+                        if loc_dif:
+                            if len(loc_dif) == 1:
+                                singletons_prep.append([list(loc_dif)[0], dist1, omes1])
+                                continue
+                            new_locs = [sorted(loc_dif, key = lambda x: gene2i[x])]
                             break_i = True
-                            while break_i:
+                            # check for contuity, break-up noncontinuous loci
+                            while new_locs:
                                 new_loc = new_locs[0]
                                 break_i = False
-                                i_loc = [scaf2gene2i[scaf][x] for x in new_loc]
+                                i_loc = [gene2i[x] for x in new_loc]
                                 for i2, v in enumerate(i_loc[:-1]):
-                                    if i2:
-                                        if not i_loc[i2+1] - v == 1:
-                                            break_i = i2 + 1
-                                            break
+                                    if not i_loc[i2+1] - v == 1:
+                                        break_i = i2 + 1
+                                        break
+                                # if there's a break, reiterate and add singletons
                                 if break_i:
                                     n_loc0 = new_loc[:break_i]
                                     n_loc1 = new_loc[break_i:]
                                     if len(n_loc0) > 1:
                                         new_locs.append(n_loc0)
                                     else:
-                                        loci.append([n_loc0, dist1, omes1])
+                                        singletons_prep.append([n_loc0[0], dist1, omes1])
                                     if len(n_loc1) > 1:
                                         new_locs.append(n_loc1)
                                     else:
-                                        loci.append([n_loc1, dist1, omes1])
-                                    new_locs.pop(0)
-                        # delete the initial version with overlap
-                        loci.pop(i1+overi)
-                        for new_loc in new_locs:
-                            # insert the new loci
-                            loci.insert(overi+i1, [new_loc, dist1, omes1])
-                        # add one because these aren't overlapping
-                        overi += len(new_locs) - 1
+                                        singletons_prep.append([n_loc1[0], dist1, omes1])
+                                else:
+                                    loci.insert(i1+overi+1, [new_loc, dist1, omes1])
+                                    overi += 1
+                                new_locs.pop(0)
 
-#                        break
                 final_loci.append(locd0)
                 loci.pop(0)
     
+            genes_set = set(chain(*[x[0] for x in final_loci]))
+            gene2loc_i, i2gene = {}, {}
+            for i, locd in enumerate(final_loci):
+                loc, omes = locd[0], locd[-1]
+                for gene in loc:
+                    gene2loc_i[gene] = [i, omes]
+                    i2gene = {gene2i[gene]: gene}
 
-#            for i0, locd0 in enumerate(loci):
- #               loc0, hgx0, ahgx0 = set(locd0[0]), locd0[1], locd0[2]
-  #              if len(loc0) == 1:
-   #                 break
-                # preserve a slice to modify
-    #            t_loci = loci[i0+1:] 
-     #           todel = []
-      #          for i1, locd1 in enumerate(t_loci):
-       #             loc1, hgx1, ahgx1 = set(locd1[0]), locd1[1], locd1[2]
-        #            dist1, omes1 = locd1[-2], locd1[-1]
-         #           locIntersection = loc0.intersection(loc1)
-          #          if locIntersection:
-    # currently this doesnt check if there are others of the same hg that are removed in the
-    # overlap - ideally, this should check if there are other members of the same hg before
-    # removing them IF they are not part of the overlap
-           #             hg_intersection = set(gene2hg[gene] for gene in list(locIntersection) \
-            #                                  if gene in gene2hg)
-                        # the loci are sorted from largest to lowest distribution, so
-                        # we award the overlap to the largest TMD
-             #           new_locs = [sorted(loc1.difference(loc0), 
-              #                      key = lambda x: scaf2gene2i[scaf][x])]
-               #         if not new_locs[0]:
-                #            new_locs = []
-                 #       else:
-                  #          break_i = True
-                   #         while break_i:
-                    #            new_loc = new_locs[0]
-                     #           break_i = None
-                      #          i_loc = [scaf2gene2i[scaf][x] for x in new_loc]
-                       #         for i, v in enumerate(i_loc[:-1]):
-                        #            if i:
-                         #               if not i_loc[i+1] - v == 1:
-                          #                  break_i = i + 1
-                           #                 break
-                            #    if break_i:
-                             #       n_loc0 = new_loc[:break_i]
-                              #      n_loc1 = new_loc[break_i:]
-                               #     if len(n_loc0) > 1:
-                                #        new_locs.append(n_loc0)
-                                 #   else:
-                                  #      t_loci.append([[n_loc0[0]], None, None, dist1, omes1])
-                                   # if len(n_loc1) > 1:
-                                    #    new_locs.append(n_loc1)
-                                   # else:
-                                    #    t_loci.append([[n_loc1[0]], None, None, dist1, omes1])
-                         #           new_locs.pop(0)
-
-  #                      for new_loc in new_locs:
- #                           t_loci.insert(i1+1, [new_loc, hgx1, 
-   #                                               [tuple(sorted(set(x).difference(hg_intersection))) \
-    #                                               for x in ahgx1],
-     #                                             dist1, omes1])
-                        # remove the original locus
-      #                  todel.append(i1)
-       #         for i in reversed(todel):
-        #            t_loci.pop(i)
-         #       loci[i0+1:] = t_loci
-                            # collect the index of the merge for later
-#                            loci[i1 + 1 + i0][-1].append(i0)
-            # sort the singletons by TMD, highest to lowest
-            singletons_prep = sorted([x for x in loci],
+            singletons_prep1 = [x for x in singletons_prep \
+                                if x[0] not in genes_set]
+            # sort the singletons by TMD, highest to lowest to take the largest
+            # branch length representative of the singleton
+            sorted_s_prep = sorted(singletons_prep1,
                                 key = lambda y: y[-2], reverse = True)
             singletons, s_set = [], set()
-            for s in singletons_prep:
+            for s in sorted_s_prep:
                 if s[0][0] not in s_set:
                     singletons.append(s)
                     s_set.add(s[0][0])
-            singletons = sorted(singletons, key = lambda y: scaf2gene2i[scaf][y[0][0]])
 
-            singleton_iz = [scaf2gene2i[scaf][x[0][0]] for x in singletons]
+            singletons = sorted(singletons, key = lambda y: gene2i[y[0]])
+            continuities_prep = []
+            for s, null, omes0 in singletons:
+                s_i = gene2i[s]
+                t, b = s_i - 1, s_i + 1
+                if t in i2gene:
+                    t_g = i2gene[t]
+                    t_i, t_o = gene2loc_i[t_g]
+                    t_sim = treecalcs.calc_branch_sim(phylo, omes0, t_o)
+                else:
+                    t_sim = 0
+                if b in i2gene:
+                    b_g = i2gene[b]
+                    b_i, b_o = gene2loc_i[b_g]
+                    b_sim = treecalcs.calc_branch_sim(phylo, omes0, b_o)
+                else:
+                    b_sim = 0
+                # if there are both directions 
+                if t_sim > min_branch_sim and b_sim > min_branch_sim:
+                    if t_sim == b_sim:
+                        merge_i = random.choice([b_i, t_i])
+                    elif t_sim > b_sim:
+                        merge_i = t_i
+                    else:
+                        merge_i = b_i
+                elif t_sim > min_branch_sim:
+                    merge_i = t_i
+                elif b_sim > min_branch_sim:
+                    merge_i = b_i
+                else:
+                    continuities_prep.append([s, null, omes0])
+                    continue
+                final_loci[merge_i][0].append(s)    
+                
+            continuities_iz = [gene2i[x[0]] for x in continuities_prep]
             continuities = []
-            for i, v in enumerate(singleton_iz[:-1]):
-                if singleton_iz[i + 1] - v == 1:
+            for i, v in enumerate(continuities_iz[:-1]):
+                if continuities_iz[i + 1] - v == 1:
                     continuities.append(i)
 
             merges = []
@@ -837,58 +820,47 @@ def merge_clan_loci_heat(preclan_loci, gene2hg, min_sim,
                 omes1 = s1[-1]
                 branch_sim = treecalcs.calc_branch_sim(phylo, omes0, omes1)
                 if branch_sim > min_branch_sim:
-                    merges.append(set(s0[0] + s1[0]))
+                    merges.append([set(s0[0] + s1[0]), list(set(omes0).union(set(omes1)))])
 
-            for i0, loc0 in enumerate(merges[:-1]):
-                loc1 = merges[i0+1]
+            for i0, locd0 in enumerate(merges):
+                loc0, omes0 = locd0
+                try:
+                    loc1, omes1 = merges[i0+1]
+                except IndexError:
+                    if len(loc0) == 1:
+                        merges[i0] = None
                 locIntersection = loc0.intersection(loc1)
                 if locIntersection:
-                    merges[i0 + 1] = list(set(loc0).union(set(loc1)))
+                    merges[i0 + 1] = [list(set(loc0).union(set(loc1))), 
+                                      list(set(omes0).union(set(omes1)))]
                 merges[i0] = None
 
-            for i, loc in enumerate(merges):
-                if loc:
-                    final_loci.append([loc])
+            for i, locd in enumerate(merges):
+                if locd:
+                    final_loci.append(locd)
 
-#            final_loci = [x for x in loci if len(x[0]) > 1]
-            for locI, locx in enumerate(final_loci):   
-#            for locI in range(len(loci) - 1, -1, -1):
-#                locx = loci[locI]
-                loc = locx[0]
-                loc_len = len(loc)
-            #    if loc_len > 1:
-                out_clan_loci[clan][scaf].append(sorted(loc))
-                # award single gene locus to what it is derived from merging into
-            #    elif loc_len == 1:
-             #       mergeI = locx[-1][0]
-                    # if this isnt a nested merge
-              #      if out_clan_loci[clan][scaf][mergeI]:
-               #         out_clan_loci[clan][scaf][mergeI].extend(loc)
-                #        out_clan_hgx[clan][scaf][mergeI] = \
-                  #          tuple(sorted(set(list(out_clan_hgx[clan][scaf][mergeI]) \
-                 #                              + ahgx)))
-                   # out_clan_loci[clan][scaf].append(None)
-                    #out_clan_hgx[clan][scaf].append(None)
-              #  else:
-               #     out_clan_loci[clan][scaf].append(None)
-                #    out_clan_hgx[clan][scaf].append(None)
+            for locd in final_loci:
+                loc, omes = locd[0], locd[-1]
+                out_clan_loci[clan][scaf].append([sorted(loc, key = lambda x: gene2i[x]),
+                                                  omes])
 
     clan_loci = {} 
     for clan, scaf_dict in out_clan_loci.items():
         clan_loci[clan] = {}
         for scaf, loci in scaf_dict.items():
             clan_loci[clan][scaf] = []
-            for i, loc in enumerate(loci):
-                if loc:
-                    clan_loci[clan][scaf].append(loc)
+            for loc, omes in loci:
+                clan_loci[clan][scaf].append([loc, omes])
+            clan_loci[clan][scaf] = sorted(clan_loci[clan][scaf],
+                                           key = lambda x: scaf2gene2i[scaf][x[0][0]])
 
     return clan_loci #, out_hg_loci
 
 
 
 def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus,
-                   min_merge_perc = 0, hgx2dist_path = None, hgx2omes_path = None,
-                   min_heat_len = 25, min_branch_sim = 0.5, phylo = None):
+                   hgx2dist_path = None, hgx2omes_path = None,
+                   merge_via_sim = False, min_branch_sim = 0.5, phylo = None):
     """sliding window of size clusplusminus, identify sequences that may have
     hgs that may be significant, grab their window, and check for a significant
     higher order og combo in the locus"""
@@ -901,7 +873,7 @@ def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus,
         for i, gene in enumerate(prots):
             scaf2gene2i[scaf][gene] = i
 
-    preclan_loci, loc_index = defaultdict(lambda: defaultdict(list)), defaultdict(int)
+    preclan_loci = defaultdict(lambda: defaultdict(list))
     for scaf in cds_dict:
         for i0, seq0 in enumerate(cds_dict[scaf]):
             if seq0 in ome_sig_clus: # if the og is part of a significant seed
@@ -930,15 +902,14 @@ def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus,
                             end = i1 + 1
                     hgx = tuple(sorted(sig_clus[0]))
                     preclan_loci[clan][scaf].append([
-                         locus[start:end], hgx, [hgx], [loc_index[clan]]
+                         locus[start:end], hgx
                          ])
-                    loc_index[clan] += 1
 
     out_clan_loci, out_hg_loci = merge_clan_loci(preclan_loci, gene2hg,
-                                                             min_merge_perc, hgx2omes_path,
-                                                             hgx2dist_path,
-                                                             scaf2gene2i, min_heat_len,
-                                                             min_branch_sim, phylo)
+                                                 hgx2omes_path,
+                                                 hgx2dist_path,
+                                                 scaf2gene2i, merge_via_sim,
+                                                 min_branch_sim, phylo)
     return ome, out_clan_loci, out_hg_loci
 
 
@@ -1254,8 +1225,10 @@ def refine_group(db, ome2i, group_hg_loci, group_loci,
             groups[-1][1] = index
         if not os.path.isfile(f'{grp_dir}loci.adj.tmp') \
             and not os.path.isfile(f'{grp_dir}loci.adj'):
+            start = datetime.now()
             rnd2_loc2loc_mngr(grp_dir, loci, hg_loci, hgx_dir, 
                               groups, minid, min_loc_id, simfun, cpus)
+            print(datetime.now() - start)
             os.rename(f'{grp_dir}loci.adj.tmp', f'{grp_dir}loci.adj')
 
     satisfied = False
@@ -1500,9 +1473,8 @@ def classify_gcfs(
     minid = 30, cpus = 1, algorithm = 'diamond',
     min_loc_id = 0.3, simfun = overlap, printexit = False,
     tune = False, dist_func = treecalcs.calc_tmd,
-    uniq_sp = False, min_merge_perc = 0, algn_sens = '',
-    skipalgn = False, fallback = False, min_heat_len = 25,
-    min_branch_sim = 0.8
+    uniq_sp = False, min_branch_sim = 0.8, algn_sens = '',
+    skipalgn = False, fallback = False, merge_via_sim = False,
     ):
 
     i2ome = {v: k for k, v in ome2i.items()}
@@ -1656,9 +1628,9 @@ def classify_gcfs(
         with mp.get_context('forkserver').Pool(processes = cpus) as pool:
             hash_res = pool.starmap(hash_clan_loci, 
                                     tqdm(((ome, db[ome]['gff3'], clus2extract,
-                                          ome2gene2hg[ome], clusplusminus, min_merge_perc,
+                                          ome2gene2hg[ome], clusplusminus,
                                           f'{wrk_dir}hgx2dist.pickle', 
-                                          f'{wrk_dir}hgx2omes.pickle', min_heat_len, min_branch_sim,
+                                          f'{wrk_dir}hgx2omes.pickle', merge_via_sim, min_branch_sim,
                                           phylo) \
                                           for ome, clus2extract \
                                           in ome2clus2extract.items()),
