@@ -295,9 +295,9 @@ if __name__ == '__main__':
     img_exts = ['pdf', 'png', 'ps', 'svg']
     net_exts = ['dot', 'gml', 'graphml', 'gt', 'xml']
     parser = argparse.ArgumentParser(
-        description = 'hg2clus locus-locus similarity network. Will output all clans if no -c/-f'
+        description = 'Cloci locus-locus similarity network. Will output all clans if no -c/-f'
         )
-    parser.add_argument('-i', '--input', help = 'Completed hg2clus directory', required = True)
+    parser.add_argument('-i', '--input', help = 'Completed Cloci directory', required = True)
     parser.add_argument('-c', '--clans', help = 'Input clans; "-" for stdin')
     parser.add_argument('-f', '--gcfs', help = 'Input GCFs; "-" for stdin')
     parser.add_argument('-p', '--passing', help = 'Passing GCFs only',

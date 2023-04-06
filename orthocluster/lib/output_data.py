@@ -14,6 +14,7 @@ from mycotools.lib.kontools import eprint
 from mycotools.lib.biotools import list2gff, gff2list, fa2dict, dict2fa
 from orthocluster.orthocluster.lib import input_parsing
 
+# NEED to add PCA output
 # NEED locID output and clans
 # NEED to fix and optimize Pfam annotation
 # NEED gbk output option
@@ -513,23 +514,42 @@ def output_gcfs(db, wrk_dir, gcfs, gcf_omes, i2ome, out_dir, logg2d, gcf_hgxs,
                             hgx2omes2gcc, hgx2omes2id, i2ome,
                             out_dir)
 
+    # legacy, need to remove unless dn/ds is reimplemented
     if dnds_dict:
-        axes = [[],[],[],[],[]]
+        axes = [[],[],[],[],[], []]
     else:
-        axes = [[],[],[], []]
+        axes = [[],[],[], [], []]
     labels = []
 
-    for entry in gcf_output:
-        labels.append(
-            ['GCF:', str(entry[1]) + ' | Omes: ' + entry[-1]]
-            )
-        axes[0].append(entry[5])
-        axes[1].append(entry[4])
-        axes[2].append(entry[3])
-        axes[3].append(entry[6])
+    try:
+        for entry in gcf_output:
+            labels.append(
+                ['GCF:', str(entry[1]) + ' | Omes: ' + entry[-1]]
+                )
+            axes[0].append(entry[5])
+            axes[1].append(entry[4])
+            axes[2].append(entry[3])
+            axes[3].append(entry[6])
+            axes[4].append(entry[7])
+    except ValueError: # no positives
+        labels = []
+        axes = [[], [], [], []]
+        for entry in gcf_output:
+            labels.append(
+                ['GCF:', str(entry[1]) + ' | Omes: ' + entry[-1]]
+                )
+            axes[0].append(entry[5])
+            axes[1].append(entry[4])
+            axes[2].append(entry[3])
+            axes[3].append(entry[6])
+            
     print('\tOutputting scatter plots', flush = True)
-    axes_labels = ['Distribution Patchiness', 'Gene Commitment', 'Log Microsynteny Distance',
-                   'Mean Minimum Identity']
+    if len(axes) == 4:
+        axes_labels = ['Distribution Patchiness', 'Gene Commitment', 'Log Microsynteny Distance',
+                       'Mean Minimum Identity']
+    else:
+        axes_labels = ['Distribution Patchiness', 'Gene Commitment', 'Log Microsynteny Distance',
+                       'Mean Minimum Identity', 'Mean Minimum Positives']
 
     fig = mk_subplots(labels, axes, axes_labels, alpha = 0.6)
     fig.write_html(out_dir + 'metrics.html')

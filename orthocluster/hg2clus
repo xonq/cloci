@@ -1,5 +1,6 @@
 #! /usr/bin/env python3
 
+#NEED to add inflation parameters
 #NEED to update intro
 #NEED to implement separate inflations and tune parameter
 #NEED to implement genome-based null
@@ -13,7 +14,7 @@
 #NEED to delete excess when checkpoints are reached
     # implement tarring effectively
 #NEED to rerun evo_conco if gcfs.pickle doesn't exist
-#NEED option to skip merging/extending modules
+   # update to remove gcf dir if logs are violated
 
 import os
 import re

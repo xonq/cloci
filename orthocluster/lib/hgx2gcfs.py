@@ -317,7 +317,6 @@ def calc_sim_by_row(adj_mat, hgLoci, loci, blast_ids,
  #   adj_mat = np.load(f'{mat_dir}{rowI}.npz')
     for ti0, overlap_loci in enumerate(adj_mat):
         i0 = ti0 + max_complete
-        print(hgLoci, overlap_loci)
         loc0, hgL0 = loci[i0], hgLoci[i0]
         sHGl0 = set([x for x in hgL0 if x is not None])
         for ti1 in overlap_loci:
@@ -704,6 +703,7 @@ def dereplicate_loci(preclan_loci, gene2hg,
             final_loci, singletons_prep = [], []
             while loci:
                 locd0 = loci[0]
+
                 loc0 = set(locd0[0])
                 overi = 1
                 for i1, locd1 in enumerate(loci[1:]):
@@ -759,7 +759,7 @@ def dereplicate_loci(preclan_loci, gene2hg,
                 loc, omes = locd[0], locd[-1]
                 for gene in loc:
                     gene2loc_i[gene] = [i, omes]
-                    i2gene = {gene2i[gene]: gene}
+                    i2gene[gene2i[gene]] = gene
 
             singletons_prep1 = [x for x in singletons_prep \
                                 if x[0] not in genes_set]
@@ -769,45 +769,62 @@ def dereplicate_loci(preclan_loci, gene2hg,
                                 key = lambda y: y[-2], reverse = True)
             singletons, s_set = [], set()
             for s in sorted_s_prep:
-                if s[0][0] not in s_set:
+                if s[0] not in s_set:
                     singletons.append(s)
-                    s_set.add(s[0][0])
+                    s_set.add(s[0])
 
             singletons = sorted(singletons, key = lambda y: gene2i[y[0]])
-            continuities_prep = []
-            for s, null, omes0 in singletons:
-                s_i = gene2i[s]
-                t, b = s_i - 1, s_i + 1
-                if t in i2gene:
-                    t_g = i2gene[t]
-                    t_i, t_o = gene2loc_i[t_g]
-                    t_sim = treecalcs.calc_branch_sim(phylo, omes0, t_o)
-                else:
-                    t_sim = 0
-                if b in i2gene:
-                    b_g = i2gene[b]
-                    b_i, b_o = gene2loc_i[b_g]
-                    b_sim = treecalcs.calc_branch_sim(phylo, omes0, b_o)
-                else:
-                    b_sim = 0
-                # if there are both directions 
-                if t_sim > min_branch_sim and b_sim > min_branch_sim:
-                    if t_sim == b_sim:
-                        merge_i = random.choice([b_i, t_i])
-                    elif t_sim > b_sim:
-                        merge_i = t_i
+            todel = True
+            while todel:
+                todel = []
+                for i, v in enumerate(singletons):
+                    s, null, omes0  = v
+                    s_i = gene2i[s]
+                    t, b = s_i - 1, s_i + 1
+                    if t in i2gene:
+                        t_g = i2gene[t]
+                        t_i, t_o = gene2loc_i[t_g]
+                        t_sim = treecalcs.calc_branch_sim(phylo, omes0, t_o)
                     else:
+                        t_sim = 0
+                    if b in i2gene:
+                        b_g = i2gene[b]
+                        b_i, b_o = gene2loc_i[b_g]
+                        b_sim = treecalcs.calc_branch_sim(phylo, omes0, b_o)
+                    else:
+                        b_sim = 0
+                    # if there are both directions, award to the most similar
+                    # distribution
+                    if t_sim > min_branch_sim and b_sim > min_branch_sim:
+                        if t_sim == b_sim:
+                            merge_base = random.choice([0, 1])
+                            if merge_base:
+                                merge_i, merge_o = t_i, t_o
+                            else:
+                                merge_i, merge_o = b_i, b_o
+                        elif t_sim > b_sim:
+                            merge_i = t_i
+                            merge_o = t_o
+                        else:
+                            merge_i = b_i
+                            merge_o = b_o
+                    elif t_sim > min_branch_sim:
+                        merge_i = t_i
+                        merge_o = t_o
+                    elif b_sim > min_branch_sim:
                         merge_i = b_i
-                elif t_sim > min_branch_sim:
-                    merge_i = t_i
-                elif b_sim > min_branch_sim:
-                    merge_i = b_i
-                else:
-                    continuities_prep.append([s, null, omes0])
-                    continue
-                final_loci[merge_i][0].append(s)    
-                
-            continuities_iz = [gene2i[x[0]] for x in continuities_prep]
+                        merge_o = b_o
+                    else:
+#                        continuities_prep.append([s, null, omes0])
+                        continue
+                    gene2loc_i[s] = [merge_i, merge_o]
+                    i2gene[gene2i[s]] = s
+                    final_loci[merge_i][0].append(s)
+                    todel.append(i)
+                for i in reversed(todel):
+                    singletons.pop(i)
+                    
+            continuities_iz = [gene2i[x[0]] for x in singletons]
             continuities = []
             for i, v in enumerate(continuities_iz[:-1]):
                 if continuities_iz[i + 1] - v == 1:
@@ -820,7 +837,7 @@ def dereplicate_loci(preclan_loci, gene2hg,
                 omes1 = s1[-1]
                 branch_sim = treecalcs.calc_branch_sim(phylo, omes0, omes1)
                 if branch_sim > min_branch_sim:
-                    merges.append([set(s0[0] + s1[0]), list(set(omes0).union(set(omes1)))])
+                    merges.append([{s0[0], s1[0]}, set(omes0).union(set(omes1))])
 
             for i0, locd0 in enumerate(merges):
                 loc0, omes0 = locd0
@@ -829,15 +846,17 @@ def dereplicate_loci(preclan_loci, gene2hg,
                 except IndexError:
                     if len(loc0) == 1:
                         merges[i0] = None
+                    continue
                 locIntersection = loc0.intersection(loc1)
                 if locIntersection:
-                    merges[i0 + 1] = [list(set(loc0).union(set(loc1))), 
-                                      list(set(omes0).union(set(omes1)))]
+                    merges[i0 + 1] = [loc0.union(loc1), 
+                                      omes0.union(omes1)]
                 merges[i0] = None
 
             for i, locd in enumerate(merges):
                 if locd:
-                    final_loci.append(locd)
+                    loc, omes = locd
+                    final_loci.append([list(loc), list(omes)])
 
             for locd in final_loci:
                 loc, omes = locd[0], locd[-1]
