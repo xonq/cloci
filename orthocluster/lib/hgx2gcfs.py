@@ -1098,12 +1098,12 @@ def parse_and_sort_gff(gff_path):
    
     return scaf2gene2i, cds_dict
 
-def hash_ome_lg_loc(gff_path, locs_y_lg):
+def hash_ome_lg_loc(gff_path, locs_y_lg, max_between = 1):
     scaf2gene2i, cds_dict = parse_and_sort_gff(gff_path)
     scaf2i2gene = {}
     for scaf, gene2i in scaf2gene2i.items():
         scaf2i2gene[scaf] = {v: k for k, v in gene2i.items()}
-    scaf2locs = output_data.clus2scaf(cds_dict, locs_y_lg)
+    scaf2locs, null = output_data.clus2scaf(cds_dict, locs_y_lg)
 
     gcf2scaf2locs = defaultdict(lambda: defaultdict(list))
     for scaf, locs in scaf2locs.items():
@@ -1122,8 +1122,10 @@ def hash_ome_lg_loc(gff_path, locs_y_lg):
                 if bot_i - top_i == 1:
                     locs[0].extend(locs[1])
                     locs.pop(1)
-                elif bot_i - top_i == 2: # one intervening gene, so award it
-                    locs[0].extend([scaf2i2gene[scaf][top_i + 1]] + locs[1])
+                # award multiple intervening genes if they meet the max_between criterium
+                elif bot_i - top_i == max_between + 1:
+                    locs[0].extend([scaf2i2gene[scaf][top_i + bw_i] \
+                                    for bw_i in range(1, max_between + 1)] + locs[1])
                     locs.pop(1)
                 else:
                     gcf2locs[gcf].append(loc0)
@@ -1133,7 +1135,7 @@ def hash_ome_lg_loc(gff_path, locs_y_lg):
     return gcf2locs
 
 
-def lg_loc_mngr(db, lgs, gene2hg, cpus = 1):
+def lg_loc_mngr(db, lgs, gene2hg, max_between = 1, cpus = 1):
     omes2loci = defaultdict(list)
     for lg, locs in lgs.items():
         for loc, locI in locs:
@@ -1142,8 +1144,8 @@ def lg_loc_mngr(db, lgs, gene2hg, cpus = 1):
 
     with mp.get_context('forkserver').Pool(processes = cpus) as pool:
         lg_loci = pool.starmap(hash_ome_lg_loc,
-                               tqdm(((db[ome]['gff3'], omes2loci[ome]) \
-                                     for ome in db.keys()), 
+                               tqdm(((db[ome]['gff3'], omes2loci[ome],
+                                      max_between) for ome in db.keys()), 
                                     total = len(db)))
 
     lg2locs = defaultdict(list)
@@ -1417,6 +1419,8 @@ def extend_loci(ome, gff_path, loc2need, gene2hg, forbid_genes,
                     if len(set(bot_set).intersection(miss_hg)) >= min_new_cont:
                         to_add_locs.append((bot_prot, gcf))
                         found = True
+                else:
+                    bot_set = set()
                 if all(x not in forbidden_genes for x in top_prot):
                     top_set = hg_list[-min_new_cont:]
                     if len(set(top_set).intersection(miss_hg)) >= min_new_cont:
@@ -1487,13 +1491,14 @@ def classify_gcfs(
     hgx2loc, db, gene2hg, i2hgx, hgx2i,
     phylo, ome2i, hgx2omes, hg_dir, hgx_dir,
     wrk_dir, ome2partition, bord_scores_list,
-    hg2gene, omes2dist = {}, clusplusminus = 3,
-    inflation = 1.5, min_hgx_overlap = 1, min_omes = 2, 
+    hg2gene, omes2dist = {}, clusplusminus = 3, inflation_1 = 1.1,
+    inflation_2 = 1.5, min_hgx_overlap = 1, min_omes = 2, 
     minid = 30, cpus = 1, algorithm = 'diamond',
     min_loc_id = 0.3, simfun = overlap, printexit = False,
     tune = False, dist_func = treecalcs.calc_tmd,
     uniq_sp = False, min_branch_sim = 0.8, algn_sens = '',
     skipalgn = False, fallback = False, merge_via_sim = False,
+    max_between = 1
     ):
 
     i2ome = {v: k for k, v in ome2i.items()}
@@ -1723,11 +1728,11 @@ def classify_gcfs(
     lgs, lg_hgxs, lg_omes, lg2clan, hgxXloci = refine_group(
                  db, ome2i, clan_hg_loci, clan_loci,
                  hg_dir, hgx_dir, wrk_dir, lg_dir, minid, min_loc_id,
-                 simfun, inflation, tune, min_omes, cpus = cpus)
+                 simfun, inflation_1, tune, min_omes, cpus = cpus)
     print('\t\t\t' + str(len(lgs)) + ' LGs', flush = True)
 
     print('\t\tMerging loci', flush = True)
-    lg2locs, lg2hg_locs = lg_loc_mngr(db, lgs, gene2hg, cpus)
+    lg2locs, lg2hg_locs = lg_loc_mngr(db, lgs, gene2hg, max_between, cpus)
     lg_locs = {k: v for k,v in sorted(lg2locs.items(), key = lambda x: len(x[1]), reverse = True)}
     lg_hg_loci = [lg2hg_locs[k] for k in lg_locs]
     lg_locs = [v for v in lg_locs.values()]
@@ -1742,7 +1747,7 @@ def classify_gcfs(
     gcfs, gcf_hgxs, gcf_omes, gcf2lg, hgxXloci = refine_group(
                  db, ome2i, lg_hg_loci, lg_locs,
                  hg_dir, hgx_dir, wrk_dir, gcf_dir, minid, min_loc_id,
-                 sorensen, inflation, tune, min_omes, cpus = cpus, rnd = 2)
+                 sorensen, inflation_2, tune, min_omes, cpus = cpus, rnd = 2)
     print('\t\t\t' + str(len(gcfs)) + ' GCFs', flush = True)
 
     print('\tExtending incomplete clusters and contig edge clusters', flush = True)
