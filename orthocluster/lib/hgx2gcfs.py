@@ -140,7 +140,7 @@ def overlap(interlen, len0, len1):
 
 def calc_loc2loc_sim_mat(
     i0, i1, index, loc0, loc1, hgL0, hgL1, coef, blast_ids,
-    mingcfid = 0.15
+    min_hlg_id = 0.15
     ):
 
     # Identify the overlapping HGs
@@ -168,17 +168,17 @@ def calc_loc2loc_sim_mat(
     scores = [x for x in scores if x]
     if scores:
         maxScores = [max(i) for i in scores]
-        gcf_id = (sum(maxScores)/len(maxScores)) * coef
-        if gcf_id > mingcfid:
-            return f'{i0 + index}\t{i1 + index}\t{gcf_id}\n'
+        hlg_id = (sum(maxScores)/len(maxScores)) * coef
+        if hlg_id > min_hlg_id:
+            return f'{i0 + index}\t{i1 + index}\t{hlg_id}\n'
         else:
             return ''
 
 
 
-def acquire_clus_gcf_sim_noq(
+def acquire_clus_hlg_sim_noq(
     i0, i1, index, loc0, loc1, hgL0, hgL1, set0, set1, blast_ids,
-    simfun = overlap, mingcfid = 0.15
+    simfun = overlap, min_hlg_id = 0.15
     ):
 
     # Identify the overlapping HGs
@@ -212,9 +212,9 @@ def acquire_clus_gcf_sim_noq(
     if scores:
         maxScores = [max(i) for i in scores]
         coef = simfun(len(scores), len(set0), len(set1))
-        gcf_id = (sum(maxScores)/len(maxScores)) * coef
-        if gcf_id > mingcfid:
-            return f'{i0 + index}\t{i1 + index}\t{gcf_id}\n'
+        hlg_id = (sum(maxScores)/len(maxScores)) * coef
+        if hlg_id > min_hlg_id:
+            return f'{i0 + index}\t{i1 + index}\t{hlg_id}\n'
         else:
             return ''
 
@@ -271,8 +271,8 @@ def gen_blastids_mp(hg, genes, hgx_dir, grp_dir, minid):#, blast_ids_mngr):
      #                                             gene_len, gene_set))
 
 
-def read_gcf_sim_jsons(gcf_dir):
-    jsons = collect_files(gcf_dir, 'json')
+def read_hlg_sim_jsons(hlg_dir):
+    jsons = collect_files(hlg_dir, 'json')
     blast_ids = {}
     for j_f in jsons:
         hg = os.path.basename(j_f).replace('.json','')
@@ -303,7 +303,7 @@ def parse_blast(algn_base, gene_len, gene_set, minid = 30):
     return hg_dict
 
 
-def gcf_sim_write_mngr(Q, sim_file):
+def hlg_sim_write_mngr(Q, sim_file):
     x = Q.get()
     with open(sim_file, 'a') as out:
         while x:
@@ -313,7 +313,7 @@ def gcf_sim_write_mngr(Q, sim_file):
 
 
 def calc_sim_by_row(adj_mat, hgLoci, loci, blast_ids, 
-                    index, Q, max_complete, mingcfid, simfun):
+                    index, Q, max_complete, min_hlg_id, simfun):
  #   adj_mat = np.load(f'{mat_dir}{rowI}.npz')
     for ti0, overlap_loci in enumerate(adj_mat):
         i0 = ti0 + max_complete
@@ -324,18 +324,18 @@ def calc_sim_by_row(adj_mat, hgLoci, loci, blast_ids,
                 i1 = ti1 + max_complete
                 loc1, hgL1 = loci[i1], hgLoci[i1]
                 sHGl1 = set([x for x in hgL1 if x is not None])
-                data = acquire_clus_gcf_sim_noq(i0, i1, index, loc0,
+                data = acquire_clus_hlg_sim_noq(i0, i1, index, loc0,
                                                 loc1, hgL0, hgL1,
                                                 sHGl0, sHGl1, blast_ids,
-                                                mingcfid = mingcfid,
+                                                min_hlg_id = min_hlg_id,
                                                 simfun = simfun)
                 if data:
                     Q.put(data)
 
 
 
-def gcf_sim_mp_mngr(adj_mat, sim_file, max_complete, loci, hgLoci, index, 
-                    blast_ids, gcf_dir, mat_dir, mingcfid, simfun, 
+def hlg_sim_mp_mngr(adj_mat, sim_file, max_complete, loci, hgLoci, index, 
+                    blast_ids, hlg_dir, mat_dir, min_hlg_id, simfun, 
                     chunkscale = 100, cpus = 1):
     if not os.path.isdir(mat_dir):
         os.mkdir(mat_dir)
@@ -359,9 +359,9 @@ def gcf_sim_mp_mngr(adj_mat, sim_file, max_complete, loci, hgLoci, index,
             t_hgs.remove(None)
         t_ids = {hg: blast_ids[hg] for hg in list(t_hgs) if hg in blast_ids}
         cmds.append((sub_mat, t_hg_loc, t_loc, t_ids, 
-                     index, Q, max_complete, mingcfid, simfun))
+                     index, Q, max_complete, min_hlg_id, simfun))
 
-    write_proc = mp.Process(target=gcf_sim_write_mngr, args=(Q, sim_file))
+    write_proc = mp.Process(target=hlg_sim_write_mngr, args=(Q, sim_file))
     write_proc.start()
 
     with mp.get_context('forkserver').Pool(processes = cpus - 1) as pool:
@@ -384,7 +384,7 @@ def calc_sorensen_array(adj_arr, clan_arr):
     return 2 * adj_arr/(clan_arr.sum(axis=1) + np.array([clan_arr.sum(axis=1)]).T)
 
 def matrix_sim_mngr(s_mat, out, loci, hgLoci, max_complete,
-                    blast_ids, index, mingcfid):
+                    blast_ids, index, min_hlg_id):
     for ti0, row in enumerate(s_mat):
         i0 = ti0 + max_complete
         loc0, hgL0 = loci[i0], hgLoci[i0]
@@ -394,26 +394,26 @@ def matrix_sim_mngr(s_mat, out, loci, hgLoci, max_complete,
             data = calc_loc2loc_sim_mat(i0, i1, index, loc0,
                                         loc1, hgL0, hgL1,
                                         v, blast_ids,
-                                        mingcfid = mingcfid)
+                                        min_hlg_id = min_hlg_id)
             if data:
                 out.write(data)
         out.flush()
 
 
 def rnd2_loc2loc_sim_mngr(clan_arr, finished_file, max_complete, loci, hgLoci,
-                     index, blast_ids, mingcfid, simfun):
+                     index, blast_ids, min_hlg_id, simfun):
     adj_arr = np.triu(clan_arr @ clan_arr.T)
     adj_arr[adj_arr < 2] = 0
     s_mat = calc_sorensen_array(adj_arr, clan_arr)
     np.fill_diagonal(s_mat, 0)
     with open(f'{finished_file}.w', 'a') as out:
         matrix_sim_mngr(s_mat, out, loci,
-                        hgLoci, max_complete, blast_ids, index, mingcfid)
+                        hgLoci, max_complete, blast_ids, index, min_hlg_id)
 
 
 
 def loc2loc_sim_mngr(clan_arr, finished_file, max_complete, loci, hgLoci,
-                     index, blast_ids, mingcfid, simfun):
+                     index, blast_ids, min_hlg_id, simfun):
     clan_arr = clan_arr.tocsr()
     # a matrix representing the cardinality of the intersection of hg_locs
     adj_arr = csr_matrix(triu(clan_arr @ clan_arr.transpose()))
@@ -430,10 +430,10 @@ def loc2loc_sim_mngr(clan_arr, finished_file, max_complete, loci, hgLoci,
                 i1 = ti1 + max_complete
                 loc1, hgL1 = loci[i1], hgLoci[i1]
                 sHGl1 = set([x for x in hgL1 if x is not None])
-                data = acquire_clus_gcf_sim_noq(i0, i1, index, loc0,
+                data = acquire_clus_hlg_sim_noq(i0, i1, index, loc0,
                                                 loc1, hgL0, hgL1,
                                                 sHGl0, sHGl1, blast_ids,
-                                                mingcfid = mingcfid,
+                                                min_hlg_id = min_hlg_id,
                                                 simfun = simfun)
                 if data: 
                     out.write(data)
@@ -459,10 +459,10 @@ def open_prev_res(finished_file, index):
     shutil.move(f'{finished_file}.w1', f'{finished_file}.w')
     return max_complete
 
-def rnd2_loc2loc_mngr(gcf_dir, loci, hg_loci,
-                     hgx_dir, groups, minid, mingcfid, simfun, cpus = 1):
+def rnd2_loc2loc_mngr(hlg_dir, loci, hg_loci,
+                     hgx_dir, groups, minid, min_hlg_id, simfun, cpus = 1):
 
-    finished_file = f'{gcf_dir}loci.adj.tmp'
+    finished_file = f'{hlg_dir}loci.adj.tmp'
     # is this clan already completed?
     if os.path.isfile(finished_file) or os.path.isfile(finished_file + '.r'):
         return
@@ -500,9 +500,9 @@ def rnd2_loc2loc_mngr(gcf_dir, loci, hg_loci,
 
     blast_ids = defaultdict(dict)
     print('\t\t\t\tLoading alignment results', flush = True)
-    if not os.path.isdir(f'{gcf_dir}algn/'):
-        os.mkdir(f'{gcf_dir}algn/')
-    jsons = collect_files(f'{gcf_dir}algn/', 'json')
+    if not os.path.isdir(f'{hlg_dir}algn/'):
+        os.mkdir(f'{hlg_dir}algn/')
+    jsons = collect_files(f'{hlg_dir}algn/', 'json')
     finished_hgs = set(int(os.path.basename(x).replace('.json', '')) \
                     for x in jsons)
     missing_hgs = set(blast_hash.keys()).difference(finished_hgs)
@@ -510,11 +510,11 @@ def rnd2_loc2loc_mngr(gcf_dir, loci, hg_loci,
         blast_hash = {k: blast_hash[k] for k in list(missing_hgs)}
         with mp.get_context('forkserver').Pool(processes = cpus) as pool:
             pool.starmap(rnd2_gen_blastids_mp, 
-                         ((hg, group_dict, hgx_dir, gcf_dir, minid) \
+                         ((hg, group_dict, hgx_dir, hlg_dir, minid) \
                            for hg, group_dict in blast_hash.items()))
             pool.close()
             pool.join()
-    blast_ids = read_gcf_sim_jsons(f'{gcf_dir}algn/')
+    blast_ids = read_hlg_sim_jsons(f'{hlg_dir}algn/')
 
     # could be expedited by multiprocessing a writer and numba njit the math
     print('\t\t\t\tCalculating similarity', flush = True)
@@ -523,18 +523,18 @@ def rnd2_loc2loc_mngr(gcf_dir, loci, hg_loci,
             i0, i1 = v
             clan_arr = clan_arrs[g]
             loc2loc_sim_mngr(clan_arr, finished_file, i0, loci, hg_loci,
-                             0, blast_ids, mingcfid, simfun)
+                             0, blast_ids, min_hlg_id, simfun)
         # the file is now complete
-        shutil.move(f'{gcf_dir}loci.adj.tmp.w', f'{gcf_dir}loci.adj.tmp')
+        shutil.move(f'{hlg_dir}loci.adj.tmp.w', f'{hlg_dir}loci.adj.tmp')
 
 
 def rnd1_loc2loc_mngr(
-    db, clanI, loci, hgLoci, hg_dir, hgx_dir, gcf_dir, index,
-    minid = 30, mingcfid = 0.15, simfun = overlap, min_overlap = 2,
+    db, clanI, loci, hgLoci, hg_dir, hgx_dir, hlg_dir, index,
+    minid = 30, min_hlg_id = 0.15, simfun = overlap, min_overlap = 2,
     cpus = 1, Q = None
     ):
 
-    finished_file = f'{gcf_dir}{clanI}.sadj.tmp'
+    finished_file = f'{hlg_dir}{clanI}.sadj.tmp'
     # is this clan already completed?
     if os.path.isfile(finished_file) or os.path.isfile(finished_file + '.r'):
         return
@@ -581,9 +581,9 @@ def rnd1_loc2loc_mngr(
 
     else:
         print('\t\t\t\t\tLoading alignment results', flush = True)
-        if not os.path.isdir(f'{gcf_dir}algn/'):
-            os.mkdir(f'{gcf_dir}algn/')
-        jsons = collect_files(f'{gcf_dir}algn/', 'json')
+        if not os.path.isdir(f'{hlg_dir}algn/'):
+            os.mkdir(f'{hlg_dir}algn/')
+        jsons = collect_files(f'{hlg_dir}algn/', 'json')
         finished_hgs = set(int(os.path.basename(x).replace('.json', '')) \
                         for x in jsons)
         missing_hgs = set(blast_hash.keys()).difference(finished_hgs)
@@ -591,12 +591,12 @@ def rnd1_loc2loc_mngr(
             blast_hash = {k: blast_hash[k] for k in list(missing_hgs)}
             with mp.get_context('forkserver').Pool(processes = cpus) as pool:
                 pool.starmap(gen_blastids_mp, 
-                             ((hg, genes, hgx_dir, gcf_dir, minid) \
+                             ((hg, genes, hgx_dir, hlg_dir, minid) \
                                for hg, genes in blast_hash.items() \
                                if len(genes) > 1))
                 pool.close()
                 pool.join()
-        blast_ids = read_gcf_sim_jsons(f'{gcf_dir}algn/')
+        blast_ids = read_hlg_sim_jsons(f'{hlg_dir}algn/')
 
     # could be expedited by multiprocessing a writer and numba njit the math
     if blast_ids:
@@ -604,18 +604,18 @@ def rnd1_loc2loc_mngr(
             print('\t\t\t\t\tCalculating locus similarity', flush = True)
             Q.put(None)
         loc2loc_sim_mngr(clan_arr, finished_file, max_complete, loci, hgLoci,
-                         index, blast_ids, mingcfid, simfun)
+                         index, blast_ids, min_hlg_id, simfun)
 
 #        else:
- #           gcf_sim_mp_mngr(hits, f'{finished_file}.w', 
+ #           hlg_sim_mp_mngr(hits, f'{finished_file}.w', 
   #                          max_complete, loci, hgLoci, index, 
-   #                         blast_ids, gcf_dir, f'{gcf_dir}mtrx/', mingcfid, 
+   #                         blast_ids, hlg_dir, f'{hlg_dir}mtrx/', min_hlg_id, 
     #                        simfun, chunkscale = 100, cpus = cpus)
         # begin appending to temporary writing output
         # the file is now complete
-        shutil.move(f'{gcf_dir}{clanI}.sadj.tmp.w', f'{gcf_dir}{clanI}.sadj.tmp')
+        shutil.move(f'{hlg_dir}{clanI}.sadj.tmp.w', f'{hlg_dir}{clanI}.sadj.tmp')
    #     if cpus > 1: # leave up to zipping 
-#            jsons = collect_files(f'{gcf_dir}algn/', 'json')
+#            jsons = collect_files(f'{hlg_dir}algn/', 'json')
  #           for j_f in jsons:
   #              os.remove(j_f)
 
@@ -719,9 +719,9 @@ def dereplicate_loci(preclan_loci, gene2hg,
                         loci.pop(i1+overi)
                         overi -= 1
                         if loc_dif:
-                            if len(loc_dif) == 1:
-                                singletons_prep.append([list(loc_dif)[0], dist1, omes1])
-                                continue
+     #                       if len(loc_dif) == 1:
+      #                          singletons_prep.append([list(loc_dif)[0], dist1, omes1])
+       #                         continue
                             new_locs = [sorted(loc_dif, key = lambda x: gene2i[x])]
                             break_i = True
                             # check for contuity, break-up noncontinuous loci
@@ -737,20 +737,23 @@ def dereplicate_loci(preclan_loci, gene2hg,
                                 if break_i:
                                     n_loc0 = new_loc[:break_i]
                                     n_loc1 = new_loc[break_i:]
-                                    if len(n_loc0) > 1:
-                                        new_locs.append(n_loc0)
-                                    else:
-                                        singletons_prep.append([n_loc0[0], dist1, omes1])
-                                    if len(n_loc1) > 1:
-                                        new_locs.append(n_loc1)
-                                    else:
-                                        singletons_prep.append([n_loc1[0], dist1, omes1])
+                      #              if len(n_loc0) > 1:
+                                    new_locs.append(n_loc0)
+                        #            else:
+                         #               singletons_prep.append([n_loc0[0], dist1, omes1])
+                          #          if len(n_loc1) > 1:
+                                    new_locs.append(n_loc1)
+                                    #else:
+                                     #   singletons_prep.append([n_loc1[0], dist1, omes1])
                                 else:
                                     loci.insert(i1+overi+1, [new_loc, dist1, omes1])
                                     overi += 1
                                 new_locs.pop(0)
 
-                final_loci.append(locd0)
+                if len(loc0) > 1:
+                    final_loci.append(locd0)
+                else:
+                    singletons_prep.append([locd0[0][0], locd0[-2], locd0[-1]])
                 loci.pop(0)
     
             genes_set = set(chain(*[x[0] for x in final_loci]))
@@ -761,11 +764,11 @@ def dereplicate_loci(preclan_loci, gene2hg,
                     gene2loc_i[gene] = [i, omes]
                     i2gene[gene2i[gene]] = gene
 
-            singletons_prep1 = [x for x in singletons_prep \
-                                if x[0] not in genes_set]
+            #singletons_prep1 = [x for x in singletons_prep \
+             #                   if x[0] not in genes_set]
             # sort the singletons by TMD, highest to lowest to take the largest
             # branch length representative of the singleton
-            sorted_s_prep = sorted(singletons_prep1,
+            sorted_s_prep = sorted(singletons_prep,
                                 key = lambda y: y[-2], reverse = True)
             singletons, s_set = [], set()
             for s in sorted_s_prep:
@@ -932,49 +935,49 @@ def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus,
     return ome, out_clan_loci, out_hg_loci
 
 
-def read_to_write(out_h, in_adj, min_gcf):
+def read_to_write(out_h, in_adj, min_hlg):
     with open(in_adj, 'r') as raw:
         for line in raw:
             d = line.rstrip().split()
-            gcf_id = round(float(d[2]) * 100)
-            if gcf_id >= min_gcf:
+            hlg_id = round(float(d[2]) * 100)
+            if hlg_id >= min_hlg:
                 out_h.write(line.rstrip() + '\n')
     out_h.flush()
 
 
-def write_adj_matrix(out_file, gcf_dir, min_loc_id):
-    comp_gcf_id = round(float(min_loc_id) * 100)
+def write_adj_matrix(out_file, hlg_dir, min_loc_id):
+    comp_hlg_id = round(float(min_loc_id) * 100)
     with open(out_file + '.tmp', 'w') as out:
         # get previously read adjacency matrices
-        init_files = collect_files(gcf_dir, 'sadj.tmp.r')
+        init_files = collect_files(hlg_dir, 'sadj.tmp.r')
         for f in init_files:
-            read_to_write(out, f, comp_gcf_id)
+            read_to_write(out, f, comp_hlg_id)
 
         # get ready to read adjacency matrices
-        files = collect_files(gcf_dir, 'sadj.tmp')
+        files = collect_files(hlg_dir, 'sadj.tmp')
         f_set = set(files)
 
         # while the completion signal has not been received
-        while f'{gcf_dir}done.sadj.tmp' not in f_set:
+        while f'{hlg_dir}done.sadj.tmp' not in f_set:
             for f in files:
-                read_to_write(out, f, comp_gcf_id)
+                read_to_write(out, f, comp_hlg_id)
                 shutil.move(f, f'{f}.r')
-            files = collect_files(gcf_dir, 'sadj.tmp')
+            files = collect_files(hlg_dir, 'sadj.tmp')
             f_set = set(files)
 
         # get final files
         for f in files:
-            if f == f'{gcf_dir}done.sadj.tmp':
-                os.remove(f'{gcf_dir}done.sadj.tmp')
+            if f == f'{hlg_dir}done.sadj.tmp':
+                os.remove(f'{hlg_dir}done.sadj.tmp')
             else:
-                read_to_write(out, f, comp_gcf_id)
+                read_to_write(out, f, comp_hlg_id)
                 shutil.move(f, f'{f}.r')
     shutil.move(out_file + '.tmp', out_file)
-    for f in collect_files(gcf_dir, 'sadj.tmp.r'):
+    for f in collect_files(hlg_dir, 'sadj.tmp.r'):
         os.remove(f)
 
 
-def check_tune(tune, gcf_hgxs, gcf_omes):
+def check_tune(tune, hlg_hgxs, hlg_omes):
     failed = []
     satisfied = False
     for name, data in tune.items():
@@ -982,10 +985,10 @@ def check_tune(tune, gcf_hgxs, gcf_omes):
         set_hgx = set(hgx)
         set_omes = set(omes)
         set_false = set(false_omes)
-        check = [v for i, v in enumerate(gcf_hgxs) \
+        check = [v for i, v in enumerate(hlg_hgxs) \
                  if set_hgx.issubset(set(v)) \
-                 and set_omes.issubset(gcf_omes[i]) \
-                 and not set_false.intersection(gcf_omes[i])]
+                 and set_omes.issubset(hlg_omes[i]) \
+                 and not set_false.intersection(hlg_omes[i])]
         if check:
             continue
         else:
@@ -999,47 +1002,47 @@ def check_tune(tune, gcf_hgxs, gcf_omes):
     return satisfied
 
 
-def read_clus(gcf_dir, mci2pre):
-    t_gcfs = defaultdict(list)
-    with open(gcf_dir + 'loci.clus', 'r') as raw:
+def read_clus(hlg_dir, mci2pre):
+    t_hlgs = defaultdict(list)
+    with open(hlg_dir + 'loci.clus', 'r') as raw:
         for line in raw: # loci indices
-            gcf, mci = [int(x) for x in line.rstrip().split()]
-            t_gcfs[gcf].append(mci2pre[mci])
+            hlg, mci = [int(x) for x in line.rstrip().split()]
+            t_hlgs[hlg].append(mci2pre[mci])
 
-    return [v for k, v in sorted(t_gcfs.items(), key = lambda x: x[0]) \
+    return [v for k, v in sorted(t_hlgs.items(), key = lambda x: x[0]) \
             if len(v) > 1]
   #          indices = [int(x) for x in line.rstrip().split()]
             # singletons won't pass thresholds, disregard them
     #        if len(indices) > 1:
-     #           t_gcfs.append(indices)
+     #           t_hlgs.append(indices)
 
 
 
-def mcl2gcfs(gcf_dir, loci, hgxXloci, ome2i, inflation, 
+def mcl2hlgs(hlg_dir, loci, hgxXloci, ome2i, inflation, 
              loc2clan, tune = False, min_omes = 1, cpus = 1):
     satisfied = False
-    if not os.path.isfile(gcf_dir + 'loci.clus') or tune:
+    if not os.path.isfile(hlg_dir + 'loci.clus') or tune:
         print(f'\t\t\tRunning MCL - inflation: {inflation}', flush = True)
         if cpus > 5:
             mcl_threads = 10 # cap at 5 processors, ten threads
         else:
             mcl_threads = (cpus * 2) - 1
-        MCL(gcf_dir + 'loci.adj', gcf_dir + 'loci.clus',
+        MCL(hlg_dir + 'loci.adj', hlg_dir + 'loci.clus',
                       inflation = inflation, threads = mcl_threads)
         # could add iterative subsample MCL option here
 
-    mci2pre = read_mci_rows(gcf_dir + 'mcl_rows.tsv')
-    t_gcfs = read_clus(gcf_dir, mci2pre)
+    mci2pre = read_mci_rows(hlg_dir + 'mcl_rows.tsv')
+    t_hlgs = read_clus(hlg_dir, mci2pre)
 
-    # list(gcf) = [{hgx: (omes,)}]
-    gcfs, gcf_hgxs, gcf_omes, gcf2clan = [], [], [], {}
-    with open(f'{gcf_dir}loci.txt', 'w') as out:
-        out.write('#omeI locI clanI pregcf locus\n')
-        for gcf, locIs in enumerate(t_gcfs):
-#            gcfs.append(defaultdict(list))
-            gcfs.append([])
-            gcf_hgxs.append([])
-            gcfOme_list = [] 
+    # list(hlg) = [{hgx: (omes,)}]
+    hlgs, hlg_hgxs, hlg_omes, hlg2dom = [], [], [], {}
+    with open(f'{hlg_dir}loci.txt', 'w') as out:
+        out.write('#omeI locI clanI prehlg locus\n')
+        for hlg, locIs in enumerate(t_hlgs):
+#            hlgs.append(defaultdict(list))
+            hlgs.append([])
+            hlg_hgxs.append([])
+            hlgOme_list = [] 
             locs = []
             for locI in locIs:
                 loc = loci[locI]
@@ -1047,44 +1050,44 @@ def mcl2gcfs(gcf_dir, loci, hgxXloci, ome2i, inflation,
                 hgxs = hgxXloci[locI]
                 # really should be done above to make hgxs formatted right
                 omeI = ome2i[loc[0][:loc[0].find('_')]]
-#                [gcfs[-1][hgx].append(omeI) for hgx in hgxs]
-                gcfs[-1].append((loc, locI))
-                gcfOme_list.append(omeI)
-                gcf_hgxs[-1].extend(hgxs)
-            if len(set(gcfOme_list)) > min_omes: # need more than 1
-#                gcfs[-1] = {k: sorted(set(v)) for k,v in gcfs[-1].items()}
-                if gcfs[-1]:
-                    gcfs[-1] = [tuple(x) for x in gcfs[-1]]
-                    gcf_hgxs[-1] = tuple(sorted(set(gcf_hgxs[-1])))
-                    gcf_omes.append(tuple(sorted(set(gcfOme_list))))
-#                    gcf_hgxs.append(tuple(sorted(set(chain(*list(gcfs[-1].keys()))))))
-  #                  gcf_omes.append(tuple(sorted(set(chain(*list(gcfs[-1].values()))))))
-                    pregcf = len(gcfs) - 1
-                    gcf2clan[pregcf] = loc2clan[locs[0][1]]
-                    for i, omeI in enumerate(gcfOme_list):
+#                [hlgs[-1][hgx].append(omeI) for hgx in hgxs]
+                hlgs[-1].append((loc, locI))
+                hlgOme_list.append(omeI)
+                hlg_hgxs[-1].extend(hgxs)
+            if len(set(hlgOme_list)) > min_omes: # need more than 1
+#                hlgs[-1] = {k: sorted(set(v)) for k,v in hlgs[-1].items()}
+                if hlgs[-1]:
+                    hlgs[-1] = [tuple(x) for x in hlgs[-1]]
+                    hlg_hgxs[-1] = tuple(sorted(set(hlg_hgxs[-1])))
+                    hlg_omes.append(tuple(sorted(set(hlgOme_list))))
+#                    hlg_hgxs.append(tuple(sorted(set(chain(*list(hlgs[-1].keys()))))))
+  #                  hlg_omes.append(tuple(sorted(set(chain(*list(hlgs[-1].values()))))))
+                    prehlg = len(hlgs) - 1
+                    hlg2dom[prehlg] = loc2clan[locs[0][1]]
+                    for i, omeI in enumerate(hlgOme_list):
                         locus, locI = locs[i]
-                        out.write(f'{omeI} {locI} {loc2clan[locI]} {pregcf} {",".join(locus)}\n')
+                        out.write(f'{omeI} {locI} {loc2clan[locI]} {prehlg} {",".join(locus)}\n')
                 else:
-                    del gcfs[-1]
-                    del gcf_hgxs[-1]
+                    del hlgs[-1]
+                    del hlg_hgxs[-1]
             else:
-                del gcfs[-1]
-                del gcf_hgxs[-1]
+                del hlgs[-1]
+                del hlg_hgxs[-1]
 
     failed = []
     if tune:
-        satisfied = check_tune(tune, gcf_hgxs, gcf_omes)
+        satisfied = check_tune(tune, hlg_hgxs, hlg_omes)
     else:
         satisfied = True
 
-    list_gcf2clan = []
-    for i in range(len(gcfs)):
-        list_gcf2clan.append(gcf2clan[i])
+    list_hlg2dom = []
+    for i in range(len(hlgs)):
+        list_hlg2dom.append(hlg2dom[i])
 
-    return satisfied, {i: v for i, v in enumerate(gcfs)}, \
-           {i: v for i, v in enumerate(gcf_hgxs)}, \
-           {i: v for i, v in enumerate(gcf_omes)}, \
-           {i: v for i, v in enumerate(list_gcf2clan)}
+    return satisfied, {i: v for i, v in enumerate(hlgs)}, \
+           {i: v for i, v in enumerate(hlg_hgxs)}, \
+           {i: v for i, v in enumerate(hlg_omes)}, \
+           {i: v for i, v in enumerate(list_hlg2dom)}
 
 def parse_and_sort_gff(gff_path):
     # order the loci in each scaffold
@@ -1098,21 +1101,21 @@ def parse_and_sort_gff(gff_path):
    
     return scaf2gene2i, cds_dict
 
-def hash_ome_lg_loc(gff_path, locs_y_lg, max_between = 1):
+def hash_ome_lg_loc(gff_path, locs_y_lg, max_between = 2):
     scaf2gene2i, cds_dict = parse_and_sort_gff(gff_path)
     scaf2i2gene = {}
     for scaf, gene2i in scaf2gene2i.items():
         scaf2i2gene[scaf] = {v: k for k, v in gene2i.items()}
     scaf2locs, null = output_data.clus2scaf(cds_dict, locs_y_lg)
 
-    gcf2scaf2locs = defaultdict(lambda: defaultdict(list))
+    hlg2scaf2locs = defaultdict(lambda: defaultdict(list))
     for scaf, locs in scaf2locs.items():
-        for loc, gcf in locs:
-            gcf2scaf2locs[gcf][scaf].append(loc)
+        for loc, hlg in locs:
+            hlg2scaf2locs[hlg][scaf].append(loc)
     
-    gcf2locs = {}
-    for gcf, scaf_dict in gcf2scaf2locs.items():
-        gcf2locs[gcf] = []
+    hlg2locs = {}
+    for hlg, scaf_dict in hlg2scaf2locs.items():
+        hlg2locs[hlg] = []
         for scaf, locs in scaf_dict.items():
             while len(locs) > 1:
                 loc0 = locs[0]
@@ -1128,14 +1131,14 @@ def hash_ome_lg_loc(gff_path, locs_y_lg, max_between = 1):
                                     for bw_i in range(1, max_between + 1)] + locs[1])
                     locs.pop(1)
                 else:
-                    gcf2locs[gcf].append(loc0)
+                    hlg2locs[hlg].append(loc0)
                     locs.pop(0)
-            gcf2locs[gcf].append(locs[0])
+            hlg2locs[hlg].append(locs[0])
 
-    return gcf2locs
+    return hlg2locs
 
 
-def lg_loc_mngr(db, lgs, gene2hg, max_between = 1, cpus = 1):
+def lg_loc_mngr(db, lgs, gene2hg, max_between = 2, cpus = 1):
     omes2loci = defaultdict(list)
     for lg, locs in lgs.items():
         for loc, locI in locs:
@@ -1165,12 +1168,12 @@ def lg_loc_mngr(db, lgs, gene2hg, max_between = 1, cpus = 1):
 
     return lg2locs, lg2hg_locs    
 #            db, clanI, locs, clan_hg_loci[clanI],
- #           hg_dir, hgx_dir, gcf_dir, index, minid, min_loc_id,
+ #           hg_dir, hgx_dir, hlg_dir, index, minid, min_loc_id,
   #          simfun, min_overlap
 
 def refine_group(db, ome2i, group_hg_loci, group_loci,
                  hg_dir, hgx_dir, wrk_dir, grp_dir, minid, min_loc_id,
-                 simfun, inflation, tune, min_omes, cpus = 1, rnd = 1):
+                 simfun, inflation, tune, min_omes, prefix, cpus = 1, rnd = 1):
 
     m, adj_mtr = mp.Manager(), grp_dir + 'loci.adj'
     if cpus < 2:
@@ -1260,7 +1263,7 @@ def refine_group(db, ome2i, group_hg_loci, group_loci,
             inflation += 0.1
             if inflation > 3:
                 break
-        satisfied, grps, grp_hgxs, grp_omes, lilg2bigg = mcl2gcfs(grp_dir, loci,
+        satisfied, grps, grp_hgxs, grp_omes, lilg2bigg = mcl2hlgs(grp_dir, loci,
                                                            hgxXloci, ome2i, 
                                                            inflation, loc2group,
                                                            tune, min_omes,
@@ -1272,7 +1275,7 @@ def refine_group(db, ome2i, group_hg_loci, group_loci,
         inf_strp = str(inflation * 10)[:2]
         inf_str = inf_strp[0] + '.' + inf_strp[1]
         with open(f'{wrk_dir}../log.txt', 'r') as raw:
-            d = raw.read().replace('inflation\tNone', 'inflation\t' + inf_str)
+            d = raw.read().replace(f'{prefix}_inflation\tNone', f'{prefix}_inflation\t' + inf_str)
         with open(f'{wrk_dir}../log.txt', 'w') as out:
             out.write(d)
 
@@ -1313,7 +1316,7 @@ def extend_loci(ome, gff_path, loc2need, gene2hg, forbid_genes,
         contig_edge = False
         # keep track of modified loci, or contig edge loci for future mod
         modified = False
-        loc, gcf, miss_hg_tup = d
+        loc, hlg, miss_hg_tup = d
 
         # announce this GCF for auditing
 #        if gcf in announcements:
@@ -1384,12 +1387,12 @@ def extend_loci(ome, gff_path, loc2need, gene2hg, forbid_genes,
             # dont edit the miss_hg until the end to not bias for/against top/bot    
             miss_hg = miss_hg.difference(todel)
         if modified:
-            mod_locs[locI] = (ord_loc, gcf)
+            mod_locs[locI] = (ord_loc, hlg)
         
         # its risky to extend to different contigs based on a single HG, so we
         # should only do it if there's evidence that exceeds min_new_cont (2)
         if contig_edge and len(miss_hg) >= min_new_cont:
-            edge_locs[locI] = (ord_loc, gcf, miss_hg)
+            edge_locs[locI] = (ord_loc, hlg, miss_hg)
         
     # if there are loci at the edge of a contig
     to_add_locs = []
@@ -1399,7 +1402,7 @@ def extend_loci(ome, gff_path, loc2need, gene2hg, forbid_genes,
         # anything greater than this should have been picked up by a different
         # mechanism
         for locI, d in edge_locs.items():
-            loc, gcf, miss_hg = d
+            loc, hlg, miss_hg = d
 
             gene0 = loc[0]
             loc_scaf = gene2scaf[gene0]
@@ -1417,7 +1420,7 @@ def extend_loci(ome, gff_path, loc2need, gene2hg, forbid_genes,
                     # the contig to meet the criteria before breaking
                     bot_set = hg_list[:min_new_cont]
                     if len(set(bot_set).intersection(miss_hg)) >= min_new_cont:
-                        to_add_locs.append((bot_prot, gcf))
+                        to_add_locs.append((bot_prot, hlg))
                         found = True
                 else:
                     bot_set = set()
@@ -1425,7 +1428,7 @@ def extend_loci(ome, gff_path, loc2need, gene2hg, forbid_genes,
                     top_set = hg_list[-min_new_cont:]
                     if len(set(top_set).intersection(miss_hg)) >= min_new_cont:
                         if top_set != bot_set:
-                            to_add_locs.append((top_prot, gcf))
+                            to_add_locs.append((top_prot, hlg))
                             found = True
                 if found:
                     break
@@ -1435,18 +1438,18 @@ def extend_loci(ome, gff_path, loc2need, gene2hg, forbid_genes,
     return ome, mod_locs, to_add_locs
 
 
-def extend_loc_mngr(db, gcfs, gcf_hgxs, ome2gene2hg, hgxXloci, gcf_dir,
+def extend_loc_mngr(db, hlgs, hlg_hgxs, ome2gene2hg, hgxXloci, hlg_dir,
                     ext_len = 1, min_new_cont = 2, cpus = 1):
     ome2genes = defaultdict(list)
     ome2loc2need = defaultdict(dict)
-    for gcf, locs in gcfs.items():
-        gcf_hg_set = set(gcf_hgxs[gcf])
+    for hlg, locs in hlgs.items():
+        hlg_hg_set = set(hlg_hgxs[hlg])
         for loc, locI in locs:
             ome = loc[0][:loc[0].find('_')]
             hg_loc = hgxXloci[locI]
-            miss_hg = gcf_hg_set.difference(set(hg_loc))
+            miss_hg = hlg_hg_set.difference(set(hg_loc))
             if miss_hg:
-                ome2loc2need[ome][locI] = (loc, gcf, tuple(miss_hg))
+                ome2loc2need[ome][locI] = (loc, hlg, tuple(miss_hg))
             ome2genes[ome].extend(loc)
    
     with mp.Pool(processes = cpus) as pool:
@@ -1456,38 +1459,38 @@ def extend_loc_mngr(db, gcfs, gcf_hgxs, ome2gene2hg, hgxXloci, gcf_dir,
                                        ext_len, min_new_cont) \
                                       for ome, loc2need in ome2loc2need.items()))
 
-    with open(f'{gcf_dir}edge_clusters.tsv', 'w') as edge_out:
-        edge_out.write('#gcf\tlocus\n')
-        with open(f'{gcf_dir}extension_clusters.tsv', 'w') as extension_out:
-            extension_out.write('#gcf\toriginal_locus\tupdate_locus\n')
+    with open(f'{hlg_dir}edge_loci.tsv', 'w') as edge_out:
+        edge_out.write('#hlg\tlocus\n')
+        with open(f'{hlg_dir}extension_loci.tsv', 'w') as extension_out:
+            extension_out.write('#hlg\toriginal_locus\tupdate_locus\n')
             mod_count, cont_count = 0, 0
             for ome, mod_locs, to_add_locs in modifications:
                 mod_count += len(mod_locs)
                 for locI, d in mod_locs.items():
-                    loc, gcf = d
+                    loc, hlg = d
                     ome2genes[ome].extend(loc)
-                    for i, v in enumerate(gcfs[gcf]):
+                    for i, v in enumerate(hlgs[hlg]):
                         t_loc, t_locI = v
                         if t_locI == locI:
-                            extension_out.write(f'{gcf}\t{",".join(t_loc)}\t{",".join(loc)}\n')
-                            gcfs[gcf][i] = (loc, None)
+                            extension_out.write(f'{hlg}\t{",".join(t_loc)}\t{",".join(loc)}\n')
+                            hlgs[hlg][i] = (loc, None)
                 ome2genes[ome] = set(ome2genes[ome])
-                for loc, gcf in to_add_locs:
+                for loc, hlg in to_add_locs:
                     # this awards the new loci to the first entry, which doesn't
                     # have an order that is necessarily meaningful
                     if all(x not in ome2genes[ome] for x in loc):
                         cont_count += 1
-                        gcfs[gcf].append((loc, None))
-                        edge_out.write(f'{gcf}\t{",".join(loc)}\n')
+                        hlgs[hlg].append((loc, None))
+                        edge_out.write(f'{hlg}\t{",".join(loc)}\n')
                         ome2genes[ome] = ome2genes[ome].union(set(loc))
 
         
-    # we aren't modifying the hgs of each gcf so can ignore them
-    return {gcf: tuple([loc[0] for loc in locs]) for gcf, locs in gcfs.items()}, \
+    # we aren't modifying the hgs of each hlg so can ignore them
+    return {hlg: tuple([loc[0] for loc in locs]) for hlg, locs in hlgs.items()}, \
            mod_count, cont_count
 
 
-def classify_gcfs(
+def classify_hlgs(
     hgx2loc, db, gene2hg, i2hgx, hgx2i,
     phylo, ome2i, hgx2omes, hg_dir, hgx_dir,
     wrk_dir, ome2partition, bord_scores_list,
@@ -1498,7 +1501,7 @@ def classify_gcfs(
     tune = False, dist_func = treecalcs.calc_tmd,
     uniq_sp = False, min_branch_sim = 0.8, algn_sens = '',
     skipalgn = False, fallback = False, merge_via_sim = False,
-    max_between = 1
+    max_between = 2
     ):
 
     i2ome = {v: k for k, v in ome2i.items()}
@@ -1695,10 +1698,10 @@ def classify_gcfs(
     clan_hg_loci = [clan_hg_loci[k] for k in clan_loci]
     clan_loci = [v for v in clan_loci.values()]
 
-    gcf_dir = wrk_dir + 'gcf/' 
-    if not os.path.isdir(gcf_dir):
-        os.mkdir(gcf_dir)
-    lg_dir = gcf_dir + 'lg/'
+    hlg_dir = wrk_dir + 'hlg/' 
+    if not os.path.isdir(hlg_dir):
+        os.mkdir(hlg_dir)
+    lg_dir = hlg_dir + 'lg/'
     if not os.path.isdir(lg_dir):
         os.mkdir(lg_dir)
 
@@ -1718,7 +1721,7 @@ def classify_gcfs(
                         skipalgn = skipalgn, #minid = minid, let minid be at locus step
                         fallback = fallback, cpus = cpus)
 
-    print('\t\tCalling LGs', flush = True)
+    print('\t\tCalling locus domains (sub-cluster domains)', flush = True)
     clan_lens = [len(v) for v in clan_loci]
 #    print('\t\t\t' + str(sum([len(v) for v in list(clan_loci.values())])) \
     print(f'\t\t\t{sum(clan_lens)}' \
@@ -1728,8 +1731,8 @@ def classify_gcfs(
     lgs, lg_hgxs, lg_omes, lg2clan, hgxXloci = refine_group(
                  db, ome2i, clan_hg_loci, clan_loci,
                  hg_dir, hgx_dir, wrk_dir, lg_dir, minid, min_loc_id,
-                 simfun, inflation_1, tune, min_omes, cpus = cpus)
-    print('\t\t\t' + str(len(lgs)) + ' LGs', flush = True)
+                 simfun, inflation_1, tune, min_omes, 'domain', cpus = cpus)
+    print('\t\t\t' + str(len(lgs)) + ' domains', flush = True)
 
     print('\t\tMerging loci', flush = True)
     lg2locs, lg2hg_locs = lg_loc_mngr(db, lgs, gene2hg, max_between, cpus)
@@ -1737,30 +1740,30 @@ def classify_gcfs(
     lg_hg_loci = [lg2hg_locs[k] for k in lg_locs]
     lg_locs = [v for v in lg_locs.values()]
 
-    print('\t\tCalling GCFs', flush = True)
+    print('\t\tCalling HLGs (unfiltered-GCFs)', flush = True)
     lg_lens = [len(v) for v in lg_locs]
 #    print('\t\t\t' + str(sum([len(v) for v in list(clan_loci.values())])) \
     print(f'\t\t\t{sum(lg_lens)}' \
         + ' loci', flush = True)
     print(f'\t\t\t{max(lg_lens)}' \
         + ' loci in LG 0', flush = True)
-    gcfs, gcf_hgxs, gcf_omes, gcf2lg, hgxXloci = refine_group(
+    hlgs, hlg_hgxs, hlg_omes, hlg2dom, hgxXloci = refine_group(
                  db, ome2i, lg_hg_loci, lg_locs,
-                 hg_dir, hgx_dir, wrk_dir, gcf_dir, minid, min_loc_id,
-                 sorensen, inflation_2, tune, min_omes, cpus = cpus, rnd = 2)
-    print('\t\t\t' + str(len(gcfs)) + ' GCFs', flush = True)
+                 hg_dir, hgx_dir, wrk_dir, hlg_dir, minid, min_loc_id,
+                 sorensen, inflation_2, tune, min_omes, 'hlg', cpus = cpus, rnd = 2)
+    print('\t\t\t' + str(len(hlgs)) + ' HLGs', flush = True)
 
-    print('\tExtending incomplete clusters and contig edge clusters', flush = True)
-    gcfs, mod_count, cont_count = extend_loc_mngr(db, gcfs, gcf_hgxs, ome2gene2hg, 
-                                                  hgxXloci, gcf_dir, ext_len = 1,
+    print('\tExtending incomplete loci and contig edge loci', flush = True)
+    hlgs, mod_count, cont_count = extend_loc_mngr(db, hlgs, hlg_hgxs, ome2gene2hg, 
+                                                  hgxXloci, hlg_dir, ext_len = 1,
                                                   min_new_cont = 2, cpus = cpus)
-    print(f'\t\t{mod_count} clusters extended', flush = True)
-    print(f'\t\t{cont_count} clusters merged from contig edges', flush = True)
+    print(f'\t\t{mod_count} loci extended', flush = True)
+    print(f'\t\t{cont_count} loci merged from contig edges', flush = True)
 
     omes2dist = treecalcs.update_dists(
-        phylo, {gcf_hgxs[i]: omes for i, omes in gcf_omes.items()},
+        phylo, {hlg_hgxs[i]: omes for i, omes in hlg_omes.items()},
         cpus = cpus, omes2dist = omes2dist, func = dist_func, 
         uniq_sp = uniq_sp, i2ome = i2ome
         )
 
-    return gcfs, gcf_hgxs, gcf_omes, gcf2lg, omes2dist
+    return hlgs, hlg_hgxs, hlg_omes, hlg2dom, omes2dist

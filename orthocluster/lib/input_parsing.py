@@ -17,6 +17,7 @@ from mycotools.lib.kontools import format_path, eprint, collect_files
 
 # NEED to add new MCL output files to removal
 
+
 def init_log(
     log_file, log_dict
     ):
@@ -32,14 +33,15 @@ def init_log(
                 + f'hgp_percentile\t{log_dict["hgp_percentile"]}\n' \
                 + f'hgx_percentile\t{log_dict["hgx_percentile"]}\n' \
                 + f'aligner\t{log_dict["aligner"]}\n' \
-                + f'gcf_percentile\t{log_dict["gcf_percentile"]}\n' \
+#                + f'hlg_percentile\t{log_dict["hlg_percentile"]}\n' \
                 + f'gene_id\t{log_dict["gene_id"]}\n' \
-                + f'gcf_id\t{log_dict["gcf_id"]}\n' \
-                + f'gcf_sim\t{log_dict["gcf_sim"]}\n' \
-                + f'orig_gcf_id\t{log_dict["gcf_id"]}\n' \
+                + f'hlg_id\t{log_dict["hlg_id"]}\n' \
+                + f'hlg_sim\t{log_dict["hlg_sim"]}\n' \
+                + f'orig_hlg_id\t{log_dict["hlg_id"]}\n' \
                 + f'topology_merge\t{log_dict["topology_merge"]}\n' \
                 + f'min_topology_sim\t{log_dict["min_topology_sim"]}\n' \
-                + f'inflation\t{log_dict["inflation"]}\n' \
+                + f'domain_inflation\t{log_dict["domain_inflation"]}\n' \
+                + f'hlg_inflation\t{log_dict["hlg_inflation"]}\n' \
                 + f'tuning\t{log_dict["tuning"]}\n' \
                 + f'id_percent\t{log_dict["id_percent"]}\n' \
                 + f'pos_percent\t{log_dict["pos_percent"]}\n' \
@@ -62,12 +64,12 @@ def read_log(
             if key not in log_dict: # old feature
                 log_res[key] = False
                 continue
-            elif key == 'orig_gcf_id':
+            elif key == 'orig_hlg_id':
                 if round(float(res) * 100) \
-                   <= round(float(log_dict['gcf_id']) * 100):
+                   <= round(float(log_dict['hlg_id']) * 100):
                    log_res[key] = True
                 else:
-                   log_dict['orig_gcf_id'] = log_dict['gcf_id']
+                   log_dict['orig_hlg_id'] = log_dict['hlg_id']
                    log_res[key] = False
             elif key == 'hgx_percentile':
                 if round(float(res) * 100) > \
@@ -80,9 +82,9 @@ def read_log(
                 else:
                     log_res['hgx_percentile_I'] = True
                     log_res['hgx_percentile_II'] = True
-            elif key == 'gcf_id':
+            elif key == 'hlg_id':
                 continue
-            elif key == 'gcf_sim':
+            elif key == 'hlg_sim':
                 if res.lower() != str(log_dict[key]).lower():
                     log_res[key] = False
                 else:
@@ -93,23 +95,39 @@ def read_log(
                     # if you're tuning and weren't before
                     if log_dict['tuning']:
                         # then the old inflation is irrelevant
-                        log_res['inflation'] = False
-                    # elif you're not tuning, were before, and inflation is the same
-                    elif log_res['inflation']:
+                        log_res['domain_inflation'] = False
+                        log_res['hlg_inflation'] = False
+                    # elif you're not tuning, were before, and inflations are the same
+                    elif log_res['domain_inflation'] and log_res['hlg_inflation']:
                         log_res['tuning'] = True
+                        log_dict['tuning'] = literal_eval(res)
+                    # elif the domain inflation is the same and the hlg is not
+ #                   else:
+#                        log_res['hlg_inflation'] = False
             else:
                 log_res[key] = True
                 if key == 'tuning' and log_dict['tuning']:
-                    if inflation:
-                        log_res['inflation'] = True
+                    if inflation_rnd1:
+                        log_res['domain_inflation'] = True
                     else:
-                        log_res['inflation'] = False
+                        inflation_rnd2 = None
+                        log_res['domain_inflation'] = False
+                    if inflation_rnd2:
+                        log_res['hlg_inflation'] = True
+                    else:
+                        log_res['hlg_inflation'] = False
             # if there's an inflation, tuning is complete
-            if key == 'inflation':
+            if key == 'domain_inflation':
                 if log_dict['tuning']:
-                    inflation = literal_eval(res)
+                    inflation_rnd1 = literal_eval(res)
                 else: # else the inflation is the inflation in the log_dict
-                    inflation = log_dict['inflation']
+                    inflation_rnd1 = log_dict['domain_inflation']
+            elif key == 'hlg_inflation':
+                # if you're tuning 
+                if log_dict['tuning'] and log_res['hlg_inflation']:
+                    inflation_rnd2 = literal_eval(res)
+                else:
+                    inflation_rnd2 = log_dict['hlg_inflation']
              
 
     init_discrep = []
@@ -194,7 +212,7 @@ def read_log(
     try:
         if not log_res['min_topology_sim']:
             init_discrep.append('-ts')
-            log_res['gcf_sim'] = False
+            log_res['hlg_sim'] = False
     except KeyError:
         init_discrep.append('-ts')
     try:
@@ -207,35 +225,43 @@ def read_log(
     try:
         if not log_res['gene_id']:
             init_discrep.append('-mg')
-            log_res['gcf_sim'] = False
+            log_res['hlg_sim'] = False
     except KeyError:
         init_discrep.append('-mg')
     try:
-        if not log_res['gcf_sim']:
+        if not log_res['hlg_sim']:
             init_discrep.append('-s')
-            log_res['orig_gcf_id'] = False
+            log_res['orig_hlg_id'] = False
     except KeyError:
         init_discrep.append('-s')
     try:
-        if not log_res['orig_gcf_id']:
+        if not log_res['orig_hlg_id']:
             init_discrep.append('-ml')
-            log_res['inflation'] = False
+            log_res['domain_inflation'] = False
     except KeyError:
         init_discrep.append('-ml')
     try:
-        if not log_res['inflation']:
-            init_discrep.append('-I/-T')
-            log_res['gcf_percentile'] = False
+        if not log_res['domain_inflation']:
+            init_discrep.append('-I2/-T')
+            log_res['hlg_inflation'] = False
     except KeyError:
-        init_discrep.append('-I/-T')
+        init_discrep.append('-I1/-T')
         print('\nERROR: corrupted log.txt.' + \
             '\nIf not rectified, future runs will completely overwrite the current\n')
         sys.exit(149)
     try:
-        if not log_res['gcf_percentile']:
-            init_discrep.append('-fp')
+        if not log_res['hlg_inflation']:
+            init_discrep.append('-I2/-T')
+#            log_res['hlg_percentile'] = False
     except KeyError:
-        init_discrep.append('-fp')
+        init_discrep.append('-I2/-T')
+        print('\nERROR: corrupted log.txt\nFuture runs may overwrite the current\n')
+        sys.exit(149)
+#    try:
+ #       if not log_res['hlg_percentile']:
+  #          init_discrep.append('-fp')
+   # except KeyError:
+    #    init_discrep.append('-fp')
 
     # stop gap for legacy data
     if 'hg_dir' not in log_res:
@@ -243,7 +269,7 @@ def read_log(
     if 'hgx_dir' not in log_res:
         log_res['hgx_dir'] = True
 
-    return log_res, inflation, init_discrep
+    return log_res, inflation_rnd1, inflation_rnd2, init_discrep
 
 
 def rm_old_data(
@@ -278,9 +304,9 @@ def rm_old_data(
         if done_file:
             os.remove(done_file[0])
     if not log_res['hgx_percentile_II']:
-        gcf_dir = wrk_dir + 'gcf/'
-        if os.path.isdir(gcf_dir):
-            todel.append(gcf_dir)
+        hlg_dir = wrk_dir + 'hlg/'
+        if os.path.isdir(hlg_dir):
+            todel.append(hlg_dir)
         groups = ['group.I', 'group.II']
         for group in groups:
              if os.path.isfile(f'{wrk_dir}{group}.pickle'):
@@ -294,40 +320,44 @@ def rm_old_data(
         for group in groups:
              if os.path.isfile(f'{wrk_dir}{group}.pickle'):
                  os.remove(f'{wrk_dir}{group}.pickle')       
+        todel.append(f'{wrk_dir}hlg/')
     if not log_res['aligner']:
         hgx_dir = f'{wrk_dir}hgx/'
         eprint('\tWARNING: alignment software changed, old alignments retained:', flush = True)
         eprint(f'\t\t{hgx_dir}', flush = True)
  #       shutil.rmtree(hgx_dir)
-    if not log_res['orig_gcf_id']:
-        gcf_dir = f'{wrk_dir}gcf/'
-        adj_rows = collect_files(gcf_dir, 'tmp.w')
-        adj_rows.extend(collect_files(gcf_dir, 'tmp.r'))
-        adj_rows.extend(collect_files(gcf_dir, 'tmp'))
-        row_file = wrk_dir + 'gcf/loci.adj'
-        mci_file = wrk_dir + 'gcf/loci.mci'
-        mcl_rows = wrk_dir + 'gcf/mcl_rows.tsv'
+    if not log_res['orig_hlg_id']:
+        hlg_dir = f'{wrk_dir}hlg/'
+        adj_rows = collect_files(hlg_dir, 'tmp.w')
+        adj_rows.extend(collect_files(hlg_dir, 'tmp.r'))
+        adj_rows.extend(collect_files(hlg_dir, 'tmp'))
+        row_file = wrk_dir + 'hlg/loci.adj'
+        mci_file = wrk_dir + 'hlg/loci.mci'
+        mcl_rows = wrk_dir + 'hlg/mcl_rows.tsv'
         for f in [row_file, mci_file, mcl_rows]:
             if os.path.isfile(f):
                 todel.append(f)
+
+    if not log_res['hlg_inflation']:
+        hlgs_file = f'{wrk_dir}hlgs.pickle'
+        if os.path.isfile(hlgs_file):
+            os.remove(hlgs_file)
+        mcl_res = f'{wrk_dir}hlg/loci.clus'
+        tosave.extend([mcl_res, mcl_res + '.tmp'])
         hgx_files = ['hgx2omes2gcc.full.pickle',
-                     'hgx2omes2id.full.pickle']#,
-#                     'hgx2omes2pos.full.pickle']
+                     'hgx2omes2id.full.pickle',
+                     'hgx2omes2pos.full.pickle']
         for file_ in hgx_files:
             if os.path.isfile(f'{wrk_dir}{file_}'):
                 os.remove(f'{wrk_dir}{file_}')
 
-    if not log_res['inflation']:
-        gcfs_file = f'{wrk_dir}gcfs.pickle'
-        if os.path.isfile(gcfs_file):
-            os.remove(gcfs_file)
-        mcl_res = f'{wrk_dir}gcf/loci.clus'
-        tosave.extend([mcl_res, mcl_res + '.tmp'])
-    if not log_res['gcf_percentile']:
-        clus_file = out_dir + 'gcfs.tsv.gz'
+#    if not log_res['hlg_percentile']:
+        hlg_output = out_dir + 'hlgs.tsv.gz'
+        gcf_output = out_dir + 'gcfs.tsv.gz'
         kern_file = out_dir + 'hgxs.tsv.gz'
         ome_dir = out_dir + 'ome/'
-        hmm_dir = wrk_dir + 'hmm/'
+        ann_dir = wrk_dir + 'ann/'
+        tosave.extend([hlg_output, gcf_file])
         if os.path.isdir(ome_dir):
             count = 0
             save_dir = f'{out_dir}run{count}/'
@@ -336,28 +366,38 @@ def rm_old_data(
                 save_dir = f'{out_dir}run{count}/'
             os.mkdir(save_dir)
             os.mkdir(save_dir + 'working/')
-            os.mkdir(save_dir + 'working/gcf/')
+            os.mkdir(save_dir + 'working/hlg/')
+            os.mkdir(save_dir + 'working/hlg/lg')
             shutil.move(ome_dir, save_dir)
             if os.path.isfile(kern_file):
                 shutil.copy(kern_file, save_dir + os.path.basename(kern_file))
-            if os.path.isfile(clus_file):
-                shutil.move(clus_file, save_dir + os.path.basename(clus_file))
+            if os.path.isfile(hlg_output):
+                shutil.move(hlg_output, save_dir + os.path.basename(clus_file))
+            if os.path.isfile(out_dir + 'hlgs.html'):
+                shutil.move(out_dir + 'hlgs.html', save_dir + 'hlgs.html')
+            if os.path.isfile(out_dir + 'hlg_metrics.html'):
+                shutil.move(out_dir + 'hlg_metrics.html', 
+                            save_dir + 'hlg_metrics.html')
+            if os.path.isfile(gcf_output):
+                shutil.move(gcf_output, save_dir + os.path.basename(clus_file))
             if os.path.isfile(out_dir + 'gcfs.html'):
                 shutil.move(out_dir + 'gcfs.html', save_dir + 'gcfs.html')
-            if os.path.isfile(out_dir + 'metrics.html'):
-                shutil.move(out_dir + 'metrics.html', save_dir + 'metrics.html')
+            if os.path.isfile(out_dir + 'gcf_metrics.html'):
+                shutil.move(out_dir + 'gcf_metrics.html', 
+                            save_dir + 'gcf_metrics.html')
+
             shutil.move(out_dir + 'log.txt', save_dir + 'log.txt')
-            for f in collect_files(f'{wrk_dir}gcf/', '*'):
-                shutil.copy(f, f'{save_dir}working/gcf/{os.path.basename(f)}')
+            for f in collect_files(f'{wrk_dir}hlg/', '*'):
+                shutil.copy(f, f'{save_dir}working/hlg/{os.path.basename(f)}')
+            for f in collect_files(f'{wrk_dir}hlg/lg/', '*'):
+                shutil.copy(f, f'{save_dir}working/hlg/lg/{os.path.basename(f)}')
+
         else:
             if os.path.isfile(clus_file):
                 os.remove(clus_file)
     
         if os.path.isdir(hmm_dir):
             shutil.rmtree(hmm_dir)
-        clusOG_f = f'{wrk_dir}clus_hgs.pickle'
-        if os.path.isfile(clusOG_f):
-            os.remove(clusOG_f)
         if os.path.isdir(f'{out_dir}net/'):
             shutil.move(f'{out_dir}net/', f'{save_dir}net/')
 
@@ -402,7 +442,7 @@ def log_check(log_dict, log_path, out_dir, wrk_dir, flag = True):
         except KeyError:
             eprint('\nWARNING: missing log, rerunning without deleting', flush = True)
         init_log(log_path, log_dict)
-    log_res, inflation, init_discrep = read_log(log_path, log_dict)
+    log_res, inflation_1, inflation_2, init_discrep = read_log(log_path, log_dict)
     if any(not log_res[x] for x in log_res):
         failed = set([x for x, v in log_res.items() if not v])
         for skip in ['patch_threshold', 'gcc_threshold',
@@ -426,7 +466,7 @@ def log_check(log_dict, log_path, out_dir, wrk_dir, flag = True):
             print(f'\nGCF thresholds changed; outputting new results', flush = True)
             init_log(log_path, log_dict)
     
-    return log_res, inflation
+    return log_res, inflation_1, inflation_2
 
 
 def compileCDS(gff_list, ome):
@@ -756,10 +796,11 @@ def sha_tune_file(tune_file):
 
 
 def init_run(db, out_dir, near_single_copy_genes, constraint_path,
-             tree_path, hg_file, plusminus, seed_perc, clus_perc,
+             tree_path, hg_file, plusminus, seed_perc,# clus_perc,
              hgx_perc, aligner, id_perc, pos_perc,
              patch_thresh, gcc_thresh,
-             samples, n50thresh, flag, min_gene_id, min_gcf_id, inflation, simfun,
+             samples, n50thresh, flag, min_gene_id, min_hlg_id, inflation_rnd1, 
+             inflation_rnd2, simfun,
              tune_file, dist_type, uniq_sp, partition, min_topology_sim,
              topology_merge, hg_dir, hgx_dir):
 
@@ -790,17 +831,18 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
         'uniq_sp': bool(uniq_sp),
         'hgp_percentile': seed_perc, 'hgx_percentile': hgx_perc, 
         'aligner': aligner, 'gene_id': min_gene_id,
-        'orig_gcf_id': None, 'gcf_id': min_gcf_id, 'gcf_sim': str(simfun).lower(),
-        'gcf_percentile': clus_perc, 'id_percent': id_perc,
-        'pos_percent': pos_perc, 
+        'orig_hlg_id': None, 'hlg_id': min_hlg_id, 'hlg_sim': str(simfun).lower(),
+#        'hlg_percentile': clus_perc, 
+        'id_percent': id_perc, 'pos_percent': pos_perc, 
         'patch_threshold': patch_thresh,
-        'gcc_threshold': gcc_thresh, 'inflation': inflation,
+        'gcc_threshold': gcc_thresh, 'domain_inflation': inflation_rnd1,
+        'hlg_inflation': inflation_rnd2,
         'tuning': tune_sha, 'partition': partition, 
         'topology_merge': topology_merge, 'min_topology_sim': min_topology_sim,
         'null_samples': samples, 'n50': n50thresh, 'hg_dir': hg_dir,
         'hgx_dir': hgx_dir}
 
-    log_res, inflation = log_check(log_dict, log_path, out_dir, wrk_dir, flag)
+    log_res, inflation_1, inflation_2 = log_check(log_dict, log_path, out_dir, wrk_dir, flag)
 
     # symlink files on an individual basis so the new dir is writeable without
     # propagating new changes back to the reference dir
