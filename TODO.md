@@ -7,6 +7,7 @@
 - [ ] Update intro page
 - [ ] Update LICENSE to GNU 3
 - [ ] Add issue format
+- [ ] Mirror with GitHub
 
 ## Algorithm improvements
 - [ ] Account for tandem dup HGs
