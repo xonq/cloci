@@ -27,7 +27,7 @@ def addPatch(phylo, omes_set):
             total += addPatch(sphylo, omes_set)
     return total
 
-def calc_patchiness(phylo, omes):
+def calc_pdd(phylo, omes):
     """calculate the percent branch length that a trait is missing over the
     MRCA of where the trait is present"""
     omes_set = set(omes)
@@ -51,11 +51,11 @@ def calc_patchiness(phylo, omes):
 
 def patch_main(
     phylo, omes, wrk_dir,
-    old_path = 'patchiness.scores.pickle', cpus = 1
+    old_path = 'pdd.scores.pickle', cpus = 1
     ):
 
     if os.path.isfile(wrk_dir + old_path):
-        print('\tLoading previous patchiness results', flush = True)
+        print('\tLoading previous pdd results', flush = True)
         with open(wrk_dir + old_path, 'rb') as in_pick:
             omes2patch = pickle.load(in_pick)
     else:
@@ -68,13 +68,13 @@ def patch_main(
     if clusOmes:
         with mp.get_context('fork').Pool(processes = cpus) as pool:
             patch_res = pool.starmap(
-                calc_patchiness, tqdm([(phylo, x) for x in clusOmes],
+                calc_pdd, tqdm([(phylo, x) for x in clusOmes],
                                                  total = len(clusOmes))
                 )
             pool.close()
             pool.join()
         omes2patch = {**omes2patch,
-                      **{ome_tup: patchiness for ome_tup, patchiness in patch_res}}
+                      **{ome_tup: pdd for ome_tup, pdd in patch_res}}
         with open(wrk_dir + old_path, 'wb') as out:
             pickle.dump(omes2patch, out)
     
