@@ -19,8 +19,8 @@ warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
 from itertools import combinations, chain
 from mycotools.lib.biotools import gff2list
 from mycotools.lib.kontools import write_json, collect_files, read_json
-from orthocluster.orthocluster.lib import treecalcs
-from orthocluster.orthocluster.lib.input_parsing import compileCDS
+from cloci.cloci.lib import treecalcs
+from cloci.cloci.lib.input_parsing import compileCDS
 
 def form_hgpDict(out_hgs):
 
