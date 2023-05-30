@@ -589,8 +589,8 @@ def output_hgxs(hgx2dist, hgx2omes, hgx2i, i2ome, out_dir):
 
 def write_hlgs_txt_wpos(hlg_hgxs, hlg_omes, logg2d, 
                         hlg2clan, omes2patch, 
-                        hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, i2ome,
-                        out_dir, group_name):
+                        hgx2omes2gcl, hgx2omes2id, hgx2omes2pos, i2ome,
+                        lut_dir, group_name):
     hlg_output = []
     for i, omesc in hlg_omes.items():
         hlg_hgx = hlg_hgxs[i]
@@ -598,7 +598,7 @@ def write_hlgs_txt_wpos(hlg_hgxs, hlg_omes, logg2d,
             hlg_output.append([
                 ','.join([str(x) for x in hlg_hgx]), i, hlg2clan[i],
                 logg2d[omesc], omes2patch[omesc], 
-                hgx2omes2gcc[hlg_hgx][omesc],
+                hgx2omes2gcl[hlg_hgx][omesc],
                 hgx2omes2id[hlg_hgx][omesc], hgx2omes2pos[hlg_hgx][omesc],
                 100 * (1 - (hgx2omes2id[hlg_hgx][omesc]/hgx2omes2pos[hlg_hgx][omesc])), 
                 ','.join([str(i2ome[x]) for x in omesc])#,
@@ -608,7 +608,7 @@ def write_hlgs_txt_wpos(hlg_hgxs, hlg_omes, logg2d,
             hlg_output.append([
                 ','.join([str(x) for x in hlg_hgx]), i, hlg2clan[i],
                 logg2d[omesc], omes2patch[omesc], 
-                hgx2omes2gcc[hlg_hgx][omesc],
+                hgx2omes2gcl[hlg_hgx][omesc],
                 hgx2omes2id[hlg_hgx][omesc], hgx2omes2pos[hlg_hgx][omesc],
                 0, ','.join([str(i2ome[x]) for x in omesc])#,
          #        dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
@@ -618,7 +618,7 @@ def write_hlgs_txt_wpos(hlg_hgxs, hlg_omes, logg2d,
                 hlg_output.append([
                    ','.join([str(x) for x in hlg_hgx]), i, hlg2clan[i],
                    logg2d[omesc], omes2patch[omesc], 
-                   hgx2omes2gcc[hlg_hgx][omesc],
+                   hgx2omes2gcl[hlg_hgx][omesc],
                    hgx2omes2id[hlg_hgx][omesc], 'na', 'na',
                    ','.join([str(i2ome[x]) for x in omesc])#,
             #        dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
@@ -628,8 +628,8 @@ def write_hlgs_txt_wpos(hlg_hgxs, hlg_omes, logg2d,
 
     hlg_output = sorted(hlg_output, key = lambda x: x[3], reverse = True)
     with gzip.open(out_dir + f'{group_name}s.tsv.gz', 'wt') as out:
-        out.write(f'#hgs\t{group_name}\thlc\tnrm_log_tmd\tpdd' \
-                + '\tgcc\tmmi\tmmp\tcsb\tomes') #\tmmp\tomes') #+ \
+        out.write(f'#hgs\t{group_name}\thlc\tnrm_log_tmd\tpds' \
+                + '\tgcl\tmmi\tmmp\tcsb\tomes') #\tmmp\tomes') #+ \
             #'selection_coef\tmean_dnds\tog_dnds\t' + \
          #   'total_dist'
 #            )
@@ -639,7 +639,7 @@ def write_hlgs_txt_wpos(hlg_hgxs, hlg_omes, logg2d,
 
 def write_hlgs_txt_wopos(hlg_hgxs, hlg_omes, logg2d, 
                         hlg2clan, omes2patch, 
-                        hgx2omes2gcc, hgx2omes2id, i2ome,
+                        hgx2omes2gcl, hgx2omes2id, i2ome,
                         out_dir, group_name):
     hlg_output = []
     for i, hlg_hgx in hlg_hgxs.items():
@@ -647,7 +647,7 @@ def write_hlgs_txt_wopos(hlg_hgxs, hlg_omes, logg2d,
         hlg_output.append([
             ','.join([str(x) for x in hlg_hgx]), i, hlg2clan[i],
             logg2d[omesc], omes2patch[omesc], 
-            hgx2omes2gcc[hlg_hgx][omesc],
+            hgx2omes2gcl[hlg_hgx][omesc],
             hgx2omes2id[hlg_hgx][omesc],
             ','.join([str(i2ome[x]) for x in omesc])#,
      #        dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
@@ -655,8 +655,8 @@ def write_hlgs_txt_wopos(hlg_hgxs, hlg_omes, logg2d,
 
     hlg_output = sorted(hlg_output, key = lambda x: x[3], reverse = True)
     with gzip.open(out_dir + f'{group_name}s.tsv.gz', 'wt') as out:
-        out.write(f'#hgs\t{group_name}\thlc\tnrm_log_tmd\tpdd' \
-                + '\tgcc\tmmi\tomes') #\tmmp\tomes') #+ \
+        out.write(f'#hgs\t{group_name}\thlc\tnrm_log_tmd\tpds' \
+                + '\tgcl\tmmi\tomes') #\tmmp\tomes') #+ \
             #'selection_coef\tmean_dnds\tog_dnds\t' + \
          #   'total_dist'
 #            )
@@ -691,11 +691,11 @@ def threshold_hlg_by_dist(logg2d, dist_thresh, hlgs, hlg_hgxs, hlg_omes, omes2di
         return hlgs, hlg_omes, hlg_hgxs
 
 
-def threshold_hlg_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, csb_thresh, hlgs,
-                       hlg_hgxs, hlg_omes, omes2patch, hgx2omes2gcc,
+def threshold_hlg_wpos(gcl_thresh, patch_thresh, id_perc, pos_perc, csb_thresh, hlgs,
+                       hlg_hgxs, hlg_omes, omes2patch, hgx2omes2gcl,
                        hgx2omes2id, hgx2omes2pos):
 
-    if any(x > 0 for x in [gcc_thresh, patch_thresh, id_perc, pos_perc, csb_thresh]):
+    if any(x > 0 for x in [gcl_thresh, patch_thresh, id_perc, pos_perc, csb_thresh]):
         gcfs, gcf_omes, gcf_hgxs = {}, {}, {}
         for hlg, locs in hlgs.items():
             check = False # have we added a new list
@@ -703,13 +703,13 @@ def threshold_hlg_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, csb_thresh, 
             omesc = hlg_omes[hlg]
             try:
                 patch = omes2patch[omesc]
-                gcc = hgx2omes2gcc[hgxc][omesc]
+                gcl = hgx2omes2gcl[hgxc][omesc]
                 id_, pos = hgx2omes2id[hgxc][omesc], hgx2omes2pos[hgxc][omesc]
                 if pos != 0 and id_ != 0:
                     csb = (1 - (id_/pos))
                 else:
                     csb = 0
-                if gcc >= gcc_thresh \
+                if gcl >= gcl_thresh \
                     and patch >= patch_thresh \
                     and id_ >= id_perc \
                     and pos >= pos_perc \
@@ -718,7 +718,7 @@ def threshold_hlg_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, csb_thresh, 
                     gcf_omes[hlg] = omesc
                     gcf_hgxs[hlg] = hgxc
             except TypeError:
-                 if hgx2omes2gcc[hgxc][omesc] >= gcc_thresh \
+                 if hgx2omes2gcl[hgxc][omesc] >= gcl_thresh \
                     and omes2patch[omesc] >= patch_thresh \
                     and hgx2omes2id[hgxc][omesc] >= id_perc:
                     gcfs[hlg] = locs
@@ -728,17 +728,17 @@ def threshold_hlg_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, csb_thresh, 
     else:
         return hlgs, hlg_omes, hlg_hgxs
 
-def threshold_hlg_wopos(gcc_thresh, patch_thresh, id_perc, hlgs,
+def threshold_hlg_wopos(gcl_thresh, patch_thresh, id_perc, hlgs,
                        hlg_hgxs, hlg_omes, omes2patch,
-                       hgx2omes2gcc, hgx2omes2id):
-    if any(x > 0 for x in [gcc_thresh, patch_thresh, id_perc]):
+                       hgx2omes2gcl, hgx2omes2id):
+    if any(x > 0 for x in [gcl_thresh, patch_thresh, id_perc]):
         print('\tApplying thresholds', flush = True)
         print('\t\t' + str(len(hlgs)) + ' HLGs before', flush = True)
         gcfs, gcf_omes, gcf_hgxs = {}, {}, {}
         for hlg, locs in hlgs.items():
             hgxc = hlg_hgxs[hlg]
             omesc = hlg_omes[hlg]
-            if hgx2omes2gcc[hgxc][omesc] >= gcc_thresh \
+            if hgx2omes2gcl[hgxc][omesc] >= gcl_thresh \
                 and omes2patch[omesc] >= patch_thresh \
                 and hgx2omes2id[hgxc][omesc] >= id_perc:
                 gcfs[hlg] = locs
@@ -750,31 +750,31 @@ def threshold_hlg_wopos(gcc_thresh, patch_thresh, id_perc, hlgs,
         return hlgs, hlg_omes, hlg_hgxs
 
 
-def output_thresholds(logg2d, dist_thresh, gcc_thresh, patch_thresh, id_perc, pos_perc,
+def output_thresholds(logg2d, dist_thresh, gcl_thresh, patch_thresh, id_perc, pos_perc,
                       csb_thresh, hlgs, hlg_hgxs, hlg_omes, omes2dist, omes2patch, hlg2clan,
-                      hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, out_dir, i2ome):
+                      hgx2omes2gcl, hgx2omes2id, hgx2omes2pos, out_dir, i2ome):
     print(f'\tFiltering HLGs for GCFs', flush = True)
     print('\tApplying thresholds', flush = True)
     print('\t\t' + str(len(hlgs)) + ' HLGs before', flush = True)
     hlgs, hlg_omes, hlg_hgxs = threshold_hlg_by_dist(logg2d, dist_thresh, hlgs, hlg_hgxs,
                                                      hlg_omes, omes2dist)
     if hgx2omes2pos:
-        gcfs, gcf_omes, gcf_hgxs = threshold_hlg_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc,
+        gcfs, gcf_omes, gcf_hgxs = threshold_hlg_wpos(gcl_thresh, patch_thresh, id_perc, pos_perc,
                                           csb_thresh, hlgs, hlg_hgxs, hlg_omes, omes2patch,
-                                          hgx2omes2gcc, hgx2omes2id, hgx2omes2pos)
+                                          hgx2omes2gcl, hgx2omes2id, hgx2omes2pos)
         gcf_output = write_hlgs_txt_wpos(gcf_hgxs, gcf_omes, logg2d, 
                             hlg2clan, omes2patch, 
-                            hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, i2ome,
+                            hgx2omes2gcl, hgx2omes2id, hgx2omes2pos, i2ome,
                             out_dir, 'gcf')
 
     else:
-        gcfs, gcf_omes, gcf_hgxs = threshold_gcf_wopos(gcc_thresh, patch_thres, 
+        gcfs, gcf_omes, gcf_hgxs = threshold_gcf_wopos(gcl_thresh, patch_thres, 
                                            id_perc, gcfs,
                                            gcf_hgxs, gcf_omes, omes2patch,
-                                           hgx2omes2gcc, hgx2omes2id)
+                                           hgx2omes2gcl, hgx2omes2id)
         gcf_output = write_hlgs_txt_wopos(gcf_hgxs, gcf_omes, logg2d, 
                             hlg2clan, omes2patch, 
-                            hgx2omes2gcc, hgx2omes2id, i2ome,
+                            hgx2omes2gcl, hgx2omes2id, i2ome,
                             out_dir, 'gcf')
 
 
@@ -830,7 +830,7 @@ def output_figures(hlg_output, prefix, out_dir):
 
 
 def threshold_gcf_bypass(db, out_dir, wrk_dir, i2ome, gene2hg,
-                         dist_thresh, gcc_thresh, patch_thresh,
+                         dist_thresh, gcl_thresh, patch_thresh,
                          id_perc, pos_perc, csb_thresh, ipr_path,
                          pfam_path, cpus = 1):
 
@@ -838,11 +838,11 @@ def threshold_gcf_bypass(db, out_dir, wrk_dir, i2ome, gene2hg,
     with open(wrk_dir + 'hlgs.pickle', 'rb') as raw:
         hlgs, hlg_omes, hlg_hgxs, hlg2clan = pickle.load(raw)
 
-    with open(wrk_dir + 'pdd.full.pickle', 'rb') as in_pick:
+    with open(wrk_dir + 'pds.full.pickle', 'rb') as in_pick:
         omes2patch = pickle.load(in_pick)
 
-    with open(wrk_dir + 'gcc.pickle', 'rb') as pickin:
-        hgx2omes2gcc = pickle.load(pickin)
+    with open(wrk_dir + 'gcl.pickle', 'rb') as pickin:
+        hgx2omes2gcl = pickle.load(pickin)
     with open(wrk_dir + 'mmi.pickle', 'rb') as pickin:
         hgx2omes2id = pickle.load(pickin)
     if os.path.isfile(wrk_dir + 'mmp.pickle'):
@@ -856,9 +856,9 @@ def threshold_gcf_bypass(db, out_dir, wrk_dir, i2ome, gene2hg,
 
     logg2d = calc_logg2d(hlg_omes, omes2dist)
     gcf_output, gcfs, gcf_omes, gcf_hgxs = output_thresholds(logg2d, dist_thresh, 
-                      gcc_thresh, patch_thresh, id_perc, pos_perc, csb_thresh,
+                      gcl_thresh, patch_thresh, id_perc, pos_perc, csb_thresh,
                       hlgs, hlg_hgxs, hlg_omes, omes2dist, omes2patch, hlg2clan,
-                      hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, out_dir, i2ome)
+                      hgx2omes2gcl, hgx2omes2id, hgx2omes2pos, out_dir, i2ome)
     output_figures(gcf_output, 'gcf', out_dir)
 
     
@@ -942,8 +942,8 @@ def annotation_mngr(hlg_genes, db, wrk_dir, pfam_path, ipr_path,
 
 
 def output_hlgs(db, wrk_dir, hlgs, hlg_omes, i2ome, out_dir, hlg_hgxs,
-         omes2dist, omes2patch, hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, 
-         gene2hg, plusminus, ome2i, hlg2clan, dist_thresh, gcc_thresh,
+         omes2dist, omes2patch, hgx2omes2gcl, hgx2omes2id, hgx2omes2pos, 
+         gene2hg, plusminus, ome2i, hlg2clan, dist_thresh, gcl_thresh,
          patch_thresh, id_perc, pos_perc, csb_thresh, ipr_path = None,
          pfam_path = None, dnds_dict = {}, cpus = 1):
 
@@ -953,20 +953,20 @@ def output_hlgs(db, wrk_dir, hlgs, hlg_omes, i2ome, out_dir, hlg_hgxs,
     if hgx2omes2pos:
         hlg_output = write_hlgs_txt_wpos(hlg_hgxs, hlg_omes, logg2d, 
                             hlg2clan, omes2patch, 
-                            hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, i2ome,
+                            hgx2omes2gcl, hgx2omes2id, hgx2omes2pos, i2ome,
                             out_dir, 'hlg')
     else:
         hlg_output = write_hlgs_txt_wopos(hlg_hgxs, hlg_omes, logg2d, 
                             hlg2clan, omes2patch, 
-                            hgx2omes2gcc, hgx2omes2id, i2ome,
+                            hgx2omes2gcl, hgx2omes2id, i2ome,
                             out_dir, 'hlg')
 
-    if dist_thresh or gcc_thresh or patch_thresh or id_perc or pos_perc:
+    if dist_thresh or gcl_thresh or patch_thresh or id_perc or pos_perc:
         gcf_output, gcfs, gcf_omes, gcf_hgxs = output_thresholds(logg2d, 
-                                   dist_thresh, gcc_thresh, patch_thresh, 
+                                   dist_thresh, gcl_thresh, patch_thresh, 
                                    id_perc, pos_perc, csb_thresh, hlgs, hlg_hgxs, 
                                    hlg_omes, omes2dist, omes2patch, hlg2clan,
-                                   hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, 
+                                   hgx2omes2gcl, hgx2omes2id, hgx2omes2pos, 
                                    out_dir, i2ome)
     else:
         gcf_output, gcfs, gcf_omes, gcf_hgxs = None, hlgs, hlg_omes, hlg_hgxs

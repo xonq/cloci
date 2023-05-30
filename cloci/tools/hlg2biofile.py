@@ -8,7 +8,7 @@ from itertools import chain
 from collections import defaultdict
 from mycotools.acc2gbk import ome_main as acc2gbk
 from mycotools.acc2gff import gffMain as acc2gff
-from mycotools.lib.dbtools import masterDB, mtdb
+from mycotools.lib.dbtools import primaryDB, mtdb
 from mycotools.lib.biotools import gff2list, fa2dict, list2gff, dict2fa
 from mycotools.lib.kontools import stdin2str, format_path, eprint
 
@@ -20,7 +20,7 @@ def parse_hlgtsv(hlg_tsv):
             for line in raw:
                 if not line.startswith('#'):
                     d = line.rstrip().split()
-                    hgs_s, hlg_s, hlc_s, tmd_s, p_s, g_s, mi_s, mp_s, o_s = d
+                    hgs_s, hlg_s, hlc_s, tmd_s, p_s, g_s, mi_s, mp_s, ippr_s, o_s = d
                     hlg, omes = int(hlg_s), o_s.split(',')
                     hlg2omes[hlg] = omes
 
@@ -75,7 +75,11 @@ def compile_ome_gffs(row, ome, hlg2genes, out_dir, by_ome = False, gbks = False,
                         out.write(list2gff(gff))
             
     if gbks:
-        hlg2gbks = acc2gbk(ome, hlg2gffs, row)
+        try:
+            hlg2gbks = acc2gbk(ome, hlg2gffs, row)
+        except KeyError:
+            eprint(f'\tERROR: {ome} discrepancy between GFF and FAA', flush = True)
+            hlg2gbks = {}
         for hlg, gbks in hlg2gbks.items():
             for i, gbk in enumerate(gbks):
                 gbk_data = gbk[list(gbk.keys())[0]]
@@ -137,10 +141,15 @@ def main(db, clo_dir, out_dir, omes = [], hlgs = [], gcf_output = False,
 
     if make_gbk or make_gff:
         print(f'\nGenerating GFFs/GBKs', flush = True)
-        with mp.Pool(processes = cpus) as pool:
-            pool.starmap(compile_ome_gffs, 
-                         tqdm(((db[ome], ome, hlg2genes, out_dir, bool(omes), make_gbk, make_gff) \
-                          for ome, hlg2genes in ome_res), total = len(ome_res)))
+        if cpus > 1:
+            with mp.Pool(processes = cpus) as pool:
+                pool.starmap(compile_ome_gffs, 
+                             tqdm(((db[ome], ome, hlg2genes, out_dir, bool(omes), make_gbk, make_gff) \
+                              for ome, hlg2genes in ome_res if hlg2genes), total = len(ome_res)))
+        else:
+            for ome, hlg2genes in ome_res:
+                if hlg2genes:
+                    compile_ome_gffs(db[ome], ome, hlg2genes, out_dir, bool(omes), make_gbk, make_gff)
     if make_faa:
         print(f'\nGenerating protein fastas', flush = True)
         with mp.Pool(processes = cpus) as pool:
@@ -159,8 +168,8 @@ if __name__ == '__main__':
     in_opt.add_argument('-g', '--gcf', action = 'store_true', help = 'Generate files for GCFs')
     in_opt.add_argument('-o', '--ome', help = 'Generate files for all ome(s) HLG/GCFs')
     in_opt.add_argument('--hlg', help = 'Generate files for specific HLG/GCF(s)')
-    in_opt.add_argument('-d', '--mtdb', help = 'Reference MTDB; DEFAULT: masterDB',
-                        default = masterDB())
+    in_opt.add_argument('-d', '--mtdb', help = 'Reference MTDB; DEFAULT: primaryDB',
+                        default = primaryDB())
 
     out_opt = parser.add_argument_group('Output parameters')
     out_opt.add_argument('--gbk', action = 'store_true', 
@@ -223,9 +232,9 @@ if __name__ == '__main__':
             print('\nOutputting HLGs for omes', flush = True)
     elif args.hlg:
         if in_data:
-            hlgs = [int(x) for x in in_data.replace('"', '').replace("'", '').split().split(',')]
+            hlgs = [int(x) for x in in_data.replace('"', '').replace("'", '').split()]
         else:
-            hlgs = [int(args.hlg.replace('"', '').replace('"', ''))]
+            hlgs = [int(x) for x in args.hlg.replace('"', '').replace('"', '').split()]
         if args.gcf:
             print('\nOutputting specified GCFs', flush = True)
         else:

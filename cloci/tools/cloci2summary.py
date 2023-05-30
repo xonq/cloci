@@ -2,7 +2,7 @@
 
 import os, sys, argparse, multiprocessing as mp
 from mycotools.lib.kontools import format_path, collect_files
-from mycotools.lib.dbtools import mtdb, masterDB
+from mycotools.lib.dbtools import mtdb, primaryDB
 
 def CalcMeanMedian(genesPerClus):
 
@@ -19,7 +19,7 @@ def CalcMeanMedian(genesPerClus):
 
     return meanGpC, medianGpC
 
-def GrabGenes_og2clus(info_path):
+def GrabGenes_cloci(info_path):
     genes, gene2cluster, genesPerClus = [], {}, []
     with open(info_path, 'r') as raw:
         for line in raw:
@@ -59,8 +59,8 @@ def GrabGenes_antismash(gbks):
 
     return set(genes), gene2cluster, meanGpC, medianGpC
 
-def GrabHits(og2clusGenes, antismashGenes, gene2cluster):
-    intersection = og2clusGenes.intersection(antismashGenes)
+def GrabHits(clociGenes, antismashGenes, gene2cluster):
+    intersection = clociGenes.intersection(antismashGenes)
 
     hits = []
     for gene in list(intersection):
@@ -68,11 +68,11 @@ def GrabHits(og2clusGenes, antismashGenes, gene2cluster):
 
     return list(set(hits))
 
-def OmeClusMngr(ome, og2clus_dir, as_dir):
+def OmeClusMngr(ome, cloci_dir, as_dir):
     print(ome, flush = True)
     try:
-        o2cGenes, o2cGene2Cluster, o2cMean, o2cMedian = GrabGenes_og2clus(
-            og2clus_dir + 'ome/' + ome + '/info.out'
+        o2cGenes, o2cGene2Cluster, o2cMean, o2cMedian = GrabGenes_cloci(
+            cloci_dir + 'ome/' + ome + '/info.out'
             )
     except IndexError: # failed
         return
@@ -143,29 +143,29 @@ def WriteStatResults(results, out_file):
                 str(x) for x in d
                 ]) + '\n')
 
-def CalcClusterStats(db, og2clus_dir, as_dir, cpus = 1):
+def CalcClusterStats(db, cloci_dir, as_dir, cpus = 1):
     calcStats_cmds = []
     for ome in db.set_index():
-        if os.path.isdir(og2clus_dir + 'ome/' + ome):
+        if os.path.isdir(cloci_dir + 'ome/' + ome):
             calcStats_cmds.append(
-                [ome, og2clus_dir, as_dir]
+                [ome, cloci_dir, as_dir]
                 )
 
     with mp.Pool(processes = cpus) as pool:
         res = pool.starmap(OmeClusMngr, calcStats_cmds)
 
-    WriteStatResults(res, og2clus_dir + 'stats.tsv')
+    WriteStatResults(res, cloci_dir + 'stats.tsv')
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description = 'Summarize og2clus output')
-    parser.add_argument('-d', '--db', default = masterDB())
-    parser.add_argument('-o2c', '--og2clus', required = True, help = 'og2clus directory')
-    parser.add_argument('-as', '--antismash', help = 'antiSMASH directory')
-    parser.add_argument('-c', '--cpu', default = 1, type = int)
+    parser = argparse.ArgumentParser(description = 'Summarize cloci output')
+    parser.add_argument('-d', '--db', default = primaryDB())
+    parser.add_argument('-c', '--cloci', required = True, help = 'cloci directory')
+    parser.add_argument('-a', '--antismash', help = 'antiSMASH directory')
+    parser.add_argument('--cpu', default = 1, type = int)
     args = parser.parse_args()
 
     db = mtdb(format_path(args.db))
-    o2c_dir = format_path(args.og2clus)
+    o2c_dir = format_path(args.cloci)
     if args.antismash:
         as_dir = format_path(args.antismash)
     else:

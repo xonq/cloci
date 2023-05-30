@@ -7,7 +7,7 @@
 #NEED to implement genome-based null
 #NEED call OrthoFinder option
 #NEED use hg_dir from OrthoFinder in input_parsing/hgx2gcf, currently doesnt work
-#NEED to make gcc_mngr split different families with the same GCF
+#NEED to make gcl_mngr split different families with the same GCF
 #NEED locus-based GCF hypergeometric average
 #NEED TO ADD PERCENTILE TO OUTPUT
 #NEED to implement gff2svg
@@ -266,7 +266,7 @@ def main(
     min_hlg_id = 0.3, simfun = hgx2hlgs.overlap,
     constraint_path = None, aligner = 'diamond',
     run_dnds = False, cpus = 1, n50thresh = None, 
-    root = None, gcc_thresh = 0, patch_thresh = 0,
+    root = None, gcl_thresh = 0, patch_thresh = 0,
     method = 'mmseqs easy-cluster', dist_thresh = 0,
     printexit = False, skipalgn = False, flag = True, partition_file = None,
     near_single_copy_genes = [], tree_path = None, 
@@ -281,7 +281,7 @@ def main(
     microsynteny distance thresholding -> HGx formation ->
     microsynteny distance border thresholding -> HGx-GCF grouping ->
     microsynteny distance cluster thresholding -> pdd calculation ->
-    gcc calculation -> optional dN/dS calculations ->
+    gcl calculation -> optional dN/dS calculations ->
     HGx data output -> cluster retrieving -> data output
     """
     db = db.set_index()
@@ -309,7 +309,7 @@ def main(
                                               hgp_perc, #clus_perc,
                                               hgx_perc, f'{aligner}${algn_sens}', 
                                               id_perc, pos_perc, csb_thresh,
-                                              patch_thresh, gcc_thresh, dist_thresh,
+                                              patch_thresh, gcl_thresh, dist_thresh,
                                               samples, n50thresh, flag, min_gene_id,
                                               min_hlg_id, inflation_1, inflation_2, sim, 
                                               tune_file, dist_type, uniq_sp, partition,
@@ -332,7 +332,7 @@ def main(
         print('\nThresholding and outputting GCFs', flush = True)
         try:
             output_data.threshold_gcf_bypass(db, out_dir, wrk_dir, i2ome, gene2hg, 
-                                             dist_thresh, gcc_thresh, patch_thresh,
+                                             dist_thresh, gcl_thresh, patch_thresh,
                                              id_perc, pos_perc, csb_thresh, ipr_path,
                                              pfam, cpus)
             print('\nSUCCESS!', flush = True)
@@ -578,7 +578,7 @@ def main(
      #   del hlg2clan[i]
 
     print('\nVI. Quantifying HLG gene committment and intrafamily similarity', flush = True)
-    hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, hlgs, hlg_omes = evo_conco.gcc_main( 
+    hgx2omes2gcl, hgx2omes2id, hgx2omes2pos, hlgs, hlg_omes = evo_conco.gcl_main( 
                             hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
                             aligner, db, gene2hg, plusminus, hg2gene, phylo,
                             old_path = 'mmi.pickle',
@@ -622,9 +622,9 @@ def main(
     print('\nIIX. Writing and annotating clusters', flush = True)
     output_data.output_hlgs(db, wrk_dir, hlgs, hlg_omes, 
          i2ome, out_dir, hlg_hgxs,
-         omes2dist, omes2patch, hgx2omes2gcc, hgx2omes2id,
+         omes2dist, omes2patch, hgx2omes2gcl, hgx2omes2id,
          hgx2omes2pos, gene2hg, plusminus, ome2i,
-         hlg2clan, dist_thresh, gcc_thresh, patch_thresh, id_perc,
+         hlg2clan, dist_thresh, gcl_thresh, patch_thresh, id_perc,
          pos_perc, csb_thresh, ipr_path = ipr_path, pfam_path = pfam, dnds_dict = {}, 
          cpus = cpus)
 
@@ -746,7 +746,7 @@ if __name__ == '__main__':
     thr_opt.add_argument('-pt', '--pdd_threshold', default = 0, type = float,
         help = "Threshold [0 < value < 1] of gene cluster family " \
              + " phylogenetic distribution densityt scores")
-    thr_opt.add_argument('-gt', '--gcc_threshold', default = 0, type = float,
+    thr_opt.add_argument('-gt', '--gcl_threshold', default = 0, type = float,
         help = "Threshold [0 < value < 1] of gene cluster committment scores")
     thr_opt.add_argument('-tt', '--md_threshold', default = 0, type = float,
         help = "Threshold [0 < value < 1] of log normalized GCF TMDs")
@@ -975,8 +975,8 @@ if __name__ == '__main__':
         'Tune clusters': tune_file, 'Minimum CSB': args.csb_threshold,
 #        'GCF percentile': args.gcf_percentile, 
         'Minimum GCF %id': args.id_percent, 'Minimum GCF %pos': args.pos_percent,
-        'Patchiness threshold': args.pdd_threshold, 'GCC threshold': args.gcc_threshold,
-        'Distance threshold': args.md_threshold, 'Null partitions': partition,
+        'PDS threshold': args.pdd_threshold, 'GCL threshold': args.gcl_threshold,
+        'Log Normal TMD threshold': args.md_threshold, 'Null partitions': partition,
         'Null samples': args.null_sample, #'Calculate dN/dS': args.dnds, 
         'Minimum N50': args.n50, # 'Family sensitivity': args.sensitivity,
         'Processors': args.cpus, 'Output directory': args.output_dir,
@@ -1005,7 +1005,7 @@ if __name__ == '__main__':
         hgx_perc = hgx_perc, pfam = format_path(args.pfam), samples = args.null_sample,
         partition_file = args.null_partitions, #        run_dnds = args.dnds, 
         n50thresh = args.n50, near_single_copy_genes = focal_genes,
-        root = root, gcc_thresh = args.gcc_threshold, 
+        root = root, gcl_thresh = args.gcl_threshold, 
         constraint_path = constraint_path, simfun = simfun,
         patch_thresh = args.pdd_threshold, method = method,
         printexit = args.stop, skipalgn = args.skip, flag = bool(not args.new),

@@ -13,7 +13,7 @@ from mycotools.lib.kontools import multisub, tardir, collect_files, checkdir, ep
 from cloci.cloci.lib.input_parsing import compileCDS2, hg_fa_mngr
 from cloci.cloci.lib.treecalcs import calc_tmd
 
-# NEED todel_hg to remove fully incompatible GCC HGs from HLG_HGXs
+# NEED todel_hg to remove fully incompatible GCL HGs from HLG_HGXs
 # NEED an option to import OrthoFinder pairwise alignments
 	# not recommended, need higher max target sequences than OrthoFinder 
 def parse_algn_wpos(hgx_dir, hg, hgx_genes):
@@ -103,8 +103,8 @@ def sim_calc_wpos(res):
     ids_y_pos = defaultdict(dict)
     for hg in res:
         for ome, data in res[hg].items():
-            t_gcc, id_y_pos_data = data
-            omeScores[ome][hg] = t_gcc
+            t_gcl, id_y_pos_data = data
+            omeScores[ome][hg] = t_gcl
             ids = [x[0] for x in id_y_pos_data.values()]
             pos = [x[1] for x in id_y_pos_data.values()]
             if ids:
@@ -118,8 +118,8 @@ def sim_calc_wopos(res):
     ids_dict = defaultdict(dict)
     for hg in res:
         for ome, data in res[hg].items():
-            t_gcc, id_data = data
-            omeScores[ome][hg] = t_gcc
+            t_gcl, id_data = data
+            omeScores[ome][hg] = t_gcl
             ids = list(id_data.values())
             if ids:
                 ids_dict[hg][ome] = min(ids)
@@ -160,7 +160,7 @@ def hg_sim_calc_wpos(res, min_id, hlg2tot_con):
         tot_con = hlg2tot_con[hlg]
         for gene, data in gene_info.items():
             ome = gene[:gene.find('_')]
-            ome_gcc = data[0]
+            ome_gcl = data[0]
             if not data[2]:
                 try:
                     mi_p = [v[0] for v in data[1].values()]
@@ -174,11 +174,11 @@ def hg_sim_calc_wpos(res, min_id, hlg2tot_con):
                 ome_mi, ome_mp = 0, 0
     #            ome_mi, ome_mp = min_id, min_id
             if ome not in output_data[hlg]:
-                output_data[hlg][ome] = (ome_gcc, ome_mi * tot_con, ome_mp * tot_con)
-            # if there's a paralog, take the best gcc
+                output_data[hlg][ome] = (ome_gcl, ome_mi * tot_con, ome_mp * tot_con)
+            # if there's a paralog, take the best gcl
             else:
-                if ome_gcc > output_data[hlg][ome][0]:
-                    output_data[hlg][ome] = (ome_gcc, ome_mi * tot_con, ome_mp * tot_con)
+                if ome_gcl > output_data[hlg][ome][0]:
+                    output_data[hlg][ome] = (ome_gcl, ome_mi * tot_con, ome_mp * tot_con)
     return output_data
 
 def hg_sim_calc_wopos(res, min_id, hlg2tot_con):
@@ -188,7 +188,7 @@ def hg_sim_calc_wopos(res, min_id, hlg2tot_con):
         tot_con = hlg2tot_con[hlg]
         for gene, data in gene_info.items():
             ome = gene[:gene.find('_')]
-            ome_gcc = data[0]
+            ome_gcl = data[0]
             if not data[2]:
                 try:
                     ome_mi = min(data[1].values())
@@ -198,11 +198,11 @@ def hg_sim_calc_wopos(res, min_id, hlg2tot_con):
                 ome_mi = 0
 #                ome_mi = min_id
             if ome not in output_data[hlg]:
-                output_data[hlg][ome] = (ome_gcc, ome_mi * tot_con)
-            # if there's a paralog, take the best gcc
+                output_data[hlg][ome] = (ome_gcl, ome_mi * tot_con)
+            # if there's a paralog, take the best gcl
             else:
-                if ome_gcc > output_data[hlg][ome][0]:
-                    output_data[hlg][ome] = (ome_gcc, ome_mi * tot_con)
+                if ome_gcl > output_data[hlg][ome][0]:
+                    output_data[hlg][ome] = (ome_gcl, ome_mi * tot_con)
     return output_data
 
 
@@ -306,7 +306,7 @@ def hg_parse_and_calc(hg, hg_dict, hgx_dir, ome2i, min_id = 30, pos_data = True)
                         todel_genes[hlg][ome].append(gene)
                         failed_genes.append(gene)
                 else:
-                    # the GCC for this HG and ome is the total of the genes in this
+                    # the GCL for this HG and ome is the total of the genes in this
                     # HG (disregarding self) divided by the total + the failed genes
 #* considered_genes \
 
@@ -323,11 +323,11 @@ def hg_parse_and_calc(hg, hg_dict, hgx_dir, ome2i, min_id = 30, pos_data = True)
            hlg2considered
 
 
-def gcc_mngr(
+def gcl_mngr(
     hgs, omes, hgx_dir, hgx2loc,
     db, gene2hg, clusplusminus, hg2gene, hlgs,
     hlg_omes, hlg_hgxs, ome2i, min_id, phylo,
-    d2gcc, d2id_, d2pos, cpus = 1
+    d2gcl, d2id_, d2pos, cpus = 1
     ):
 
     i2ome = {v: k for k, v in ome2i.items()}
@@ -423,7 +423,7 @@ def gcc_mngr(
         del hlg_hgxs[hlg]
         
             
-    hgx2omes2gcc = defaultdict(dict)
+    hgx2omes2gcl = defaultdict(dict)
     hgx2omes2id = defaultdict(dict)
     hgx2omes2pos = defaultdict(dict)
     for hlg, hg_dict in tqdm(hlg_res.items(), total = len(hlg_res)):
@@ -431,9 +431,9 @@ def gcc_mngr(
             continue
         tot_considered = hlg2tot_considered[hlg]
         hgx, omes = hlg_hgxs[hlg], hlg_omes[hlg]
-        gccs, ids, poss = [], [], []
+        gcls, ids, poss = [], [], []
         for hg, res in hg_dict.items():
-            gccs.append(sum([x[0] for x in res]))
+            gcls.append(sum([x[0] for x in res]))
             ids.append(sum([x[1] for x in res])/len(res))
             try:
                 poss.append(sum([x[2] for x in res])/len(res))
@@ -441,8 +441,8 @@ def gcc_mngr(
                 poss.append(None)
             except TypeError:
                 poss.append(None)
-#        gcc = sum(gccs)/(len(gccs) * hlg2tot_considered[hlg])
-        gcc = sum(gccs)/tot_considered
+#        gcl = sum(gcls)/(len(gcls) * hlg2tot_considered[hlg])
+        gcl = sum(gcls)/tot_considered
         id_ = sum(ids)/tot_considered
         try:
             pos = sum(poss)/tot_considered
@@ -451,13 +451,13 @@ def gcc_mngr(
         except TypeError:
             pos = None
 
-        hgx2omes2gcc[hgx][omes] = gcc
+        hgx2omes2gcl[hgx][omes] = gcl
         hgx2omes2id[hgx][omes] = id_
         if pos is not None:
             hgx2omes2pos[hgx][omes] = pos
 
     hgx2omes2pos = dict(hgx2omes2pos)
-    return {**d2gcc, **hgx2omes2gcc}, \
+    return {**d2gcl, **hgx2omes2gcl}, \
         {**d2id_, **hgx2omes2id}, \
         {**d2pos, **hgx2omes2pos}, \
         {g: tuple(l) for g, l in hlgs.items()}, \
@@ -618,10 +618,10 @@ def run_blast(hgs, db, hg_dir, hgx_dir, algorithm = 'diamond',
         out.write('\n'.join([str(x) for x in missing_alns]))
 
 
-def gcc_main(
+def gcl_main(
     hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
     algorithm, db, gene2hg, plusminus, hg2gene, phylo,
-    old_path = 'hgx2omes2gcc.pickle',
+    old_path = 'hgx2omes2gcl.pickle',
     hlgs = None, hlg_hgxs = None,
     hlg_omes = None, hlg2clan = {}, 
     cpus = 1, printexit = False,
@@ -635,8 +635,8 @@ def gcc_main(
 
     if os.path.isfile(wrk_dir + old_path):
         print('\tLoading previous coevolution results', flush = True)
-        with open(wrk_dir + 'gcc.pickle', 'rb') as pickin:
-            d2gcc = pickle.load(pickin)
+        with open(wrk_dir + 'gcl.pickle', 'rb') as pickin:
+            d2gcl = pickle.load(pickin)
         with open(wrk_dir + 'mmi.pickle', 'rb') as pickin:
             d2id_ = pickle.load(pickin)
         if os.path.isfile(wrk_dir + 'mmp.pickle'):
@@ -645,7 +645,7 @@ def gcc_main(
         else:
             d2pos = {}
     else:
-        d2gcc, d2id_, d2pos = {}, {}, {}
+        d2gcl, d2id_, d2pos = {}, {}, {}
     
     hgs = list(chain(*list(hlg_hgxs.values())))
     hg_dir = hg_fa_mngr(wrk_dir, None, hgs, 
@@ -657,22 +657,22 @@ def gcc_main(
               skipalgn = skipalgn, fallback = fallback,
               cpus = cpus)
 
-    d2gcc, d2id_, d2pos, hlgs, hlg_omes = gcc_mngr(
+    d2gcl, d2id_, d2pos, hlgs, hlg_omes = gcl_mngr(
         list(hgs), list(ome2i.keys()), hgx_dir, hgx2loc,
         db, gene2hg, plusminus, hg2gene, hlgs,
         hlg_omes, hlg_hgxs, ome2i, minid, phylo,
-        d2gcc, d2id_, d2pos, cpus = cpus #d2pos, cpus = cpus
+        d2gcl, d2id_, d2pos, cpus = cpus #d2pos, cpus = cpus
         )
 #    hgx_dirTar = mp.Process(target=tardir, args=(hgx_dir, True))
  #   hgx_dirTar.start() # when to join ...
     with open(f'{wrk_dir}hlgs.pickle', 'wb') as out:
         pickle.dump([hlgs, hlg_omes, hlg_hgxs, hlg2clan], out)
-    with open(wrk_dir + 'gcc.pickle', 'wb') as pickout:
-        pickle.dump(d2gcc, pickout)
+    with open(wrk_dir + 'gcl.pickle', 'wb') as pickout:
+        pickle.dump(d2gcl, pickout)
     with open(wrk_dir + 'mmi.pickle', 'wb') as pickout:
         pickle.dump(d2id_, pickout)
     if d2pos:
         with open(wrk_dir + 'mmp.pickle', 'wb') as pickout:
             pickle.dump(d2pos, pickout)
 
-    return d2gcc, d2id_, d2pos, hlgs, hlg_omes
+    return d2gcl, d2id_, d2pos, hlgs, hlg_omes

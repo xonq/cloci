@@ -44,7 +44,7 @@ def init_log(
                 + f'pos_percent\t{log_dict["pos_percent"]}\n' \
                 + f'iipr_percent\t{log_dict["iipr_percent"]}\n' \
                 + f'patch_threshold\t{log_dict["patch_threshold"]}\n' \
-                + f'gcc_threshold\t{log_dict["gcc_threshold"]}\n' \
+                + f'gcl_threshold\t{log_dict["gcl_threshold"]}\n' \
                 + f'dist_threshold\t{log_dict["dist_threshold"]}\n' \
                 + f'partition\t{log_dict["partition"]}\n' \
                 + f'null_samples\t{log_dict["null_samples"]}\n' \
@@ -345,7 +345,7 @@ def rm_old_data(
             os.remove(hlgs_file)
         mcl_res = f'{wrk_dir}hlg/loci.clus'
         tosave.extend([mcl_res, mcl_res + '.tmp'])
-        hgx_files = ['gcc.pickle',
+        hgx_files = ['gcl.pickle',
                      'mmi.pickle',
                      'mmp.pickle']
         for file_ in hgx_files:
@@ -447,7 +447,7 @@ def log_check(log_dict, log_path, out_dir, wrk_dir, flag = True):
     log_res, inflation_1, inflation_2, init_discrep = read_log(log_path, log_dict)
     if any(not log_res[x] for x in log_res):
         failed = set([x for x, v in log_res.items() if not v])
-        for skip in ['patch_threshold', 'gcc_threshold', 'iipr_percent',
+        for skip in ['patch_threshold', 'gcl_threshold', 'iipr_percent',
                      'id_percent', 'pos_percent', 'dist_threshold', 'ipr_path',
                      'pfam_path']:
             if skip in failed:
@@ -825,7 +825,7 @@ def sha_tune_file(tune_file):
 def init_run(db, out_dir, near_single_copy_genes, constraint_path,
              tree_path, hg_file, plusminus, seed_perc,# clus_perc,
              hgx_perc, aligner, id_perc, pos_perc, iipr_perc,
-             patch_thresh, gcc_thresh, dist_thresh,
+             patch_thresh, gcl_thresh, dist_thresh,
              samples, n50thresh, flag, min_gene_id, min_hlg_id, inflation_rnd1, 
              inflation_rnd2, simfun,
              tune_file, dist_type, uniq_sp, partition, min_topology_sim,
@@ -862,7 +862,7 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
 #        'hlg_percentile': clus_perc, 
         'id_percent': id_perc, 'pos_percent': pos_perc, 'iipr_percent': iipr_perc,
         'patch_threshold': patch_thresh, 'dist_threshold': dist_thresh,
-        'gcc_threshold': gcc_thresh, 'domain_inflation': inflation_rnd1,
+        'gcl_threshold': gcl_thresh, 'domain_inflation': inflation_rnd1,
         'hlg_inflation': inflation_rnd2,
         'tuning': tune_sha, 'partition': partition, 
         'topology_merge': topology_merge, 'min_topology_sim': min_topology_sim,

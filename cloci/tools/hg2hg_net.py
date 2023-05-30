@@ -6,14 +6,16 @@ import multiprocessing as mp, os, argparse, sys, re
 import networkx as nx
 from igraph import Graph
 from pyvis.network import Network
-from mycotools.lib.kontools import formatPath, getColors, hex2rgb, writeJson, readJson, eprint, mkOutput
+from mycotools.lib.kontools import format_path, getColors, hex2rgb, write_json, read_json, eprint, mkOutput
 from mycotools.lib.dbtools import mtdb
 from mycotools.lib.biotools import gff2list
-from mycotools.extractHmmAcc import grabAccs
+from mycotools.utils.extractHmmAcc import grabAccs
 import matplotlib.pyplot as plt
 
 # NEED to output json of the network modules
 # NEED to organize output
+# NEED to reference working dir pfams if it exists
+
 def collectGffs(omes, top_dir):
     clusGFFs = [
         top_dir + ome + '/' + ome + '.gff3' for ome in omes \
@@ -300,7 +302,7 @@ def writeNetworkFile(
 
 
     if os.path.isfile(og2pfam_path):
-        og2pfamPrep = readJson(og2pfam_path)
+        og2pfamPrep = read_json(og2pfam_path)
         og2pfam = {}
         for og, pfams in og2pfamPrep.items():
             if pfams:
@@ -451,15 +453,15 @@ def writeNetworkFile(
   #  nt.show(network_path)
 
 def main(
-    db, rank, og2clus_dir, gff_dir, connectivity = False, 
+    db, rank, cloci_dir, gff_dir, connectivity = False, 
     centrality = False, maxEdges = 500, pfam_path = None, 
     pfam_dir = None, cpus = 1
     ):
 
-    if og2clus_dir:
-        ome_dir, net_dir = og2clus_dir + 'ome/', og2clus_dir + 'net/'
+    if cloci_dir:
+        ome_dir, net_dir = cloci_dir + 'ome/', cloci_dir + 'net/'
         if not os.path.isdir(ome_dir):
-            eprint('\nERROR: invalid og2clus output', flush = True)
+            eprint('\nERROR: invalid cloci output', flush = True)
             sys.exit(2)
     if gff_dir:
         pfam2name = mkPfam2name(pfam_path)
@@ -479,7 +481,7 @@ def main(
         og2pfamPath = net_dir + lineage + '.og2pfam.txt'
         if not os.path.isfile(adjPath): # need to log the factor then
             print('\tAdjacency matrix', flush = True)
-            if og2clus_dir:
+            if cloci_dir:
                 parsePfam_cmds = [
                     [ome, pfam_dir + ome + '.out'] for ome in omes
                     ]
@@ -496,7 +498,7 @@ def main(
                 counts, ogCounts, og2pfam = combineCounts(
                     countsRes, db, rank = 'species'
                     )
-                writeJson(og2pfamPath, og2pfam)
+                write_json(og2pfamPath, og2pfam)
                 writeNodeQuants(ogCounts, quantPath)
             else:
                 gffs = collectGffs(omes, gff_dir)
@@ -519,17 +521,17 @@ def main(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description = 'Takes og2clus output, creates networks of OG' + \
+        description = 'Takes cloci output, creates networks of OG' + \
         ' relationships'
         )
     parser.add_argument(
         '-i', '--input', required = True,
-        help = 'og2clus results directory/antiSMASH results directory' + \
+        help = 'cloci results directory/antiSMASH results directory' + \
         " w/extracted .gff's"
         )
     parser.add_argument(
         '-d', '--database', required = True, 
-        help = 'Must be same as og2clus input'
+        help = 'Must be same as cloci input'
         )
     parser.add_argument(
         '-r', '--rank', help = 'Taxon rank; DEFAULT: class',
@@ -560,17 +562,17 @@ if __name__ == '__main__':
         )
     args = parser.parse_args()
 
-    db = mtdb(formatPath(args.database))
-    clus_dir = formatPath(args.input)
+    db = mtdb(format_path(args.database))
+    clus_dir = format_path(args.input)
     if not args.pfam:
-        og2clus_dir = clus_dir
+        cloci_dir = clus_dir
         antismash_dir = None
     else:
-        og2clus_dir = None
+        cloci_dir = None
         antismash_dir = clus_dir
     main(
-        db, args.rank, og2clus_dir, antismash_dir, connectivity = args.connectivity, 
+        db, args.rank, cloci_dir, antismash_dir, connectivity = args.connectivity, 
         centrality = args.centrality,
-        maxEdges = args.maximum, pfam_path = args.pfam, pfam_dir = formatPath(args.pfam_dir), cpus = args.cpu
+        maxEdges = args.maximum, pfam_path = args.pfam, pfam_dir = format_path(args.pfam_dir), cpus = args.cpu
         )
 
