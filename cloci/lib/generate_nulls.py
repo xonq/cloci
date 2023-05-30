@@ -10,8 +10,8 @@ from itertools import combinations
 from collections import defaultdict, Counter
 from mycotools.lib.biotools import gff2list
 from mycotools.lib.kontools import eprint, collect_files
-from orthocluster.orthocluster.lib import treecalcs
-from orthocluster.orthocluster.lib.input_parsing import compileCDS
+from cloci.cloci.lib import treecalcs
+from cloci.cloci.lib.input_parsing import compileCDS
 
 def hash_4_nulls_bysize(
     gff_path, gene2hg, size, plusminus, ome
