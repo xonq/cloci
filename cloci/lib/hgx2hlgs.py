@@ -16,7 +16,7 @@ from collections import defaultdict, Counter
 from mycotools.lib.biotools import gff2list, dict2fa
 from mycotools.lib.kontools import write_json, read_json, collect_files, \
                                    checkdir, eprint
-from orthocluster.orthocluster.lib import input_parsing, treecalcs, evo_conco, output_data
+from cloci.cloci.lib import input_parsing, treecalcs, evo_conco, output_data
 
 
 def hash_hgx(gff_path, ome, hgx_genes, gene2hg, clusplusminus):
@@ -1249,10 +1249,8 @@ def refine_group(db, ome2i, group_hg_loci, group_loci,
             groups[-1][1] = index
         if not os.path.isfile(f'{grp_dir}loci.adj.tmp') \
             and not os.path.isfile(f'{grp_dir}loci.adj'):
-            start = datetime.now()
             rnd2_loc2loc_mngr(grp_dir, loci, hg_loci, hgx_dir, 
                               groups, minid, min_loc_id, simfun, cpus)
-            print(datetime.now() - start)
             os.rename(f'{grp_dir}loci.adj.tmp', f'{grp_dir}loci.adj')
 
     satisfied = False
@@ -1587,7 +1585,7 @@ def classify_hlgs(
  #                                          func = dist_func, uniq_sp = uniq_sp, i2ome = i2ome)
 
 
-        print('\tClassifying HGx clans and gene cluster families (GCFs)', flush = True)
+        print('\tAggregating HGxs', flush = True)
         # populate a lil_matrix here, then use that network to identify modules
         print('\t\tBuilding binary HGx-HGx network', flush = True)
         matrix = lil_matrix((len(i2hgx), len(i2hgx)), dtype=bool)
@@ -1635,7 +1633,7 @@ def classify_hlgs(
             clans, clanOmes, clanHGxs = pickle.load(in_)
 
     print('\t\t' + str(len(clans)) + ' clans', flush = True)
-    print('\tClassifying HGx clans into GCFs', flush = True)
+    print('\tClassifying HGxs into locus domains', flush = True)
     clanFile = wrk_dir + 'clan2loci.'
     if not os.path.isfile(clanFile + 'hg.json.gz'):
         print('\t\tPreparing locus extraction', flush = True)
