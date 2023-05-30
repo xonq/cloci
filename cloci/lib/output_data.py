@@ -2,6 +2,7 @@ import os
 import re
 import gzip
 import shutil
+import pickle
 import subprocess
 import multiprocessing as mp
 import plotly.graph_objects as go
@@ -13,12 +14,13 @@ from plotly.subplots import make_subplots
 from mycotools.acc2gff import grabGffAcc
 from mycotools.lib.kontools import eprint
 from mycotools.lib.biotools import list2gff, gff2list, fa2dict, dict2fa
-from orthocluster.orthocluster.lib import input_parsing
+from cloci.cloci.lib import input_parsing
 
 # NEED to add PCA output
 # NEED locID output and clans
 # NEED gbk output option
 # NEED to add merge abutting clusters feature
+# NEED annotation for gcfs resume and hlgs independent
 
 def mk_subplots(labels, axes, axes_labels, alpha = 0.6):
     
@@ -259,6 +261,23 @@ def write_clusters(clusters, ome, out_file, gff_path, gene2hg, clusplusminus = 1
     return ome, out_genes
 
 
+def read_ome_hlgs(ome, ome_hlg_file):
+    out_genes = []
+    try:
+        with open(ome_hlg_file, 'r') as raw:
+            for line in raw:
+                if not line.startswith('#'):
+#        out.write('#name\thgs\tgenes\tgcfs\n')
+                    data = line.rstrip().split()
+                    genes = data[2].split(',')
+                    out_genes.append(genes)
+        return ome, out_genes
+    except FileNotFoundError:
+        return ome, []
+
+
+
+
 def output_ann_fas(ann_dir, ome, ome_genes, prot_path):
     faa = fa2dict(prot_path)
     genes = list(chain(*ome_genes))
@@ -350,22 +369,24 @@ def run_ipr_scan(iprscan, passing_omes, ann_dir, cpus):
 
 def parse_hmm_res(ome, ann_dir, evalue, threshold):
     ome_out = ann_dir + ome + '_pfam.out'
-    lineComp, res = re.compile(r'([^ ]+)'), defaultdict(list)
+#    lineComp = re.compile(r'([^ ]+)')
+    res = defaultdict(list)
     with open(ome_out, 'r') as raw:
         for line in raw:
             if not line.startswith('#'):
-                data = lineComp.findall(line.rstrip())
-                hit_perc = (int(data[15]) - int(float(data[14])))/int(data[5])
+#                data = lineComp.findall(line.rstrip())
+                data = line.rstrip().split()
+                hit_perc = (int(data[18]) - int(float(data[17])))/int(data[5])
                 if hit_perc > threshold:
                     if float(data[6]) < evalue: # and float(data[7]) > score:
                         # pfam, name, cov_perc, evalue, bit, algn_start, algn_end
                         res[data[0]].append(( 
-                            data[4], data[3], hit_perc, float(data[6]), 
-                            float(data[7]), int(data[16]), int(data[17])
+                            data[4], data[3], hit_perc,
+                            float(data[21]), int(data[17]), int(data[18])
                             ))
     ome_res = {}
     for gene, gene_hits in res.items():
-        gene_hits = sorted(gene_hits, key = lambda x: x[3], reverse = True)
+        gene_hits = sorted(gene_hits, key = lambda x: x[4], reverse = True)
         todel, hits = [], set()
         for i, hit in enumerate(gene_hits):
             if hit[0] in hits:
@@ -378,7 +399,7 @@ def parse_hmm_res(ome, ann_dir, evalue, threshold):
     return ome, ome_res
 
 
-def compile_hmm_res(ann_dir, passing_omes, evalue = 0.01, threshold = 0.5, cpus = 1):
+def compile_hmm_res(ann_dir, passing_omes, evalue = 0.001, threshold = 0.5, cpus = 1):
         
     with mp.Pool(processes = cpus) as pool:
         omebyome_res = pool.starmap(parse_hmm_res, 
@@ -442,7 +463,7 @@ def compile_ipr_res(ann_dir, passing_omes, evalue = 0.01, threshold = 0.5, cpus 
 
 
 def ann_mngr(genes_list, prot_paths, wrk_dir, pfam, ipr_scan,
-             evalue = 0.01, threshold = 0.5, cpus = 1):
+             evalue = 0.0001, threshold = 0.5, cpus = 1):
 
     ann_dir = wrk_dir + 'ann/'
     if not os.path.isdir(ann_dir):
@@ -469,71 +490,79 @@ def ann_mngr(genes_list, prot_paths, wrk_dir, pfam, ipr_scan,
     return ann_res, failed_omes
 
 
-def grabClus(genes_list, gff_path, prot_path, ome, ome_dir, gene2hg, ann_res = {}):
+def annotate_clusters(genes_list, #gff_path, prot_path, 
+                      ome, ome_dir, gene2hg, prefix = 'hlg',
+                      ann_res = {}):
 
-    gff_dir, fa_dir = ome_dir + ome + '/gff/', ome_dir + ome + '/fa/'
-    if not os.path.isdir(gff_dir):
-        os.mkdir(gff_dir)
-    if not os.path.isdir(fa_dir):
-        os.mkdir(fa_dir)
+#    gff_dir, fa_dir = ome_dir + ome + '/gff/', ome_dir + ome + '/fa/'
+ #   if not os.path.isdir(gff_dir):
+  #      os.mkdir(gff_dir)
+   # if not os.path.isdir(fa_dir):
+    #    os.mkdir(fa_dir)
 
-    clus_gffs, clus_fas, clus_anns, scafs, svg_dict = [], [], {}, set(), {}
-    gff_list, prot_dict = gff2list(gff_path), fa2dict(prot_path)
-    print('\t' + ome, flush = True)
-    for genes in genes_list:
-        clus_gffs.append([[]])
-        clus_fas.append({})
-        clus_ann = ''
-        for gene in genes:
-            geneCoord = None
-            geneGff = grabGffAcc(gff_list, gene)
-            for entry in geneGff:
-                if entry['type'].lower() == 'gene':
-                    geneCoord = (int(entry['start']), int(entry['end']), entry['strand'])
-            geneFa = prot_dict[gene]
-            if gene in ann_res:
-                pfamStr = ';Pfam=' + '|'.join([
-                    (hit[0] + '-' + hit[1]).replace('|','&') for hit in ann_res[gene]
-                    ])
-                clus_ann += pfamStr[6:]
-            else:
-                pfamStr = ''
-            clus_ann += ','
-            try:
-                ogStr = ';OG=' + str(gene2hg[gene])
-            except KeyError: # gene not in an OG or is a singleton
-                ogStr = ';OG='
-            for entry in geneGff:
-                if entry['type'] == 'gene' or entry['type'].lower() == 'mrna':
-                    entry['attributes'] += pfamStr + ogStr
-            geneFa['description'] = pfamStr[6:]
-            clus_gffs[-1][0].extend(geneGff)
-            clus_fas[-1][gene] = geneFa
-        scaf_prep = clus_gffs[-1][0][0]['seqid']
-        scaf = scaf_prep[:20]
-        if scaf_prep != scaf:
-            scaf = scaf_prep[:20] + '..'
-        count = 0
-        while scaf + '_' + str(count) in scafs:
-            count += 1
-        name = scaf + '_' + str(count)
-        scafs.add(name)
-        clus_anns[name] = clus_ann[:-1]
-        clus_gffs[-1].append(name)
+ #   clus_gffs, clus_fas, clus_anns, scafs, svg_dict = [], [], {}, set(), {}
+#    gff_list, prot_dict = gff2list(gff_path), fa2dict(prot_path)
+#    print('\t' + ome, flush = True)
+ #   for genes in genes_list:
+  #      clus_gffs.append([[]])
+   #     clus_fas.append({})
+    #    clus_ann = ''
+     #   for gene in genes:
+      #      geneCoord = None
+       #     geneGff = grabGffAcc(gff_list, gene)
+        #    for entry in geneGff:
+         #       if entry['type'].lower() == 'gene':
+          #          geneCoord = (int(entry['start']), int(entry['end']), entry['strand'])
+           # geneFa = prot_dict[gene]
+            #if gene in ann_res:
+             #   pfamStr = ';Pfam=' + '|'.join([
+              #      (hit[0] + '-' + hit[1]).replace('|','&') for hit in ann_res[gene]
+               #     ])
+                #clus_ann += pfamStr[6:]
+#            else:
+ #               pfamStr = ''
+  #          clus_ann += ','
+   #         try:
+    #            ogStr = ';OG=' + str(gene2hg[gene])
+     #       except KeyError: # gene not in an OG or is a singleton
+      #          ogStr = ';OG='
+       #     for entry in geneGff:
+        #        if entry['type'] == 'gene' or entry['type'].lower() == 'mrna':
+         #           entry['attributes'] += pfamStr + ogStr
+          #  geneFa['description'] = pfamStr[6:]
+           # clus_gffs[-1][0].extend(geneGff)
+            #clus_fas[-1][gene] = geneFa
+#        scaf_prep = clus_gffs[-1][0][0]['seqid']
+ #       scaf = scaf_prep[:20]
+  #      if scaf_prep != scaf:
+   #         scaf = scaf_prep[:20] + '..'
+    #    count = 0
+     #   while scaf + '_' + str(count) in scafs:
+      #      count += 1
+       # name = scaf + '_' + str(count)
+        #scafs.add(name)
+#        clus_anns[name] = clus_ann[:-1]
+ #       clus_gffs[-1].append(name)
 #        svg_dict[name] = copy.deepcopy(t_svg_dict)
-        with open(gff_dir + name + '.gff3', 'w') as out:
-            out.write(list2gff(clus_gffs[-1][0]))
-        with open(fa_dir + name + '.fa', 'w') as out:
-            out.write(dict2fa(clus_fas[-1]))
+#        with open(gff_dir + name + '.gff3', 'w') as out:
+ #           out.write(list2gff(clus_gffs[-1][0]))
+  #      with open(fa_dir + name + '.fa', 'w') as out:
+   #         out.write(dict2fa(clus_fas[-1]))
 
-    with open(ome_dir + ome + '/info.out.tmp', 'w') as out:
+    with open(ome_dir + ome + f'/{prefix}.tsv.tmp', 'w') as out:
         out.write('#name\thgs\tgenes\tgcfs\tpfams\n')
-        with open(ome_dir + ome + '/info.out', 'r') as raw:
+        with open(ome_dir + ome + f'/{prefix}.tsv', 'r') as raw:
             for line in raw:
                 if not line.startswith('#'):
-                    clus = line.split('\t')[0]
-                    out.write(line.rstrip() + '\t' + clus_anns[clus] + '\n')
-    shutil.move(ome_dir + ome + '/info.out.tmp', ome_dir + ome + '/info.out')
+                    clus_d = line.split()
+                    genes = clus_d[2].split(',')
+                    anns_p = [ann_res[x] if x in ann_res else None for x in genes]
+                    anns = ['|'.join([y[1] if y else '' for y in x]) \
+                            if x else '' for x in anns_p]
+                    ann_str = ';'.join(anns)
+                    out.write('\t'.join(clus_d + [ann_str]) + '\n')
+    shutil.move(f'{ome_dir}{ome}/{prefix}.tsv.tmp', 
+                f'{ome_dir}{ome}/{prefix}.tsv')
 
     return ome#, svg_dict
 #    return ome, clus_gffs, clus_fas, svg_dict
@@ -554,7 +583,7 @@ def output_hgxs(hgx2dist, hgx2omes, hgx2i, i2ome, out_dir):
             ]) # HGxs at this stage are not segregated into groups
     hgx_output = sorted(hgx_output, key = lambda x: x[3], reverse = True)
     with gzip.open(out_dir + 'hgxs.tsv.gz', 'wt') as out:
-        out.write('#hgs\thgx_id\tnrm_log_tmd\tomes')#\tpatchiness\tomes')
+        out.write('#hgs\thgx_id\tnrm_log_tmd\tomes')#\tpdd\tomes')
         for entry in hgx_output:
             out.write('\n' + '\t'.join([str(x) for x in entry]))
 
@@ -563,30 +592,44 @@ def write_hlgs_txt_wpos(hlg_hgxs, hlg_omes, logg2d,
                         hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, i2ome,
                         out_dir, group_name):
     hlg_output = []
-    for i, hlg_hgx in hlg_hgxs.items():
-        omesc = hlg_omes[i]
+    for i, omesc in hlg_omes.items():
+        hlg_hgx = hlg_hgxs[i]
         try:
             hlg_output.append([
                 ','.join([str(x) for x in hlg_hgx]), i, hlg2clan[i],
                 logg2d[omesc], omes2patch[omesc], 
                 hgx2omes2gcc[hlg_hgx][omesc],
                 hgx2omes2id[hlg_hgx][omesc], hgx2omes2pos[hlg_hgx][omesc],
+                100 * (1 - (hgx2omes2id[hlg_hgx][omesc]/hgx2omes2pos[hlg_hgx][omesc])), 
                 ','.join([str(i2ome[x]) for x in omesc])#,
          #        dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
                 ])
-        except KeyError:
-             hlg_output.append([
+        except ZeroDivisionError:
+            hlg_output.append([
                 ','.join([str(x) for x in hlg_hgx]), i, hlg2clan[i],
                 logg2d[omesc], omes2patch[omesc], 
                 hgx2omes2gcc[hlg_hgx][omesc],
-                hgx2omes2id[hlg_hgx][omesc], 'na',
-                ','.join([str(i2ome[x]) for x in omesc])#,
+                hgx2omes2id[hlg_hgx][omesc], hgx2omes2pos[hlg_hgx][omesc],
+                0, ','.join([str(i2ome[x]) for x in omesc])#,
          #        dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
                 ])
+        except KeyError:
+            try:
+                hlg_output.append([
+                   ','.join([str(x) for x in hlg_hgx]), i, hlg2clan[i],
+                   logg2d[omesc], omes2patch[omesc], 
+                   hgx2omes2gcc[hlg_hgx][omesc],
+                   hgx2omes2id[hlg_hgx][omesc], 'na', 'na',
+                   ','.join([str(i2ome[x]) for x in omesc])#,
+            #        dnds_dict[hgx][0], dnds_dict[hgx][1], str(dnds_dict[hgx][2]),
+                   ])
+            except KeyError:
+                eprint(f'ERROR: missing HGx/omes from results: {hlg_hgx}, {omesc}', flush =  True)
+
     hlg_output = sorted(hlg_output, key = lambda x: x[3], reverse = True)
     with gzip.open(out_dir + f'{group_name}s.tsv.gz', 'wt') as out:
-        out.write(f'#hgs\t{group_name}\thlc\tnrm_log_tmd\tpatchiness' \
-                + '\tgcc\tmmi\tmmp\tomes') #\tmmp\tomes') #+ \
+        out.write(f'#hgs\t{group_name}\thlc\tnrm_log_tmd\tpdd' \
+                + '\tgcc\tmmi\tmmp\tcsb\tomes') #\tmmp\tomes') #+ \
             #'selection_coef\tmean_dnds\tog_dnds\t' + \
          #   'total_dist'
 #            )
@@ -612,7 +655,7 @@ def write_hlgs_txt_wopos(hlg_hgxs, hlg_omes, logg2d,
 
     hlg_output = sorted(hlg_output, key = lambda x: x[3], reverse = True)
     with gzip.open(out_dir + f'{group_name}s.tsv.gz', 'wt') as out:
-        out.write(f'#hgs\t{group_name}\thlc\tnrm_log_tmd\tpatchiness' \
+        out.write(f'#hgs\t{group_name}\thlc\tnrm_log_tmd\tpdd' \
                 + '\tgcc\tmmi\tomes') #\tmmp\tomes') #+ \
             #'selection_coef\tmean_dnds\tog_dnds\t' + \
          #   'total_dist'
@@ -621,7 +664,8 @@ def write_hlgs_txt_wopos(hlg_hgxs, hlg_omes, logg2d,
             out.write('\n' + '\t'.join([str(x) for x in entry]))
     return hlg_output
 
-def threshold_hlg_by_dist(dist_thresh, hlgs, hlg_hgxs, hlg_omes, omes2dist):
+
+def calc_logg2d(hlg_omes, omes2dist):
     logg2d_prep = {}
     for omesc in hlg_omes.values():
         logg2d_prep[omesc] = log(omes2dist[omesc])
@@ -629,6 +673,10 @@ def threshold_hlg_by_dist(dist_thresh, hlgs, hlg_hgxs, hlg_omes, omes2dist):
     minhlgd = min(logg2d_prep.values())
     denom = maxhlgd - minhlgd
     logg2d = {k: (v - minhlgd)/denom for k, v in logg2d_prep.items()}
+    return logg2d
+
+
+def threshold_hlg_by_dist(logg2d, dist_thresh, hlgs, hlg_hgxs, hlg_omes, omes2dist):
     if dist_thresh:
         gcfs, gcf_omes, gcf_hgxs = {}, {}, {}
         for hlg, locs in hlgs.items():
@@ -638,28 +686,34 @@ def threshold_hlg_by_dist(dist_thresh, hlgs, hlg_hgxs, hlg_omes, omes2dist):
                 gcfs[hlg] = locs
                 gcf_omes[hlg] = omesc
                 gcf_hgxs[hlg] = hgxc
-        return gcfs, gcf_omes, gcf_hgxs, logg2d
+        return gcfs, gcf_omes, gcf_hgxs
     else:
-        return hlgs, hlg_omes, hlg_hgxs, logg2d
+        return hlgs, hlg_omes, hlg_hgxs
 
 
-def threshold_hlg_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, hlgs,
+def threshold_hlg_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc, csb_thresh, hlgs,
                        hlg_hgxs, hlg_omes, omes2patch, hgx2omes2gcc,
                        hgx2omes2id, hgx2omes2pos):
 
-    if any(x > 0 for x in [gcc_thresh, patch_thresh, id_perc, pos_perc]):
-        print('\tApplying thresholds', flush = True)
-        print('\t\t' + str(len(HLGs)) + ' HLGs before', flush = True)
-        new_hlgs, new_hlg_omes, new_hlg_hgxs = {}, {}, {}
+    if any(x > 0 for x in [gcc_thresh, patch_thresh, id_perc, pos_perc, csb_thresh]):
+        gcfs, gcf_omes, gcf_hgxs = {}, {}, {}
         for hlg, locs in hlgs.items():
             check = False # have we added a new list
             hgxc = hlg_hgxs[hlg]
             omesc = hlg_omes[hlg]
             try:
-                if hgx2omes2gcc[hgxc][omesc] >= gcc_thresh \
-                    and omes2patch[omesc] >= patch_thresh \
-                    and hgx2omes2id[hgxc][omesc] >= id_perc \
-                    and hgx2omes2pos[hgxc][omesc] >= pos_perc:
+                patch = omes2patch[omesc]
+                gcc = hgx2omes2gcc[hgxc][omesc]
+                id_, pos = hgx2omes2id[hgxc][omesc], hgx2omes2pos[hgxc][omesc]
+                if pos != 0 and id_ != 0:
+                    csb = (1 - (id_/pos))
+                else:
+                    csb = 0
+                if gcc >= gcc_thresh \
+                    and patch >= patch_thresh \
+                    and id_ >= id_perc \
+                    and pos >= pos_perc \
+                    and csb >= csb_thresh:
                     gcfs[hlg] = locs
                     gcf_omes[hlg] = omesc
                     gcf_hgxs[hlg] = hgxc
@@ -696,18 +750,20 @@ def threshold_hlg_wopos(gcc_thresh, patch_thresh, id_perc, hlgs,
         return hlgs, hlg_omes, hlg_hgxs
 
 
-def output_thresholds(dist_thresh, gcc_thresh, patch_thresh, id_perc, pos_perc,
-                      hlgs, hlg_hgxs, hlg_omes, omes2dist, omes2patch,
+def output_thresholds(logg2d, dist_thresh, gcc_thresh, patch_thresh, id_perc, pos_perc,
+                      csb_thresh, hlgs, hlg_hgxs, hlg_omes, omes2dist, omes2patch, hlg2clan,
                       hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, out_dir, i2ome):
     print(f'\tFiltering HLGs for GCFs', flush = True)
-    hlgs, hlg_omes, hlg_hgxs, logg2d = threshold_hlg_by_dist(dist_thresh, hlgs, hlg_hgxs,
-                                                             hlg_omes, omes2dist)
+    print('\tApplying thresholds', flush = True)
+    print('\t\t' + str(len(hlgs)) + ' HLGs before', flush = True)
+    hlgs, hlg_omes, hlg_hgxs = threshold_hlg_by_dist(logg2d, dist_thresh, hlgs, hlg_hgxs,
+                                                     hlg_omes, omes2dist)
     if hgx2omes2pos:
         gcfs, gcf_omes, gcf_hgxs = threshold_hlg_wpos(gcc_thresh, patch_thresh, id_perc, pos_perc,
-                                          hlgs, hlg_hgxs, hlg_omes, omes2patch,
+                                          csb_thresh, hlgs, hlg_hgxs, hlg_omes, omes2patch,
                                           hgx2omes2gcc, hgx2omes2id, hgx2omes2pos)
         gcf_output = write_hlgs_txt_wpos(gcf_hgxs, gcf_omes, logg2d, 
-                            gcf2clan, omes2patch, 
+                            hlg2clan, omes2patch, 
                             hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, i2ome,
                             out_dir, 'gcf')
 
@@ -717,24 +773,22 @@ def output_thresholds(dist_thresh, gcc_thresh, patch_thresh, id_perc, pos_perc,
                                            gcf_hgxs, gcf_omes, omes2patch,
                                            hgx2omes2gcc, hgx2omes2id)
         gcf_output = write_hlgs_txt_wopos(gcf_hgxs, gcf_omes, logg2d, 
-                            gcf2clan, omes2patch, 
+                            hlg2clan, omes2patch, 
                             hgx2omes2gcc, hgx2omes2id, i2ome,
                             out_dir, 'gcf')
 
 
-    if new_gcf_data:
-        gcfs, gcf_omes, gcf_hgxs = new_gcf_data
-        print(f'\t\t{len(gcfs)} GCFs pass', flush = True)
+    print(f'\t\t{len(gcfs)} GCFs pass', flush = True)
 
     return gcf_output, gcfs, gcf_omes, gcf_hgxs
 
 
 def output_figures(hlg_output, prefix, out_dir):
     # legacy, need to remove unless dn/ds is reimplemented
-    if dnds_dict:
-        axes = [[],[],[],[],[], []]
-    else:
-        axes = [[],[],[], [], []]
+#    if dnds_dict:
+ #       axes = [[],[],[],[],[], []]
+  #  else:
+    axes = [[],[],[], [], [], []]
     labels = []
 
     try:
@@ -747,6 +801,7 @@ def output_figures(hlg_output, prefix, out_dir):
             axes[2].append(entry[3])
             axes[3].append(entry[6])
             axes[4].append(entry[7])
+            axes[5].append(entry[8])
     except ValueError: # no positives
         labels = []
         axes = [[], [], [], []]
@@ -761,11 +816,12 @@ def output_figures(hlg_output, prefix, out_dir):
             
     print(f'\tOutputting {prefix.upper()} plots', flush = True)
     if len(axes) == 4:
-        axes_labels = ['Distribution Patchiness', 'Gene Commitment', 'Log Microsynteny Distance',
-                       'Mean Minimum Identity']
+        axes_labels = ['PDS', 'GCL', 'nl_TMD',
+                       'MMI']
     else:
-        axes_labels = ['Distribution Patchiness', 'Gene Commitment', 'Log Microsynteny Distance',
-                       'Mean Minimum Identity', 'Mean Minimum Positives']
+        axes_labels = ['PDS', 'GCL', 
+                       'nl_TMD', 'MMI', 
+                       'MMP', 'CSB']
 
     fig = mk_subplots(labels, axes, axes_labels, alpha = 0.6)
     fig.write_html(out_dir + f'{prefix}_metrics.html')
@@ -773,13 +829,127 @@ def output_figures(hlg_output, prefix, out_dir):
     fig.write_html(out_dir + f'{prefix}s.html')
 
 
-def output_gcfs(db, wrk_dir, hlgs, hlg_omes, i2ome, out_dir, logg2d, hlg_hgxs,
+def threshold_gcf_bypass(db, out_dir, wrk_dir, i2ome, gene2hg,
+                         dist_thresh, gcc_thresh, patch_thresh,
+                         id_perc, pos_perc, csb_thresh, ipr_path,
+                         pfam_path, cpus = 1):
+
+    print('\tLoading data structures', flush = True)
+    with open(wrk_dir + 'hlgs.pickle', 'rb') as raw:
+        hlgs, hlg_omes, hlg_hgxs, hlg2clan = pickle.load(raw)
+
+    with open(wrk_dir + 'pdd.full.pickle', 'rb') as in_pick:
+        omes2patch = pickle.load(in_pick)
+
+    with open(wrk_dir + 'gcc.pickle', 'rb') as pickin:
+        hgx2omes2gcc = pickle.load(pickin)
+    with open(wrk_dir + 'mmi.pickle', 'rb') as pickin:
+        hgx2omes2id = pickle.load(pickin)
+    if os.path.isfile(wrk_dir + 'mmp.pickle'):
+        with open(wrk_dir + 'mmp.pickle', 'rb') as pickin:
+            hgx2omes2pos = pickle.load(pickin)
+    else:
+        hgx2omes2pos = None
+
+    with open(wrk_dir + 'omes2dist.pickle', 'rb') as raw:
+        omes2dist = pickle.load(raw)
+
+    logg2d = calc_logg2d(hlg_omes, omes2dist)
+    gcf_output, gcfs, gcf_omes, gcf_hgxs = output_thresholds(logg2d, dist_thresh, 
+                      gcc_thresh, patch_thresh, id_perc, pos_perc, csb_thresh,
+                      hlgs, hlg_hgxs, hlg_omes, omes2dist, omes2patch, hlg2clan,
+                      hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, out_dir, i2ome)
+    output_figures(gcf_output, 'gcf', out_dir)
+
+    
+    with mp.Pool(processes = cpus) as pool:
+        hlg_gene_res = pool.starmap(read_ome_hlgs, ((ome, f'{out_dir}ome/hlg.tsv') \
+                                                    for ome in i2ome))
+    hlg_genes = {}
+    for ome, ome_hlg_gene in hlg_gene_res:
+        if ome_hlg_gene:
+            hlg_genes[ome] = ome_hlg_gene
+
+    gcf_genes = write_ome_output('gcf', gcfs, out_dir, db, cpus, gene2hg)
+    annotation_mngr(hlg_genes, db, wrk_dir, pfam_path, ipr_path, 
+                    gene2hg, out_dir, prefix = 'hlg', cpus = cpus)
+    annotation_mngr(gcf_genes, db, wrk_dir, pfam_path, ipr_path, 
+                    gene2hg, out_dir, prefix = 'gcf', cpus = cpus)
+
+def write_ome_output(prefix, hlgs, out_dir, db, cpus, gene2hg):
+    print(f'\tWriting {prefix.upper()} files', flush = True)
+    write_clus_cmds = []
+    ome2clusters = defaultdict(list)
+    for hlg, loci in hlgs.items():
+        for loc in loci:
+            ome = loc[0][:loc[0].find('_')]
+            ome2clusters[ome].append([loc, hlg])
+
+    ome_dir = out_dir + 'ome/'
+    if not os.path.isdir(ome_dir):
+        os.mkdir(ome_dir)
+    for ome, clusters in ome2clusters.items():
+        if not os.path.isdir(ome_dir + ome):
+            os.mkdir(ome_dir + ome)
+        gff = db[ome]['gff3']
+        out_file = ome_dir + ome + f'/{prefix}.tsv'
+        write_clus_cmds.append([clusters, ome, out_file, gff, gene2hg])
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
+        out_genes = pool.starmap(write_clusters, 
+                                 tqdm(write_clus_cmds, 
+                                      total = len(write_clus_cmds)))
+        pool.close()
+        pool.join()
+    genes = {x[0]: x[1] for x in out_genes if x[1]}
+    return genes
+
+
+def annotation_mngr(hlg_genes, db, wrk_dir, pfam_path, ipr_path, 
+                    gene2hg, out_dir, prefix = 'hlg', cpus = 1):
+    print('\tSearching', flush = True)
+    prot_paths = {}
+    for ome in hlg_genes:
+        prot_paths[ome] = db[ome]['faa']
+
+    ann_res, failedOmes = ann_mngr(
+        hlg_genes, prot_paths, wrk_dir, pfam_path, ipr_path,
+        evalue = 0.0001, threshold = 0.5, cpus = cpus
+        )
+    print('\tAnnotating', flush = True)
+    annotate_clusters_cmds = []
+    for ome, genes in hlg_genes.items():
+        if ome in failedOmes:
+            continue
+        gff_path = db[ome]['gff3']
+        pro_path = db[ome]['faa']
+        try:
+            annotate_clusters_cmds.append([genes, #gff_path, pro_path, 
+                                  ome, out_dir + 'ome/', gene2hg, 
+                                  prefix, ann_res[ome]])
+        except KeyError:
+            pass
+#             annotate_clusters_cmds.append([genes, #gff_path, pro_path, 
+ #                                  ome, out_dir + 'ome/', gene2hg,
+   #                                prefix])
+
+
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
+        clus_info = pool.starmap(annotate_clusters, 
+                                 tqdm(annotate_clusters_cmds, 
+                                      total = len(annotate_clusters_cmds)))
+        pool.close()
+        pool.join()
+
+
+def output_hlgs(db, wrk_dir, hlgs, hlg_omes, i2ome, out_dir, hlg_hgxs,
          omes2dist, omes2patch, hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, 
-         gene2hg, plusminus, ome2i, gcf2clan, dist_thresh, gcc_thresh,
-         patch_thresh, id_perc, pos_perc, ipr_path = None,
+         gene2hg, plusminus, ome2i, hlg2clan, dist_thresh, gcc_thresh,
+         patch_thresh, id_perc, pos_perc, csb_thresh, ipr_path = None,
          pfam_path = None, dnds_dict = {}, cpus = 1):
 
     print('\tWriting cluster scores', flush = True)
+
+    logg2d = calc_logg2d(hlg_omes, omes2dist)
     if hgx2omes2pos:
         hlg_output = write_hlgs_txt_wpos(hlg_hgxs, hlg_omes, logg2d, 
                             hlg2clan, omes2patch, 
@@ -792,75 +962,27 @@ def output_gcfs(db, wrk_dir, hlgs, hlg_omes, i2ome, out_dir, logg2d, hlg_hgxs,
                             out_dir, 'hlg')
 
     if dist_thresh or gcc_thresh or patch_thresh or id_perc or pos_perc:
-        gcf_output, gcfs, gcf_omes, gcf_hgxs  = output_thresholds(dist_thresh, 
-                                   gcc_thresh, patch_thresh, 
-                                   id_perc, pos_perc, hlgs, hlg_hgxs, 
-                                   hlg_omes, omes2dist, omes2patch,
+        gcf_output, gcfs, gcf_omes, gcf_hgxs = output_thresholds(logg2d, 
+                                   dist_thresh, gcc_thresh, patch_thresh, 
+                                   id_perc, pos_perc, csb_thresh, hlgs, hlg_hgxs, 
+                                   hlg_omes, omes2dist, omes2patch, hlg2clan,
                                    hgx2omes2gcc, hgx2omes2id, hgx2omes2pos, 
-                                   out_dir, i2ome):
+                                   out_dir, i2ome)
     else:
         gcf_output, gcfs, gcf_omes, gcf_hgxs = None, hlgs, hlg_omes, hlg_hgxs
 
     output_figures(hlg_output, 'hlg', out_dir)
     if gcf_output:
-        output_figures(hlg_output, 'gcf', out_dir)
+        output_figures(gcf_output, 'gcf', out_dir)
 
+    prefix = 'hlg'
+    hlg_genes = write_ome_output('hlg', hlgs, out_dir, db, cpus, gene2hg)
+    if gcf_output:
+#        prefix = 'gcf'
+        gcf_genes = write_ome_output('gcf', gcfs, out_dir, db, cpus, gene2hg)
+   
+    if pfam_path or ipr_path:    
+        print('\nX. Annotating clusters', flush = True)
 
-    print('\tCompiling clusters from annotations', flush = True)
-    write_clus_cmds = []
-    ome2clusters = defaultdict(list)
-    for gcf, loci in gcfs.items():
-        for loc in loci:
-            ome = loc[0][:loc[0].find('_')]
-            ome2clusters[ome].append([loc, gcf])
-
-    ome_dir = out_dir + 'ome/'
-    if not os.path.isdir(ome_dir):
-        os.mkdir(ome_dir)
-    for ome, clusters in ome2clusters.items():
-        if not os.path.isdir(ome_dir + ome):
-            os.mkdir(ome_dir + ome)
-        gff = db[ome]['gff3']
-        out_file = ome_dir + ome + '/info.out'
-        write_clus_cmds.append([clusters, ome, out_file, gff, gene2hg])
-    with mp.get_context('fork').Pool(processes = cpus) as pool:
-        out_genes = pool.starmap(write_clusters, 
-                                 tqdm(write_clus_cmds, 
-                                      total = len(write_clus_cmds)))
-        pool.close()
-        pool.join()
-    genes = {x[0]: x[1] for x in out_genes if x[1]}
-
-#    hgx_dirTar.join()
-
-    print('\tApplying Pfam annotations', flush = True)
-    prot_paths = {}
-    for ome in genes:
-        prot_paths[ome] = db[ome]['faa']
-
-    if pfam_path or ipr_path:
-        ann_res, failedOmes = ann_mngr(
-            genes, prot_paths, wrk_dir, pfam_path, ipr_path,
-            evalue = 0.01, threshold = 0.5, cpus = cpus
-            )
-    else:
-        ann_res = {}
-    
-    print('\nX. Outputting clusters', flush = True)
-    print('\tCluster biofiles', flush = True)
-    grabClus_cmds = []
-    for ome in genes:
-        if ome in failedOmes:
-            continue
-        gff_path = db[ome]['gff3']
-        pro_path = db[ome]['faa']
-        try:
-            grabClus_cmds.append([genes[ome], gff_path, pro_path, ome, ome_dir, gene2hg, ann_res[ome]])
-        except KeyError:
-            grabClus_cmds.append([genes[ome], gff_path, pro_path, ome, ome_dir, gene2hg])
-
-
-    with mp.get_context('fork').Pool(processes = cpus) as pool:
-        clus_info = pool.starmap(grabClus, grabClus_cmds)
-        pool.close()
-        pool.join()
+    annotation_mngr(hlg_genes, db, wrk_dir, pfam_path, ipr_path, 
+                    gene2hg, out_dir, prefix = 'hlg', cpus = cpus)
