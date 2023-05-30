@@ -13,10 +13,7 @@ from itertools import combinations
 from datetime import datetime
 from mycotools.acc2fa import dbmain as acc2fa
 from mycotools.lib.biotools import gff2list, dict2fa, fa2dict
-from mycotools.lib.kontools import format_path, eprint, collect_files
-
-# NEED to add new MCL output files to removal
-
+from mycotools.lib.kontools import format_path, eprint, collect_files, collect_dirs
 
 def init_log(
     log_file, log_dict
@@ -45,13 +42,17 @@ def init_log(
                 + f'tuning\t{log_dict["tuning"]}\n' \
                 + f'id_percent\t{log_dict["id_percent"]}\n' \
                 + f'pos_percent\t{log_dict["pos_percent"]}\n' \
+                + f'iipr_percent\t{log_dict["iipr_percent"]}\n' \
                 + f'patch_threshold\t{log_dict["patch_threshold"]}\n' \
                 + f'gcc_threshold\t{log_dict["gcc_threshold"]}\n' \
+                + f'dist_threshold\t{log_dict["dist_threshold"]}\n' \
                 + f'partition\t{log_dict["partition"]}\n' \
                 + f'null_samples\t{log_dict["null_samples"]}\n' \
                 + f'n50\t{log_dict["n50"]}\n' \
                 + f'hg_dir\t{log_dict["hg_dir"]}\n' \
-                + f'hgx_dir\t{log_dict["hgx_dir"]}')
+                + f'hgx_dir\t{log_dict["hgx_dir"]}\n' \
+                + f'ipr_path\t{log_dict["ipr_path"]}\n' \
+                + f'pfam_path\t{log_dict["pfam_path"]}')
 
 def read_log(
     log_file, log_dict
@@ -344,9 +345,9 @@ def rm_old_data(
             os.remove(hlgs_file)
         mcl_res = f'{wrk_dir}hlg/loci.clus'
         tosave.extend([mcl_res, mcl_res + '.tmp'])
-        hgx_files = ['hgx2omes2gcc.full.pickle',
-                     'hgx2omes2id.full.pickle',
-                     'hgx2omes2pos.full.pickle']
+        hgx_files = ['gcc.pickle',
+                     'mmi.pickle',
+                     'mmp.pickle']
         for file_ in hgx_files:
             if os.path.isfile(f'{wrk_dir}{file_}'):
                 os.remove(f'{wrk_dir}{file_}')
@@ -435,6 +436,7 @@ def rm_old_data(
 
 def log_check(log_dict, log_path, out_dir, wrk_dir, flag = True):
 
+    gcf_thresh = False
     if not os.path.isfile(log_path):
         log_res = {x: False for x in log_dict}
         try:
@@ -445,8 +447,9 @@ def log_check(log_dict, log_path, out_dir, wrk_dir, flag = True):
     log_res, inflation_1, inflation_2, init_discrep = read_log(log_path, log_dict)
     if any(not log_res[x] for x in log_res):
         failed = set([x for x, v in log_res.items() if not v])
-        for skip in ['patch_threshold', 'gcc_threshold',
-                     'id_percent', 'pos_percent']:
+        for skip in ['patch_threshold', 'gcc_threshold', 'iipr_percent',
+                     'id_percent', 'pos_percent', 'dist_threshold', 'ipr_path',
+                     'pfam_path']:
             if skip in failed:
                 failed.remove(skip)
         if failed:
@@ -463,10 +466,27 @@ def log_check(log_dict, log_path, out_dir, wrk_dir, flag = True):
             except IndexError:
                 init_log(log_path, log_dict)
         else:
-            print(f'\nGCF thresholds changed; outputting new results', flush = True)
-            init_log(log_path, log_dict)
-    
-    return log_res, inflation_1, inflation_2
+            if os.path.isdir(out_dir + 'ome/'):
+                tsvs = set(collect_files(out_dir + 'ome/', 'tsv', recursive = True))
+                ome_dirs = [f'{out_dir}ome/{x}/' for x in os.listdir(out_dir + 'ome/') \
+                            if os.path.isdir(f'{out_dir}ome/{x}/')]
+                if all(f'{x}hlg.tsv' in tsvs for x in ome_dirs):
+                    print('\nBypassing to filtration', flush = True)
+                    gcf_thresh = True
+                else:
+                    init_log(log_path, log_dict)
+            else:
+                init_log(log_path, log_dict)
+    elif os.path.isdir(out_dir + 'ome/'):
+        tsvs = set(collect_files(out_dir + 'ome/', 'tsv', recursive = True))
+        ome_dirs = [f'{out_dir}ome/{x}/' for x in os.listdir(out_dir + 'ome/') \
+                    if os.path.isdir(f'{out_dir}ome/{x}/')]
+        if all(f'{x}hlg.tsv' in tsvs for x in ome_dirs):
+            print('\nBypassing to filtration', flush = True)
+            gcf_thresh = True
+
+
+    return log_res, inflation_1, inflation_2, gcf_thresh
 
 
 def compileCDS(gff_list, ome):
@@ -608,9 +628,16 @@ def compile_tree(i2ome, tree_path, root = []):
         nwk = raw.read()
 
     phylo = load_tree(tree_path)
-    if root:
+    if len(root) == 1:
         phylo = phylo.rooted_with_tip(root[0])
-
+        phylo.write(tree_path, with_distances = True)
+    elif len(root) > 1:
+        nodes = {k: (v, len(v.get_tip_names())) \
+                 for k, v in phylo.get_nodes_dict().items() \
+                 if set(root).issubset(set(v.get_tip_names()))}
+        mrca_tip_len = min([v[1] for v in list(nodes.values())])
+        mrca_edge = [k for k, v in nodes.items() if v[1] == mrca_tip_len]
+        phylo = phylo.rooted_at(mrca_edge)
         phylo.write(tree_path, with_distances = True)
 
     phylo.reassign_names({v: str(i) for i, v in enumerate(i2ome)})
@@ -797,12 +824,12 @@ def sha_tune_file(tune_file):
 
 def init_run(db, out_dir, near_single_copy_genes, constraint_path,
              tree_path, hg_file, plusminus, seed_perc,# clus_perc,
-             hgx_perc, aligner, id_perc, pos_perc,
-             patch_thresh, gcc_thresh,
+             hgx_perc, aligner, id_perc, pos_perc, iipr_perc,
+             patch_thresh, gcc_thresh, dist_thresh,
              samples, n50thresh, flag, min_gene_id, min_hlg_id, inflation_rnd1, 
              inflation_rnd2, simfun,
              tune_file, dist_type, uniq_sp, partition, min_topology_sim,
-             topology_merge, hg_dir, hgx_dir):
+             topology_merge, hg_dir, hgx_dir, ipr_path, pfam_path):
 
     wrk_dir = out_dir + 'working/'
     if not os.path.isdir(wrk_dir):
@@ -833,16 +860,17 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
         'aligner': aligner, 'gene_id': min_gene_id,
         'orig_hlg_id': None, 'hlg_id': min_hlg_id, 'hlg_sim': str(simfun).lower(),
 #        'hlg_percentile': clus_perc, 
-        'id_percent': id_perc, 'pos_percent': pos_perc, 
-        'patch_threshold': patch_thresh,
+        'id_percent': id_perc, 'pos_percent': pos_perc, 'iipr_percent': iipr_perc,
+        'patch_threshold': patch_thresh, 'dist_threshold': dist_thresh,
         'gcc_threshold': gcc_thresh, 'domain_inflation': inflation_rnd1,
         'hlg_inflation': inflation_rnd2,
         'tuning': tune_sha, 'partition': partition, 
         'topology_merge': topology_merge, 'min_topology_sim': min_topology_sim,
         'null_samples': samples, 'n50': n50thresh, 'hg_dir': hg_dir,
-        'hgx_dir': hgx_dir}
+        'hgx_dir': hgx_dir, 'ipr_path': ipr_path, 'pfam_path': pfam_path}
 
-    log_res, inflation_1, inflation_2 = log_check(log_dict, log_path, out_dir, wrk_dir, flag)
+    log_res, inflation_1, inflation_2, gcf_bypass = log_check(log_dict, log_path, 
+                                                              out_dir, wrk_dir, flag)
 
     # symlink files on an individual basis so the new dir is writeable without
     # propagating new changes back to the reference dir
@@ -865,4 +893,4 @@ def init_run(db, out_dir, near_single_copy_genes, constraint_path,
         for i in list(missing_hgx):
             os.symlink(log_dict['hgx_dir'] + i, wrk_dir + 'hgx/' + i)
 
-    return wrk_dir, nul_dir, inflation
+    return wrk_dir, nul_dir, inflation_1, inflation_2, gcf_bypass
