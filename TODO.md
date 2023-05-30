@@ -1,0 +1,8 @@
+- [] Begin USAGE wiki
+- [] Begin INSTALL wiki
+- [] Begin Output wiki
+- [] Build pypi package
+- [] Build conda package
+- [] Update intro page
+- [] Update LICENSE to GNU 3
+- [] Add issue format
