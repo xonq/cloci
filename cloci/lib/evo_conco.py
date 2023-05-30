@@ -10,9 +10,10 @@ from collections import defaultdict
 from mycotools.acc2fa import dbmain as acc2fa
 from mycotools.lib.biotools import gff2list
 from mycotools.lib.kontools import multisub, tardir, collect_files, checkdir, eprint
-from orthocluster.orthocluster.lib.input_parsing import compileCDS2, hg_fa_mngr
-from orthocluster.orthocluster.lib.treecalcs import calc_tmd
+from cloci.cloci.lib.input_parsing import compileCDS2, hg_fa_mngr
+from cloci.cloci.lib.treecalcs import calc_tmd
 
+# NEED todel_hg to remove fully incompatible GCC HGs from HLG_HGXs
 # NEED an option to import OrthoFinder pairwise alignments
 	# not recommended, need higher max target sequences than OrthoFinder 
 def parse_algn_wpos(hgx_dir, hg, hgx_genes):
@@ -47,40 +48,35 @@ def parse_algn_wopos(hgx_dir, hg, hgx_genes):
                 break
     return gene2algn
 
-def get_top_hits_wpos(gene, hlg, hgx_genes, hits, gene2algn, res, ome):
+def get_top_hits_wpos(gene, hlg, hgx_genes, ome_set, hits, gene2algn, res, ome):
     ome_hits = set()
-    while gene2algn[gene]:
-        sbj_gene, sbj_id, sbj_pos = gene2algn[gene][0]
+    ome_len = len(ome_set) - 1
+    for sbj_gene, sbj_id, sbj_pos in gene2algn[gene]:
         sbj_ome = sbj_gene[:sbj_gene.find('_')]
-        # if the subject is also in the checked queries and it is not
-        # a recent paralog of the query species
+    # if the subject is also in the checked queries and it is not
+    # a recent paralog of the query species
         if sbj_gene in hgx_genes and sbj_ome != ome:
-            # grab the hit similarity
+        # grab the hit similarity
             res[hlg][gene][1][sbj_gene] = (sbj_id, sbj_pos,)
             hits.add(sbj_gene)
             ome_hits.add(sbj_ome)
-            if not hgx_genes.difference(hits):
-                return hits, res, gene2algn
-        # add one to the failed count
-        else: 
+            if ome_len == len(ome_hits):
+                return hits, res 
+    # add one to the failed count
+        elif sbj_ome not in ome_set: 
             res[hlg][gene][0] += 1 
-        # proceed to the next query
-        try:
-            gene2algn[gene].pop(0)
-        except IndexError:
-            break
     
-    hgx_omes = set(x[:x.find('_')] for x in list(hgx_genes))
-    if hgx_genes.difference(hits) and hgx_omes.difference(ome_hits):
+    if len(ome_hits) < ome_len:
         # missing gene and no paralog
         res[hlg][gene][2] = True 
 
-    return hits, res, gene2algn
+    return hits, res 
         
-def get_top_hits_wopos(gene, hlg, hgx_genes, hits, gene2algn, res, ome):
+def get_top_hits_wopos(gene, hlg, hgx_genes, ome_set, hits, gene2algn, res, ome):
+
+    ome_len = len(ome_set) - 1
     ome_hits = set()
-    while gene2algn[gene]:
-        sbj_gene, sbj_id = gene2algn[gene][0]
+    for sbj_gene, sbj_id in gene2algn[gene]:
         sbj_ome = sbj_gene[:sbj_gene.find('_')]
         # if the subject is also in the checked queries and it is not
         # a recent paralog of the query species
@@ -89,25 +85,18 @@ def get_top_hits_wopos(gene, hlg, hgx_genes, hits, gene2algn, res, ome):
             res[hlg][gene][1][sbj_gene] = sbj_id
             hits.add(sbj_gene)
             ome_hits.add(sbj_ome)
-
-            if not hgx_genes.difference(hits):
-                return hits, res, gene2algn   
+            if len(ome_hits) == ome_len:
+                return hits, res
         # add one to the failed count
-        else: 
+        elif sbj_ome not in ome_set: 
             res[hlg][gene][0] += 1 
-        # proceed to the next query
-        try:
-            gene2algn[gene].pop(0)
-        except IndexError:
-            break
-    
-    hgx_omes = set(x[:x.find('_')] for x in list(hgx_genes))
-    if hgx_genes.difference(hits) and hgx_omes.difference(ome_hits):
+        
+    if len(ome_hits) < ome_len:
         # missing gene and no paralog
         # biased against convergent assimilation
         res[hlg][gene][2] = True 
 
-    return hits, res, gene2algn   
+    return hits, res
 
 def sim_calc_wpos(res):
     omeScores = defaultdict(dict)
@@ -174,12 +163,16 @@ def hg_sim_calc_wpos(res, min_id, hlg2tot_con):
             ome_gcc = data[0]
             if not data[2]:
                 try:
-                    ome_mi = min([v[0] for v in data[1].values()])
-                    ome_mp = min([v[1] for v in data[1].values()])
+                    mi_p = [v[0] for v in data[1].values()]
+                    ome_mi = min(mi_p)
+                    mi_i = mi_p.index(ome_mi)
+                    mp_p = [v[1] for v in data[1].values()]
+                    ome_mp = mp_p[mi_i]
                 except ValueError:
                     ome_mi, ome_mp = 0, 0
             else:
-                ome_mi, ome_mp = min_id, min_id
+                ome_mi, ome_mp = 0, 0
+    #            ome_mi, ome_mp = min_id, min_id
             if ome not in output_data[hlg]:
                 output_data[hlg][ome] = (ome_gcc, ome_mi * tot_con, ome_mp * tot_con)
             # if there's a paralog, take the best gcc
@@ -202,7 +195,8 @@ def hg_sim_calc_wopos(res, min_id, hlg2tot_con):
                 except ValueError:
                     ome_mi = 0
             else:
-                ome_mi = min_id
+                ome_mi = 0
+#                ome_mi = min_id
             if ome not in output_data[hlg]:
                 output_data[hlg][ome] = (ome_gcc, ome_mi * tot_con)
             # if there's a paralog, take the best gcc
@@ -213,7 +207,7 @@ def hg_sim_calc_wopos(res, min_id, hlg2tot_con):
 
 
 
-def hg_parse_and_calc(hg, hg_dict, hgx_dir, phylo, ome2i, min_id = 30, pos_data = True):
+def hg_parse_and_calc(hg, hg_dict, hgx_dir, ome2i, min_id = 30, pos_data = True):
 
     if pos_data:
        parse_func = parse_algn_wpos
@@ -261,44 +255,52 @@ def hg_parse_and_calc(hg, hg_dict, hgx_dir, phylo, ome2i, min_id = 30, pos_data 
     except IndexError:
         gene2algn = {k: sorted(v, key = lambda x: x[1], reverse = True) \
                      for k, v in gene2algn.items()}
-    res = defaultdict(dict)
+    res = defaultdict(lambda: defaultdict(lambda: [0, {}, False]))
     todel_genes = defaultdict(lambda: defaultdict(list))
 
     hlg2considered = {}
     for hlg, genes in hg_dict.items():
         failed_genes = True
         gene_set = set(genes)
+        omes_set = set(x[:x.find('_')] for x in genes)
 
         while failed_genes:
             failed_genes = []
             # disregard the self from the length
-            hgx_gene_len = len(gene_set) - 1
+            hgx_ome_len = len(omes_set) - 1
+            if hgx_ome_len == 0:
+                ome = genes[0][:genes[0].find('_')]
+                todel_genes[hlg][ome].extend(genes)
+                failed_genes.extend(genes)
+                break
             # for the weighted average, we can start at this step
             # only consider unique omes because we are only taking the max
-            considered_omes = len(set(x[:x.find('_')] for x in genes))
-            hlg2considered[hlg] = considered_omes
+            considered_genes = len(set(x[:x.find('_')] for x in genes))
+            hlg2considered[hlg] = considered_genes
             for gene in genes:
                 ome = gene[:gene.find('_')] # identify the ome
-                if gene not in res[hlg]:
-                    res[hlg][gene] = [0, {}, False]
+#                if gene not in res[hlg]:
+ #                   res[hlg][gene] = [0, {}, False]
         
                 # to identify if the subject is in the family of omes
                 hits = {gene}
                 # while all cluster homologs aren't accounted for and there remain hits
                 if gene not in gene2algn:
                     continue
-                hits, res, gene2algn = top_hits_func(gene, hlg, gene_set, hits, 
+                hits, res = top_hits_func(gene, hlg, gene_set, omes_set, hits, 
                                                      gene2algn, res, ome)
         
                 # if there are missing hits (which means we are disregarding
                 # missing alignments)
-                if hgx_gene_len - len(res[hlg][gene][1]) > 0:
+                if hgx_ome_len - len(res[hlg][gene][1]) > 0:
                     # then get the percent of observed hits that are valid
                     hit_len = res[hlg][gene][0] + len(res[hlg][gene][1])
                     try:
-                        res[hlg][gene][0] = hit_len * considered_omes \
-                                          / (hit_len + res[hlg][gene][0])
+#* considered_genes \
+
+                        res[hlg][gene][0] = len(res[hlg][gene][1]) / hit_len
                     except ZeroDivisionError:
+#                        eprint(hlg, gene, gene_set, omes_set, res[hlg][gene], gene2algn, flush = True)
                         # no valid hits, the gene should not be called in the cluster
                         # typically happens from extension module
                         todel_genes[hlg][ome].append(gene)
@@ -306,13 +308,16 @@ def hg_parse_and_calc(hg, hg_dict, hgx_dir, phylo, ome2i, min_id = 30, pos_data 
                 else:
                     # the GCC for this HG and ome is the total of the genes in this
                     # HG (disregarding self) divided by the total + the failed genes
-                    res[hlg][gene][0] = hgx_gene_len * considered_omes \
-                                      / (hgx_gene_len + res[hlg][gene][0])
+#* considered_genes \
+
+                    res[hlg][gene][0] = hgx_ome_len \
+                                      / (hgx_ome_len + res[hlg][gene][0])
             # have to rerun the calculation if there are failed genes
             for failed_gene in failed_genes:
                 gene_set.remove(failed_gene)
             genes = list(gene_set)
-    
+            omes_set = set(x[:x.find('_')] for x in genes)
+   
     return hg, hg_sim_func(res, min_id, hlg2considered), \
            {hlg: dict(ome_dict) for hlg, ome_dict in todel_genes.items()}, \
            hlg2considered
@@ -333,8 +338,6 @@ def gcc_mngr(
         omesc = hlg_omes[fam]
         if hlg_hgx not in d2id_:
             clus_hgs[fam] = [hlg_hgx, defaultdict(list)]
-    # are some hlg_hgx HGs relics of the original hgx and thus only contain one gene?
-    # would lower evo_conco scores
             hlg_hgx_set = set(hlg_hgx)
             for loc in loci:
                 for gene in loc:
@@ -346,8 +349,6 @@ def gcc_mngr(
                         clus_hgs[fam][1][hg].append(gene)
         elif omesc not in d2id_[hlg_hgx]:
             clus_hgs[fam] = [hlg_hgx, defaultdict(list)]
-    # are some hlg_hgx HGs relics of the original hgx and thus only contain one gene?
-    # would lower evo_conco scores
             hlg_hgx_set = set(hlg_hgx)
             for loc in loci:
                 for gene in loc:
@@ -372,12 +373,13 @@ def gcc_mngr(
     print('\tParsing alignments', flush = True)
     with mp.get_context('fork').Pool(processes = cpus) as pool:
         hg_results = pool.starmap(hg_parse_and_calc,
-                              tqdm(((hg, hg_dict, hgx_dir, phylo, ome2i, min_id) \
+                              tqdm(((hg, hg_dict, hgx_dir, ome2i, min_id) \
                                for hg, hg_dict in hg2genes.items()),
                                total = len(hg2genes)))
         pool.close()
         pool.join()
-
+    
+    
     print('\tQuantifying', flush = True)
     hlg_res = defaultdict(dict)
     deleted = 0
@@ -402,19 +404,36 @@ def gcc_mngr(
                                 todel[hlg].append(i)
             for hlg, iz in todel.items():
                 deleted += len(iz)
-                for i in reversed(iz):
+                for i in sorted(set(iz), reverse = True):
                     del hlgs[hlg][i]
     print(f'\t{deleted} clusters removed due to lacking homology', flush = True)
+
+    todel = set()
+    for hlg, locs in hlgs.items():
+        omes = set(ome2i[loc[0][:loc[0].find('_')]] for loc in locs)
+        if len(omes) > 2:        
+            hlg_omes[hlg] = tuple(sorted(omes))
+        else:
+            todel.add(hlg)
+
+    print(f'\t{len(todel)} HLGs removed for too few remaining omes', flush = True)
+    for hlg in todel:
+        del hlgs[hlg]
+        del hlg_omes[hlg]
+        del hlg_hgxs[hlg]
+        
             
     hgx2omes2gcc = defaultdict(dict)
     hgx2omes2id = defaultdict(dict)
     hgx2omes2pos = defaultdict(dict)
     for hlg, hg_dict in tqdm(hlg_res.items(), total = len(hlg_res)):
+        if hlg in todel:
+            continue
         tot_considered = hlg2tot_considered[hlg]
         hgx, omes = hlg_hgxs[hlg], hlg_omes[hlg]
         gccs, ids, poss = [], [], []
         for hg, res in hg_dict.items():
-            gccs.append(sum([x[0] for x in res])/len(res))
+            gccs.append(sum([x[0] for x in res]))
             ids.append(sum([x[1] for x in res])/len(res))
             try:
                 poss.append(sum([x[2] for x in res])/len(res))
@@ -441,7 +460,8 @@ def gcc_mngr(
     return {**d2gcc, **hgx2omes2gcc}, \
         {**d2id_, **hgx2omes2id}, \
         {**d2pos, **hgx2omes2pos}, \
-        {g: tuple(l) for g, l in hlgs.items()}
+        {g: tuple(l) for g, l in hlgs.items()}, \
+        {g: tuple(o) for g, o in hlg_omes.items()}
 
 
 def find_missing_algns(hgs, hgx_dir):
@@ -615,12 +635,12 @@ def gcc_main(
 
     if os.path.isfile(wrk_dir + old_path):
         print('\tLoading previous coevolution results', flush = True)
-        with open(wrk_dir + 'hgx2omes2gcc.full.pickle', 'rb') as pickin:
+        with open(wrk_dir + 'gcc.pickle', 'rb') as pickin:
             d2gcc = pickle.load(pickin)
-        with open(wrk_dir + 'hgx2omes2id.full.pickle', 'rb') as pickin:
+        with open(wrk_dir + 'mmi.pickle', 'rb') as pickin:
             d2id_ = pickle.load(pickin)
-        if os.path.isfile(wrk_dir + 'hgx2omes2pos.full.pickle'):
-            with open(wrk_dir + 'hgx2omes2pos.full.pickle', 'rb') as pickin:
+        if os.path.isfile(wrk_dir + 'mmp.pickle'):
+            with open(wrk_dir + 'mmp.pickle', 'rb') as pickin:
                 d2pos = pickle.load(pickin)
         else:
             d2pos = {}
@@ -637,7 +657,7 @@ def gcc_main(
               skipalgn = skipalgn, fallback = fallback,
               cpus = cpus)
 
-    d2gcc, d2id_, d2pos, hlgs = gcc_mngr(
+    d2gcc, d2id_, d2pos, hlgs, hlg_omes = gcc_mngr(
         list(hgs), list(ome2i.keys()), hgx_dir, hgx2loc,
         db, gene2hg, plusminus, hg2gene, hlgs,
         hlg_omes, hlg_hgxs, ome2i, minid, phylo,
@@ -647,12 +667,12 @@ def gcc_main(
  #   hgx_dirTar.start() # when to join ...
     with open(f'{wrk_dir}hlgs.pickle', 'wb') as out:
         pickle.dump([hlgs, hlg_omes, hlg_hgxs, hlg2clan], out)
-    with open(wrk_dir + 'hgx2omes2gcc.full.pickle', 'wb') as pickout:
+    with open(wrk_dir + 'gcc.pickle', 'wb') as pickout:
         pickle.dump(d2gcc, pickout)
-    with open(wrk_dir + 'hgx2omes2id.full.pickle', 'wb') as pickout:
+    with open(wrk_dir + 'mmi.pickle', 'wb') as pickout:
         pickle.dump(d2id_, pickout)
     if d2pos:
-        with open(wrk_dir + 'hgx2omes2pos.full.pickle', 'wb') as pickout:
+        with open(wrk_dir + 'mmp.pickle', 'wb') as pickout:
             pickle.dump(d2pos, pickout)
 
-    return d2gcc, d2id_, d2pos, hlgs
+    return d2gcc, d2id_, d2pos, hlgs, hlg_omes
