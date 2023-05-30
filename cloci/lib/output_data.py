@@ -824,7 +824,7 @@ def output_figures(hlg_output, prefix, out_dir):
                        'MMP', 'CSB']
 
     fig = mk_subplots(labels, axes, axes_labels, alpha = 0.6)
-    fig.write_html(out_dir + f'{prefix}_metrics.html')
+    fig.write_html(out_dir + f'{prefix}_proxies.html')
     fig = mk_3d(labels, axes[:3], axes_labels[:3], alpha = 0.7)
     fig.write_html(out_dir + f'{prefix}s.html')
 
