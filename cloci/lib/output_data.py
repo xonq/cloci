@@ -590,7 +590,7 @@ def output_hgxs(hgx2dist, hgx2omes, hgx2i, i2ome, out_dir):
 def write_hlgs_txt_wpos(hlg_hgxs, hlg_omes, logg2d, 
                         hlg2clan, omes2patch, 
                         hgx2omes2gcl, hgx2omes2id, hgx2omes2pos, i2ome,
-                        lut_dir, group_name):
+                        out_dir, group_name):
     hlg_output = []
     for i, omesc in hlg_omes.items():
         hlg_hgx = hlg_hgxs[i]

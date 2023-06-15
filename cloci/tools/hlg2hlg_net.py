@@ -3,6 +3,7 @@ import sys
 import gzip
 import shutil
 import pickle
+import random
 import argparse
 #import networkx as nx
 import numpy as np
@@ -101,7 +102,8 @@ def import_adj(adj_file, loci2grab, minimum, ol2nl):
     return adj_arr
 
 def make_network(net_file, adj_arr, locIdata, nl2ol, img, 
-                 annotate = False, locI2color = {}, locI2name = {}, scale = 1):
+                 annotate = False, font_size = 20,
+                 locI2color = {}, locI2name = {}, scale = 1):
     print('\tLoading adjacency matrix', flush = True)
     g = Graph(directed = False)
     idx = adj_arr.nonzero()
@@ -215,19 +217,28 @@ def make_network(net_file, adj_arr, locIdata, nl2ol, img,
     g.vp['fill'] = v_fil_col
 
 
-    if img:
-        graph_draw(g, vertex_halo_color = g.vp['fill'], vertex_color = [0,0,0,1],
-                   vertex_fill_color = g.vp['fill'], 
- #                   vertex_text_position = 1, vertex_aspect = 1,
-    #                vertex_text = g.vp['name'], #vertex_size = g.degree_property_map('total'),
-     #                  vertex_font_size=12, vertex_text = g.vp['name'], 
-#                               vertex_font_size=18, vertex_size = 5, output = (dim, dim),
-                   edge_color = [0, 0, 0, 1], output = net_file, edge_pen_width = eprop)
-#         graphviz_draw(g, vcolor = g.vp['hex'], ecolor = '#000000', overlap = False,
-  #                     output = net_file, penwidth = eprop, vprops = {'vertex_text': g.vp['name']}) 
+    if not annotate:
+        if img:
+            graph_draw(g, vertex_halo_color = g.vp['fill'], vertex_color = [0,0,0,1],
+                       vertex_fill_color = g.vp['fill'], 
+     #                   vertex_text_position = 1, vertex_aspect = 1,
+        #                vertex_text = g.vp['name'], #vertex_size = g.degree_property_map('total'),
+         #                  vertex_font_size=12, vertex_text = g.vp['name'], 
+    #                               vertex_font_size=18, vertex_size = 5, output = (dim, dim),
+                       edge_color = [0, 0, 0, 1], output = net_file, edge_pen_width = eprop)
+    #         graphviz_draw(g, vcolor = g.vp['hex'], ecolor = '#000000', overlap = False,
+      #                     output = net_file, penwidth = eprop, vprops = {'vertex_text': g.vp['name']}) 
+        else:
+            g.save(net_file)
     else:
-        g.save(net_file)
-
+        if img:
+            graph_draw(g, vertex_halo_color = g.vp['fill'], vertex_color = [0,0,0,1],
+                       vertex_fill_color = g.vp['fill'], vertex_font_size = font_size,
+                       vertex_font_family = 'arial',
+                        vertex_text = g.vp['name'], #vertex_size = g.degree_property_map('total'),
+                       edge_color = [0, 0, 0, 1], output = net_file, edge_pen_width = eprop)
+        else:
+            g.save(net_file)
 
 
 def parse_hlgs(hlg_file):
@@ -243,7 +254,9 @@ def parse_hlgs(hlg_file):
 
 
 def main(clans, hlgs, res_dir, minimum, passing = False, db = None, rank = None,
-         ext = 'pdf', img = True, annotate = False, highlight = set(), scale = 0.25):
+         ext = 'pdf', img = True, annotate_loc = False, annotate_hlg = False,
+         highlight = set(), scale = 0.25, chrono = False, font_size = 20,
+         colors = []):
     net_dir = res_dir + 'net/'
     if not os.path.isdir(net_dir):
         os.mkdir(net_dir)
@@ -286,15 +299,49 @@ def main(clans, hlgs, res_dir, minimum, passing = False, db = None, rank = None,
                          set(locI2hlg.keys()), minimum, ol2nl)
 
     print('\nMaking network', flush = True)
+    locI2color = {}
+    locI2name = {}
+
+    if rank:
+        locI2rank = {}
+        for locI, d in locI2hlg.items():
+            o = d[1]
+            tax = db[o]['taxonomy'][rank]
+            locI2rank[locI] = tax
+        tax2color = {k: None for k in locI2rank.values()}
+        if not colors:
+            colors = getColors(len(tax2color), ignore = ['#ffffff', '#000000'])
+            random.shuffle(colors)
+
+        for i, k in enumerate(list(tax2color.keys())):
+            tax2color[k] = [x/255.0 for x in hex2rgb(colors[i])]
+            tax2color[k].append(0.8)
+
+        locI2color = {k: tax2color[v] for k, v in locI2rank.items()}
+
     modules = {i: v for i, v in enumerate(list(locI2hlg.values()))}
+
     if highlight:
         locI2color = {x: (250/255, 128/255, 114/255, 0.8) for x in list(highlight)}
         locI2name = {x: locI2hlg[x][1] for x in list(highlight)}
+    if annotate_hlg:
+        locI2name = {k: str(v[0]) for k, v in locI2hlg.items()}
+        annotate = True
+    elif annotate_loc:
+        annotate = True
     else:
-        locI2color = {}
-        locI2name = {}
+        annotate = False
+
+    if chrono:
+        locI2name = {k: int(v) for k, v in locI2name.items()}
+        order = sorted(set(locI2name.values()))
+        i02i1 = {}
+        for i, v in enumerate(order):
+            i02i1[v] = i
+        locI2name = {k: i02i1[v] for k, v in locI2name.items()}
+
     make_network(out_file, adj_arr, modules, nl2ol, img, 
-                 annotate, locI2color, locI2name, scale)
+                 annotate, font_size, locI2color, locI2name, scale)
     print(f'\nNetwork outputted to {out_file}', flush = True)
 
 
@@ -307,18 +354,24 @@ if __name__ == '__main__':
         )
     parser.add_argument('-i', '--input', help = 'Completed Cloci directory', required = True)
     parser.add_argument('-c', '--clans', help = 'Input clans; "-" for stdin')
-    parser.add_argument('-f', '--hlgs', help = 'Input GCFs; "-" for stdin')
+    parser.add_argument('-g', '--hlgs', help = 'Input GCFs; "-" for stdin')
     parser.add_argument('-l', '--locids', help = 'LocIDs for highlighting')
     parser.add_argument('-p', '--passing', help = 'Passing GCFs only',
                         action = 'store_true')
     parser.add_argument('-m', '--min', type = float, default = 0,
         help = '0 < -m < 1: Minimum GCF similarity for network edges')
-    parser.add_argument('-a', '--annotate', action = 'store_true',
-        help = 'Annotate nodes with their locusID')
     parser.add_argument('-d', '--database', help = 'MTDB for taxonomy',
         default = primaryDB())
     parser.add_argument('-r', '--rank', 
         help = f'Rank for taxonomy node coloring: {ranks}')
+    parser.add_argument('-al', '--annotate_loc', action = 'store_true',
+        help = 'Annotate nodes with their locusID')
+    parser.add_argument('-ah', '--annotate_hlg', action = 'store_true',
+        help = 'Annotate nodes with the HLG')
+    parser.add_argument('--convert', action = 'store_true', 
+        help = 'Convert annotation IDs into chronological numbers')
+    parser.add_argument('-f', '--font_size', type = int, default = 20)
+    parser.add_argument('--colors', help = 'List of HEX colors for node annotation')
     parser.add_argument('-e', '--extension', help = f'Network file format: {img_exts}, {net_exts}',
         default = 'pdf')
     parser.add_argument('-s', '--scale', type = float, default = 0.1,
@@ -384,8 +437,16 @@ if __name__ == '__main__':
     else:
         locids = set()
 
-    db = mtdb(format_path(args.database))
+    db = mtdb(format_path(args.database)).set_index()
+
+    if args.colors:
+        colors_p = args.colors.replace('"','').replace("'",'').replace(',', ' ').split()
+        colors = ['#' + color if not color.startswith('#') else color for color in colors_p]
+    else:
+        colors = []
     
     main(clans, hlgs, format_path(in_dir, force_dir = True), 
          args.min, args.passing, db, rank, ext = ext, img = img,
-         annotate = args.annotate, highlight = locids, scale = args.scale)
+         annotate_loc = args.annotate_loc, annotate_hlg = args.annotate_hlg,
+         highlight = locids, scale = args.scale, chrono = args.convert,
+         font_size = args.font_size, colors = colors)

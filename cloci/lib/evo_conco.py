@@ -621,7 +621,7 @@ def run_blast(hgs, db, hg_dir, hgx_dir, algorithm = 'diamond',
 def gcl_main(
     hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
     algorithm, db, gene2hg, plusminus, hg2gene, phylo,
-    old_path = 'hgx2omes2gcl.pickle',
+    old_path = 'gcl.pickle',
     hlgs = None, hlg_hgxs = None,
     hlg_omes = None, hlg2clan = {}, 
     cpus = 1, printexit = False,

@@ -577,7 +577,7 @@ def main(
     #    del hlg_hgxs[i]
      #   del hlg2clan[i]
 
-    print('\nVI. Quantifying HLG gene committment and intrafamily similarity', flush = True)
+    print('\nVI. Quantifying gene committment and intrafamily similarity', flush = True)
     hgx2omes2gcl, hgx2omes2id, hgx2omes2pos, hlgs, hlg_omes = evo_conco.gcl_main( 
                             hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
                             aligner, db, gene2hg, plusminus, hg2gene, phylo,
@@ -595,9 +595,9 @@ def main(
     runHGxs = [
         hgx for i, hgx in hlg_hgxs.items()
         ] # hgxs without pdd scores
-    print('\nVII. Quantifying HLG pdd', flush = True)
+    print('\nVII. Quantifying HLG Phylogenetic Distribution Sparsity', flush = True)
     omes2patch = treecalcs.patch_main(phylo, runOmes, wrk_dir,
-                            old_path = 'pdd.full.pickle', 
+                            old_path = 'pds.pickle', 
                             cpus = cpus) # could make more efficient by skipping redos
 
 
@@ -687,8 +687,8 @@ if __name__ == '__main__':
              + ' calculations', default = False)
 
     nul_opt = parser.add_argument_group('Null parameters')
-    nul_opt.add_argument('-nr', '--null_rank', 
-        help = f'Taxonomic rank for local null models {null_ranks}')
+    nul_opt.add_argument('-nr', '--null_rank', default = 'species',
+        help = f'Taxonomic rank for local null models {null_ranks}; DEFAULT: species')
     nul_opt.add_argument('-np', '--null_partitions', 
         help = 'Tab-delimited file with omes for each null sample group on ' \
              + 'separate lines "#<LINEAGE>\\n<OME1> <OME2> <OMEn>"')

@@ -417,7 +417,9 @@ def loc2loc_sim_mngr(clan_arr, finished_file, max_complete, loci, hgLoci,
     clan_arr = clan_arr.tocsr()
     # a matrix representing the cardinality of the intersection of hg_locs
     adj_arr = csr_matrix(triu(clan_arr @ clan_arr.transpose()))
-    # less than two gene overlap is set to 0
+    # less than two gene overlap is set to 0, will bias against small clusters
+    # only have two genes; may lead to fragmented network topology if clusters
+    # tend to be that small. 
     adj_arr.data[adj_arr.data < 2] = 0
 
     hits = np.split(adj_arr.indices, adj_arr.indptr)[1:-1]

@@ -68,7 +68,7 @@ def GrabHits(clociGenes, antismashGenes, gene2cluster):
 
     return list(set(hits))
 
-def OmeClusMngr(ome, cloci_dir, as_dir):
+def ome_clus_mngr(ome, cloci_dir, as_dir):
     print(ome, flush = True)
     try:
         o2cGenes, o2cGene2Cluster, o2cMean, o2cMedian = GrabGenes_cloci(
@@ -110,7 +110,7 @@ def OmeClusMngr(ome, cloci_dir, as_dir):
 
     return ome, stats
 
-def WriteStatResults(results, out_file):
+def write_stat_results(results, out_file):
     data = {
         k: v for k,v in sorted({
             x[0]: x[1] for x in results
@@ -118,9 +118,9 @@ def WriteStatResults(results, out_file):
             )
         } # sort stats by ome
     header = [
-        'ome', 'o2cClus', 'o2cMeanGenesPerClus', 
-        'o2cMedianGenesPerClus', 'o2cRecoveredByAS', 'asClus', 
-        'asMeanGenesPerClus', 'asMedianGenesPerClus', 'asRecoveredByOG2clus'
+        'ome', 'clus', 'mean_genes_per', 
+        'median_genes_per' #,0 'o2cRecoveredByAS', 'asClus', 
+#        'asMeanGenesPerClus', 'asMedianGenesPerClus', 'asRecoveredByOG2clus'
         ]
     header_str = '#' + '\t'.join(header) + '\n'
     with open(out_file, 'w') as out:
@@ -131,46 +131,46 @@ def WriteStatResults(results, out_file):
             d = [
                 ome, stats[0][1][0], stats[0][1][1], stats[0][1][2]
                 ]
-            if stats[1][1][0]: # if there are antismash clusters
-                d.extend([
-                    stats[0][1][3]/stats[0][1][0],
-                    stats[1][1][0], stats[1][1][1], stats[1][1][2],
-                    stats[1][1][3]/stats[1][1][0]
-                ])
-            else:
-                d.extend(['', '', '', '', ''])
+#            if stats[1][1][0]: # if there are antismash clusters
+ #               d.extend([
+  #                  stats[0][1][3]/stats[0][1][0],
+   #                 stats[1][1][0], #stats[1][1][1], stats[1][1][2],
+#                    stats[1][1][3]/stats[1][1][0]
+    #            ])
+    #        else:
+      #          d.extend(['', '', '', '', ''])
             out.write('\t'.join([
                 str(x) for x in d
                 ]) + '\n')
 
-def CalcClusterStats(db, cloci_dir, as_dir, cpus = 1):
-    calcStats_cmds = []
+def calc_cluster_stats(db, cloci_dir, cpus = 1):
+    calc_stats_cmds = []
     for ome in db.set_index():
         if os.path.isdir(cloci_dir + 'ome/' + ome):
-            calcStats_cmds.append(
-                [ome, cloci_dir, as_dir]
+            calc_stats_cmds.append(
+                [ome, cloci_dir, None]
                 )
 
     with mp.Pool(processes = cpus) as pool:
-        res = pool.starmap(OmeClusMngr, calcStats_cmds)
+        res = pool.starmap(ome_clus_mngr, calc_stats_cmds)
 
-    WriteStatResults(res, cloci_dir + 'stats.tsv')
+    write_stat_results(res, cloci_dir + 'stats.tsv')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description = 'Summarize cloci output')
     parser.add_argument('-d', '--db', default = primaryDB())
     parser.add_argument('-c', '--cloci', required = True, help = 'cloci directory')
-    parser.add_argument('-a', '--antismash', help = 'antiSMASH directory')
+#    parser.add_argument('-a', '--antismash', help = 'antiSMASH directory')
     parser.add_argument('--cpu', default = 1, type = int)
     args = parser.parse_args()
 
     db = mtdb(format_path(args.db))
     o2c_dir = format_path(args.cloci)
-    if args.antismash:
-        as_dir = format_path(args.antismash)
-    else:
-        as_dir = None
+ #   if args.antismash:
+  #      as_dir = format_path(args.antismash)
+   # else:
+    #    as_dir = None
 
-    CalcClusterStats(db, o2c_dir, as_dir, args.cpu)
+    calc_cluster_stats(db, o2c_dir, args.cpu)
 
     sys.exit(0)

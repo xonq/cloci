@@ -6,7 +6,7 @@ import pickle
 import multiprocessing as mp
 from tqdm import tqdm
 from cogent3 import PhyloNode
-from itertools import combinations
+from itertools import combinations, chain
 from collections import defaultdict, Counter
 from mycotools.lib.biotools import gff2list
 from mycotools.lib.kontools import eprint, collect_files
@@ -95,12 +95,19 @@ def gen_null_dict_omes(db, i2ome, combo_dict, sample = 10000, omes = []):
         nulls.extend(combo_dict[ome]) # extend all combos to the null
     
     # randomly sample while accounting for oversampled spp
+    # NO DO NOT DO THIS. This approach was designed to account for sampling bias
+    # in null distributions that have oversampled taxa, e.g. Saccharomyces, Cryptococcus
+    # However, lineages that are not monophyletic in the microsynteny tree will have
+    # a chance of small distances being enough to be declared unexpected because
+    # the sampling bias wasn't considered.
     spp2omes, null_list = defaultdict(list), []
     [spp2omes[db[i2ome[x]]['taxonomy']['species']].append(x) for x in omes]
     spp = list(spp2omes.keys())
+    sp_omes = list(chain(*list(spp2omes.values())))
     for i in range(sample):
-        rand_sp = random.choice(spp)
-        rand_ome = random.choice(spp2omes[rand_sp])
+#        rand_sp = random.choice(spp)
+#        rand_ome = random.choice(spp2omes[rand_sp])
+        rand_ome = random.choice(sp_omes)
         null_list.append(random.choice(combo_dict[rand_ome]))
         
     reps = {k: v for k, v in Counter(null_list).items() if v > 1}
