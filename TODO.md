@@ -17,3 +17,5 @@
 - [ ] Account for alternate splicing appropriately
 - [ ] Implement probabilistic pass for 2 HG HG combinations
 - [ ] Account for duplicates of HGs on edge of cluster
+- [ ] Add Pfam extraction feature
+- [ ] Add GO extraction feature
