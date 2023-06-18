@@ -4,10 +4,10 @@
 - [ ] Begin Output wiki
 - [ ] Build pypi package
 - [ ] Build conda package
-- [ ] Update intro page
-- [ ] Update LICENSE to GNU 3
+- [x] Update intro page
 - [ ] Add issue format
 - [ ] Mirror with GitHub
+- [ ] Annotate code
 
 ## Algorithm improvements
 - [ ] Account for tandem dup HGs
