@@ -9,12 +9,6 @@ Please also note that this software interfaces with the comparative genomics sof
 ## PURPOSE
 The most common gene cluster detection algorithms focus on canonical “core” biosynthetic functions many gene clusters encode, while overlooking uncommon or unknown cluster classes. These overlooked clusters are a potential source of novel natural products and comprise an untold portion of overall gene cluster repertoires. Unbiased, function-agnostic detection algorithms therefore provide an opportunity to reveal novel classes of gene clusters and more broadly define genome organization. *CLOCI* (Co-occurrence Locus and Orthologous Cluster Identifier) is an algorithm that identifies gene clusters using multiple proxies of selection for coordinated gene evolution. Our approach generalizes gene cluster detection and gene cluster family circumscription, improves detection of multiple known functional classes, and unveils noncanonical gene clusters. CLOCI is suitable for genome-enabled specialized metabolite mining, and presents an easily tunable approach for delineating gene cluster families and homologous loci.
 
-![Recovery of 68 reference clusters](https://gitlab.com/xonq/cloci/-/raw/master/etc/recovery.png)
-
-![Boundary assessment of 33 reference
-clusters](https://gitlab.com/xonq/cloci/-/raw/master/etc/boundaries.png)
-
-
 <br />
 
 ## INSTALL
@@ -67,7 +61,16 @@ cloci -d agaricomycotina.mtdb -r <ROOT_OME> -o <PREVIOUS_DIR>
 
 
 ## ON THE ALGORITHM
-
+### Pipeline
 ![CLOCI](https://gitlab.com/xonq/cloci/-/raw/master/etc/pipeline.png)
 
+<br />
 
+### Recovery of 68 reference clusters
+
+![Recovery of 68 reference clusters](https://gitlab.com/xonq/cloci/-/raw/master/etc/recovery.png)
+
+
+### Boundary assessment of 33 reference clusters
+![Boundary assessment of 33 reference
+clusters](https://gitlab.com/xonq/cloci/-/raw/master/etc/boundaries.png)
