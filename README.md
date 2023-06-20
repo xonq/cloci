@@ -64,12 +64,8 @@ cloci -d agaricomycotina.mtdb -r <ROOT_OME> -o <PREVIOUS_DIR>
 ### Pipeline
 ![CLOCI](https://gitlab.com/xonq/cloci/-/raw/master/etc/pipeline.png)
 
-<br />
-
 ### Recovery of 68 reference clusters
-
 ![Recovery of 68 reference clusters](https://gitlab.com/xonq/cloci/-/raw/master/etc/recovery.png)
-
 
 ### Boundary assessment of 33 reference clusters
 ![Boundary assessment of 33 reference
