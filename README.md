@@ -15,12 +15,6 @@ The most common gene cluster detection algorithms focus on canonical “core” 
 clusters](https://gitlab.com/xonq/cloci/-/raw/master/etc/boundaries.png)
 
 
-<br /><br />
-
-## APPROACH
-![CLOCI](https://gitlab.com/xonq/cloci/-/raw/master/etc/pipeline.png)
-
-
 <br />
 
 ## INSTALL
@@ -68,3 +62,12 @@ Resume a CLOCI run, i.e. to add proxy thresholds or resume following error
 ```bash
 cloci -d agaricomycotina.mtdb -r <ROOT_OME> -o <PREVIOUS_DIR>
 ```
+
+<br /><br />
+
+
+## ON THE ALGORITHM
+
+![CLOCI](https://gitlab.com/xonq/cloci/-/raw/master/etc/pipeline.png)
+
+
