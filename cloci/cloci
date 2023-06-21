@@ -733,7 +733,7 @@ if __name__ == '__main__':
         help = 'Null percentile of HG pair distances; DEFAULT: 20')
     thr_opt.add_argument('-xp', '--hgx_percentile', type = int,
         help = 'Null percentile [0 < value < 100] of HGx microsynteny distances. ' \
-             + 'Must be less than -fp; DEFAULT: 65', default = 65)
+             + 'Must be less than -fp; DEFAULT: 60', default = 60)
 #    thr_opt.add_argument('-fp', '--gcf_percentile', type = int, default = 0, 
  #       help = 'Pseudonull percentile [0 < value < 100] of GCF microsynteny distances')
     thr_opt.add_argument('-ip', '--id_percent', default = 0, type = float,
@@ -765,8 +765,10 @@ if __name__ == '__main__':
         help = 'Rerun with new parameters and overwrite incompatible data')
     run_opt.add_argument('--force', action = 'store_true',
         help = 'Force rerun over bypassing')
-    run_opt.add_argument('--compress', action = 'store_true', help = 'Compress run')
-    run_opt.add_argument('--cpus', default = 1, type = int)
+    run_opt.add_argument('--compress', action = 'store_true', 
+        help = 'Compress run; SEMI-FUNCTIONAL')
+    run_opt.add_argument('--cpus', default = mp.cpu_count(), type = int,
+                         help = 'DEFAULT: all')
 
     dir_opt = parser.add_argument_group('Alternative directories')
     dir_opt.add_argument('-o', '--output_dir', 
