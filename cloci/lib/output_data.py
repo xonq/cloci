@@ -301,9 +301,8 @@ def output_res_faas(genes_in, prot_paths, ann_dir, cpus = 1):
 
     return set(ome for ome, passing in res if not passing)
 
-def call_hmmsearch(ome, pfam, ann_dir, threads = 4):
+def call_hmmsearch(ome, pfam, ann_dir, faa_file, threads = 4):
     out_file = ann_dir + ome + '_pfam.out'
-    faa_file = ann_dir + ome + '.faa'
     if not os.path.isfile(out_file):
         hmmsearch = subprocess.call([
             'hmmsearch', '--cpu', str(threads), 
@@ -321,7 +320,8 @@ def run_hmmsearch(pfam, passing_omes, ann_dir, cpus):
     threads = 4
     with mp.Pool(processes = round(cpus/2)) as pool:
         hmm_res = pool.starmap(call_hmmsearch, 
-                               tqdm(((ome, pfam, ann_dir, threads) \
+                               tqdm(((ome, pfam, ann_dir,
+                                     f'{ann_dir}{ome}.faa', threads) \
                                      for ome in list(passing_omes)),
                                     total = len(passing_omes)))
 
