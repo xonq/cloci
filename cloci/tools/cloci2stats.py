@@ -91,15 +91,15 @@ def calc_stats(ome, f, gff_path, alia = None):
     genes_in_clus.sort()
     median_gic = genes_in_clus[round(len(genes_in_clus)/2) - 1]
     if overall_anns:
-        shannon = calc_clus_shannon(overall_anns)
+        alpha = calc_clus_shannon(overall_anns)
     else:
-        shannon = None
+        alpha = None
 
     if not alia:
         alia = count_transcripts(gff_path)
     perc_clus = tot_gic/alia
 
-    return ome, hlgs, mean_gic, median_gic, perc_clus, alia, shannon
+    return ome, hlgs, mean_gic, median_gic, perc_clus, alia, alpha
                 
 def summarize_stats(ome_stats, rank, hlg2data, db, tmp_path):
     ome2alia = {}
@@ -200,10 +200,17 @@ def output_stats(out_file, tax_dict):
             sd = data['sd'][round(len(data['sd'])/2 - 1)]
             line = f'{tax}\t{tmd}\t{gcl}\t{mmi}\t{mmp}\t{csb}\t{pds}\t{genes}\t{pc}\t{sd}\n'
             out1.write(line)
-   
 
-def main(cloci_dir, db, rank, cpus = 1):
+
+def main(cloci_dir, db, rank, gamma = False, annotation_dir = None, cpus = 1):
     db = db.set_index()
+
+    if gamma:
+        if not annotation_dir:
+            annotation_dir = cloci_dir + 'annotations/'
+        if not os.path.isdir(annotation_dir):
+            os.mkdir(annotation_dir)
+        
 
     print('\nCollecting data for omes', flush = True)
     ome_dir = cloci_dir + 'ome/'
@@ -264,6 +271,10 @@ if __name__ == '__main__':
     parser.add_argument('-i', '--input', required = True, help = 'CLOCI input directory')
     parser.add_argument('-r', '--rank', help = f'{ranks}; DEFAULT: ome')
     parser.add_argument('-d', '--mtdb', help = 'MycotoolsDB')
+    parser.add_argument('-g', '--gamma', action = 'store_true',
+        help = 'Calculate gamma and beta diversity')
+    parser.add_argument('-a', '--annotations', 
+        help = '[-g] Directory of tbl-formatted Pfam annotations for gamma diversity, labeled <ome>.out')
     parser.add_argument('-c', '--cpu', type = int)
     args = parser.parse_args()
 
@@ -272,5 +283,10 @@ if __name__ == '__main__':
         eprint('\nERROR: invalid -r', flush = True)
         sys.exit(3)
 
-    main(format_path(args.input), mtdb(format_path(args.mtdb)), rank, cpus = args.cpu)
+    if args.gamma:
+        findExecs(['hmmsearch', exit = set('hmmsearch')])
+
+
+    main(format_path(args.input), mtdb(format_path(args.mtdb)), rank, 
+         gamma = False, annotation_dir = format_path(args.annotations), cpus = args.cpu)
     sys.exit(0)
