@@ -293,7 +293,7 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--rank', help = f'{ranks}; DEFAULT: ome')
     parser.add_argument('-d', '--mtdb', help = 'MycotoolsDB')
 #    parser.add_argument('-g', '--gamma', action = 'store_true',
-        help = 'Calculate gamma and beta diversity')
+#        help = 'Calculate gamma and beta diversity')
  #   parser.add_argument('-a', '--annotations', 
    #     help = '[-g] Directory of tbl-formatted Pfam annotations for gamma diversity, labeled <ome>.out')
   #  parser.add_argument('-p', '--pfam', help = '[-g] Pfam.hmm path')
