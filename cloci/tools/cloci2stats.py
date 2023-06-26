@@ -8,7 +8,8 @@ import argparse
 import multiprocessing as mp
 from math import log
 from collections import defaultdict, Counter
-from mycotools.lib.kontools import collect_files, eprint, format_path
+from cloci.cloci.lib.output_data import run_hmmsearch, parse_hmm_res
+from mycotools.lib.kontools import collect_files, eprint, format_path, findExecs
 from mycotools.lib.biotools import gff3Comps, gff2list
 from mycotools.lib.dbtools import mtdb
 
@@ -48,7 +49,7 @@ def count_transcripts(gff_path):
     alia = set(aliases)
     return len(alia)
 
-def calc_clus_shannon(top_anns):
+def calc_shannon(top_anns):
     len_anns = len(top_anns)
     ann_counts = Counter(top_anns)
     return -sum([v/len_anns * log(v/len_anns) for v in ann_counts.values()])
@@ -91,7 +92,7 @@ def calc_stats(ome, f, gff_path, alia = None):
     genes_in_clus.sort()
     median_gic = genes_in_clus[round(len(genes_in_clus)/2) - 1]
     if overall_anns:
-        alpha = calc_clus_shannon(overall_anns)
+        alpha = calc_shannon(overall_anns)
     else:
         alpha = None
 
@@ -202,14 +203,34 @@ def output_stats(out_file, tax_dict):
             out1.write(line)
 
 
-def main(cloci_dir, db, rank, gamma = False, annotation_dir = None, cpus = 1):
+def calc_gamma_diversity(ome, ann_dir):
+    """Calculate genome-wide Shannon diversity referencing the top hit,
+    excludes genes with missing annotations"""
+    null, ann_res = parse_hmm_res(ome, ann_dir, 0.001, 0.5, 1)
+    gamma_diversity = calc_shannon(list(ann_res.values()))
+    return ome, gamma_diversity
+
+
+def main(cloci_dir, db, rank, gamma = False, ann_dir = None, 
+         pfam = False, cpus = 1):
+
     db = db.set_index()
 
     if gamma:
-        if not annotation_dir:
-            annotation_dir = cloci_dir + 'annotations/'
-        if not os.path.isdir(annotation_dir):
-            os.mkdir(annotation_dir)
+        if not ann_dir:
+            ann_dir = cloci_dir + 'genome_ann/'
+        if not os.path.isdir(ann_dir):
+            os.mkdir(ann_dir)
+        annotations = collect_files(ann_dir, 'out')
+        omes = [os.path.basename(x[:-4]) for x in annotations]
+        to_run = sorted(set(db.keys()).difference(set(omes)))
+        if to_run:
+            print(f'\nAnnotating {len(to_run)} full genomes')
+            failed_omes = run_hmmsearch(pfam, to_run, ann_dir, cpus, db = db)
+            passing_omes = sorted(set(db.keys()).difference(set(failed_omes)))
+            
+            ann_res = compile_hmm_res(ann_dir, passing_omes, cpus = cpus, 
+                                      max_hits = 1)
         
 
     print('\nCollecting data for omes', flush = True)
@@ -271,10 +292,13 @@ if __name__ == '__main__':
     parser.add_argument('-i', '--input', required = True, help = 'CLOCI input directory')
     parser.add_argument('-r', '--rank', help = f'{ranks}; DEFAULT: ome')
     parser.add_argument('-d', '--mtdb', help = 'MycotoolsDB')
-    parser.add_argument('-g', '--gamma', action = 'store_true',
+#    parser.add_argument('-g', '--gamma', action = 'store_true',
         help = 'Calculate gamma and beta diversity')
-    parser.add_argument('-a', '--annotations', 
-        help = '[-g] Directory of tbl-formatted Pfam annotations for gamma diversity, labeled <ome>.out')
+ #   parser.add_argument('-a', '--annotations', 
+   #     help = '[-g] Directory of tbl-formatted Pfam annotations for gamma diversity, labeled <ome>.out')
+  #  parser.add_argument('-p', '--pfam', help = '[-g] Pfam.hmm path')
+
+
     parser.add_argument('-c', '--cpu', type = int)
     args = parser.parse_args()
 
@@ -283,10 +307,11 @@ if __name__ == '__main__':
         eprint('\nERROR: invalid -r', flush = True)
         sys.exit(3)
 
-    if args.gamma:
-        findExecs(['hmmsearch', exit = set('hmmsearch')])
+#    if args.gamma:
+ #       findExecs(['hmmsearch', exit = set('hmmsearch')])
 
 
-    main(format_path(args.input), mtdb(format_path(args.mtdb)), rank, 
-         gamma = False, annotation_dir = format_path(args.annotations), cpus = args.cpu)
-    sys.exit(0)
+    main(format_path(args.input), mtdb(format_path(args.mtdb)), rank, cpus = args.cpu)
+  #       gamma = False, ann_dir = format_path(args.annotations), 
+   #      pfam = format_path(args.pfam),    
+   sys.exit(0)

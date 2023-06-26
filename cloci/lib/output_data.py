@@ -315,11 +315,20 @@ def call_hmmsearch(ome, pfam, ann_dir, faa_file, threads = 4):
     return ome, hmmsearch
 
 
-def run_hmmsearch(pfam, passing_omes, ann_dir, cpus):
+def run_hmmsearch(pfam, passing_omes, ann_dir, cpus, 
+                  db = None, threads = 4):
+    """Manage running hmmsearch for Pfam annotations. Default runs just the
+    Pfam hits, inputting a db runs for the full genome"""
 
-    threads = 4
     with mp.Pool(processes = round(cpus/2)) as pool:
-        hmm_res = pool.starmap(call_hmmsearch, 
+        if db:
+            hmm_res = pool.starmap(call_hmmsearch, 
+                                   tqdm(((ome, pfam, ann_dir,
+                                     db[ome]['faa'], threads) \
+                                     for ome in list(passing_omes)),
+                                    total = len(passing_omes)))
+        else:
+            hmm_res = pool.starmap(call_hmmsearch, 
                                tqdm(((ome, pfam, ann_dir,
                                      f'{ann_dir}{ome}.faa', threads) \
                                      for ome in list(passing_omes)),
@@ -367,7 +376,7 @@ def run_ipr_scan(iprscan, passing_omes, ann_dir, cpus):
 
 
 
-def parse_hmm_res(ome, ann_dir, evalue, threshold):
+def parse_hmm_res(ome, ann_dir, evalue, threshold, max_hits = None):
     ome_out = ann_dir + ome + '_pfam.out'
 #    lineComp = re.compile(r'([^ ]+)')
     res = defaultdict(list)
@@ -387,6 +396,8 @@ def parse_hmm_res(ome, ann_dir, evalue, threshold):
     ome_res = {}
     for gene, gene_hits in res.items():
         gene_hits = sorted(gene_hits, key = lambda x: x[4], reverse = True)
+        if max_hits:
+            gene_hits = gene_hits[:max_hits]
         todel, hits = [], set()
         for i, hit in enumerate(gene_hits):
             if hit[0] in hits:
@@ -399,7 +410,8 @@ def parse_hmm_res(ome, ann_dir, evalue, threshold):
     return ome, ome_res
 
 
-def compile_hmm_res(ann_dir, passing_omes, evalue = 0.001, threshold = 0.5, cpus = 1):
+def compile_hmm_res(ann_dir, passing_omes, evalue = 0.001, 
+                    threshold = 0.5, cpus = 1, max_hits = None):
         
     with mp.Pool(processes = cpus) as pool:
         omebyome_res = pool.starmap(parse_hmm_res, 
