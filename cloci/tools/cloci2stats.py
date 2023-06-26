@@ -8,7 +8,8 @@ import argparse
 import multiprocessing as mp
 from math import log
 from collections import defaultdict, Counter
-from mycotools.lib.kontools import collect_files, eprint, format_path
+from cloci.cloci.lib.output_data import run_hmmsearch
+from mycotools.lib.kontools import collect_files, eprint, format_path, findExecs
 from mycotools.lib.biotools import gff3Comps, gff2list
 from mycotools.lib.dbtools import mtdb
 
@@ -202,14 +203,25 @@ def output_stats(out_file, tax_dict):
             out1.write(line)
 
 
-def main(cloci_dir, db, rank, gamma = False, annotation_dir = None, cpus = 1):
+def main(cloci_dir, db, rank, gamma = False, ann_dir = None, 
+         pfam = False, cpus = 1):
+
     db = db.set_index()
 
     if gamma:
-        if not annotation_dir:
-            annotation_dir = cloci_dir + 'annotations/'
-        if not os.path.isdir(annotation_dir):
-            os.mkdir(annotation_dir)
+        if not ann_dir:
+            ann_dir = cloci_dir + 'genome_ann/'
+        if not os.path.isdir(ann_dir):
+            os.mkdir(ann_dir)
+        annotations = collect_files(ann_dir, 'out')
+        omes = [os.path.basename(x[:-4]) for x in annotations]
+        to_run = sorted(set(db.keys()).difference(set(omes)))
+        if to_run:
+            print(f'\nAnnotating {len(to_run)} full genomes')
+            failed_omes = run_hmmsearch(pfam, to_run, ann_dir, cpus, db = db)
+            passing_omes = sorted(set(db.keys()).difference(set(failed_omes)))
+            ann_res = compile_hmm_res(ann_dir, passing_omes, cpus = cpus, 
+                                      max_hits = 1)
         
 
     print('\nCollecting data for omes', flush = True)
@@ -275,6 +287,9 @@ if __name__ == '__main__':
         help = 'Calculate gamma and beta diversity')
     parser.add_argument('-a', '--annotations', 
         help = '[-g] Directory of tbl-formatted Pfam annotations for gamma diversity, labeled <ome>.out')
+    parser.add_argument('-p', '--pfam', help = '[-g] Pfam.hmm path')
+)
+
     parser.add_argument('-c', '--cpu', type = int)
     args = parser.parse_args()
 
@@ -288,5 +303,6 @@ if __name__ == '__main__':
 
 
     main(format_path(args.input), mtdb(format_path(args.mtdb)), rank, 
-         gamma = False, annotation_dir = format_path(args.annotations), cpus = args.cpu)
+         gamma = False, ann_dir = format_path(args.annotations), 
+         pfam = format_path(args.pfam), cpus = args.cpu)
     sys.exit(0)
