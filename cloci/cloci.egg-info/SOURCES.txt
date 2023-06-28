@@ -2,6 +2,7 @@ LICENSE
 README.md
 TODO.md
 setup.py
+cloci/cloci
 cloci/cloci.egg-info/PKG-INFO
 cloci/cloci.egg-info/SOURCES.txt
 cloci/cloci.egg-info/dependency_links.txt

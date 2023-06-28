@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: cloci
-Version: 0.0.10
+Version: 0.0.11
 Summary: Function-agnostic gene cluster detection
 Home-page: https://github.com/xonq/cloci/
 Author: xonq

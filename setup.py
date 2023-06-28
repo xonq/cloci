@@ -5,7 +5,7 @@ with open( "README.md", "r" ) as fh:
 
 setuptools.setup(
     name = "cloci",
-    version = "0.0.10",
+    version = "0.0.11",
     author = "xonq",
     author_email = "konkelzach@protonmail.com",
     description = "Function-agnostic gene cluster detection",
@@ -14,7 +14,7 @@ setuptools.setup(
     url = "https://github.com/xonq/cloci/",
     package_dir={"": "cloci"},
     packages = setuptools.find_packages( where="cloci" ),
-    scripts = ['README.md', 'TODO.md', 'cloci/lib/output_data.py', 'cloci/lib/evo_conco.py', 'cloci/lib/generate_nulls.py', 'cloci/lib/hgp2hgx.py', 'cloci/lib/hgx2hlgs.py', 'cloci/lib/input_parsing.py', 'cloci/lib/treecalcs.py', 'README.md', 'TODO.md'],
+    scripts = ['README.md', 'TODO.md', 'cloci/tools/cloci2stats.py', 'cloci/tools/hlg2biofile.py', 'cloci/tools/hlg2hlg_net.py', 'cloci/tools/cloci2enrich.py', 'cloci/cloci'],
     install_requires = ['mycotools', 'numpy', 'scipy', 'graph-tools', 'cogent3'
                         'sniffio', 'pydantic', 'PyYAML', 'SQLAlchemy', 'packaging',
                         'pydantic', 'anyio', 'attrs'],
