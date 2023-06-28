@@ -5,7 +5,7 @@ with open( "README.md", "r" ) as fh:
 
 setuptools.setup(
     name = "cloci",
-    version = "0.0.11",
+    version = "0.0.12",
     author = "xonq",
     author_email = "konkelzach@protonmail.com",
     description = "Function-agnostic gene cluster detection",
