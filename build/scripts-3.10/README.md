@@ -1,17 +1,3 @@
-Metadata-Version: 2.1
-Name: cloci
-Version: 0.0.10
-Summary: Function-agnostic gene cluster detection
-Home-page: https://github.com/xonq/cloci/
-Author: xonq
-Author-email: konkelzach@protonmail.com
-Classifier: Programming Language :: Python :: 3
-Classifier: License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)
-Classifier: Operating System :: POSIX :: Linux
-Requires-Python: >=3.0,<4
-Description-Content-Type: text/markdown
-License-File: LICENSE
-
 ## NOTE
 Extensive alpha testing has been conducted, though this software is in a beta state. Errors are expected, often rerunning without changing parameters is sufficient to resume appropriately. 
 Kindly raise git issues for errors - if you can find the bug, even better! This software will have longterm maintenance, but maintenance is currently not the priority. Documentation is currently lacking, please be patient as I build out the repository and wiki.
