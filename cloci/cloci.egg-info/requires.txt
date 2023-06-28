@@ -2,4 +2,11 @@ mycotools
 numpy
 scipy
 graph-tools
-cogent3
+cogent3sniffio
+pydantic
+PyYAML
+SQLAlchemy
+packaging
+pydantic
+anyio
+attrs
