@@ -5,3 +5,4 @@ cloci/archive/
 prepUpdate.py
 cloci.egg_info/
 dist/
+build/
