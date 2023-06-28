@@ -10,8 +10,8 @@ from collections import defaultdict
 from mycotools.acc2fa import dbmain as acc2fa
 from mycotools.lib.biotools import gff2list
 from mycotools.lib.kontools import multisub, tardir, collect_files, checkdir, eprint
-from cloci.cloci.lib.input_parsing import compileCDS2, hg_fa_mngr
-from cloci.cloci.lib.treecalcs import calc_tmd
+from cloci.lib.input_parsing import compileCDS2, hg_fa_mngr
+from cloci.lib.treecalcs import calc_tmd
 
 # NEED todel_hg to remove fully incompatible GCL HGs from HLG_HGXs
 # NEED an option to import OrthoFinder pairwise alignments

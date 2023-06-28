@@ -40,7 +40,7 @@ from mycotools.lib.biotools import \
 from mycotools.lib.dbtools import mtdb, primaryDB
 #from mycotools.gff2svg import main as gff2svg
 from mycotools import db2microsyntree
-from cloci.cloci.lib import treecalcs, evo_conco, \
+from cloci.lib import treecalcs, evo_conco, \
      hgx2hlgs, input_parsing, hgp2hgx, generate_nulls, output_data
 
 

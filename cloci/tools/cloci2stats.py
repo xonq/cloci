@@ -8,7 +8,7 @@ import argparse
 import multiprocessing as mp
 from math import log
 from collections import defaultdict, Counter
-from cloci.cloci.lib.output_data import run_hmmsearch, parse_hmm_res
+from cloci.lib.output_data import run_hmmsearch, parse_hmm_res
 from mycotools.lib.kontools import collect_files, eprint, format_path, findExecs
 from mycotools.lib.biotools import gff3Comps, gff2list
 from mycotools.lib.dbtools import mtdb

@@ -14,7 +14,7 @@ from plotly.subplots import make_subplots
 from mycotools.acc2gff import grabGffAcc
 from mycotools.lib.kontools import eprint
 from mycotools.lib.biotools import list2gff, gff2list, fa2dict, dict2fa
-from cloci.cloci.lib import input_parsing
+from cloci.lib import input_parsing
 
 # NEED to add PCA output
 # NEED locID output and clans
