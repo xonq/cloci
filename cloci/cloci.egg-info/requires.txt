@@ -1,5 +1,5 @@
 mycotools
 numpy
 scipy
-graph-tool
+graph-tools
 cogent3
