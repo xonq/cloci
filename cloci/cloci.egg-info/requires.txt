@@ -2,7 +2,8 @@ mycotools
 numpy
 scipy
 graph-tools
-cogent3sniffio
+cogent3
+sniffio
 pydantic
 PyYAML
 SQLAlchemy
