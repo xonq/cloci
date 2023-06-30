@@ -6,3 +6,4 @@ prepUpdate.py
 cloci.egg_info/
 dist/
 build/
+__init__.py/
