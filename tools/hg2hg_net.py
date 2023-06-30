@@ -10,7 +10,7 @@ from mycotools.lib.kontools import format_path, getColors, hex2rgb, \
     write_json, read_json, eprint, mkOutput
 from mycotools.lib.dbtools import mtdb
 from mycotools.lib.biotools import gff2list
-from mycotools.extractHmmAcc import grabAccs
+from mycotools.utils.extractHmmAcc import grabAccs
 import matplotlib.pyplot as plt
 
 # NEED to output json of the network modules
@@ -67,7 +67,7 @@ def parseClusGff(gff_list, ome):
 #
 
 
-def parse_info(info_path, ome, gene2pfam):
+def parse_info(info_path, ome):
     # acquire all homology_group pairs from each cluster, return ready for counter hash
 
     counts, hg_counts, hg2pfam = Counter(), Counter(), defaultdict(list)
@@ -77,6 +77,9 @@ def parse_info(info_path, ome, gene2pfam):
             if not line.startswith('#'):
                 data = line.rstrip().split('\t')
                 hgs, genes = data[1].split(','), data[2].split(',')
+                if not len(data) == 5:
+                    eprint(f'\tWARNING: skipping {ome} missing annotations', flush = True)
+                    break
                 pfams = [x.split('|') for x in data[-1].split(';')]
                 gene2pfam = {k: pfams[i] for i, k in enumerate(genes)}
                 for i, hg in enumerate(hgs):
@@ -176,38 +179,38 @@ def combine_counts(counts_res, db, rank = 'species'):
     db = db.set_index()
 
     counts, hg_counts, hg2pfam, taxonLens = {}, {}, {}, {}
-    for ome, tCounts, tOGcounts, tOG2Pfam in counts_res:
+    for ome, tCounts, tHGcounts, tHG2Pfam in counts_res:
         taxon = db[ome]['taxonomy'][rank]
         if taxon not in counts:
             counts[taxon], hg_counts[taxon] = Counter(), Counter()
             hg2pfam[taxon], taxonLens[taxon] = {}, 0
         taxonLens[taxon] += 1
         counts[taxon] += Counter({x[0]: x[1] for x in tCounts})
-        hg_counts[taxon] += Counter({x[0]: x[1] for x in tOGcounts})
-        for og, pfams in tOG2Pfam:
+        hg_counts[taxon] += Counter({x[0]: x[1] for x in tHGcounts})
+        for og, pfams in tHG2Pfam:
             if og not in hg2pfam[taxon]:
                 hg2pfam[taxon][og] = Counter()
             hg2pfam[taxon][og] += Counter(pfams)
 
-    fCounts, fOGcounts, fOG2Pfam = Counter(), Counter(), {}
+    fCounts, fHGcounts, fHG2Pfam = Counter(), Counter(), {}
     for taxon in counts:
         tCounts = {k: round(v/taxonLens[taxon]) for k, v in counts[taxon].items()}
-        tOGcounts = {k: round(v/taxonLens[taxon]) for k, v in hg_counts[taxon].items()}
-        tOG2Pfam = {}
+        tHGcounts = {k: round(v/taxonLens[taxon]) for k, v in hg_counts[taxon].items()}
+        tHG2Pfam = {}
         for og, pfams in hg2pfam[taxon].items():
-            tOG2Pfam[og] = {k: round(v/taxonLens[taxon]) for k, v in pfams.items()}
+            tHG2Pfam[og] = {k: round(v/taxonLens[taxon]) for k, v in pfams.items()}
 
         fCounts += Counter(tCounts)
-        fOGcounts += Counter(tOGcounts)
-        for og, pfams in tOG2Pfam.items():
-            if og not in fOG2Pfam:
-                fOG2Pfam[og] = Counter()
-            fOG2Pfam[og] += pfams
+        fHGcounts += Counter(tHGcounts)
+        for og, pfams in tHG2Pfam.items():
+            if og not in fHG2Pfam:
+                fHG2Pfam[og] = Counter()
+            fHG2Pfam[og] += pfams
 
-    for og in fOG2Pfam:
-        fOG2Pfam[og] = {k: v for k,v in sorted(fOG2Pfam[og].items(), key = lambda x: x[1], reverse = True)}
+    for og in fHG2Pfam:
+        fHG2Pfam[og] = {k: v for k,v in sorted(fHG2Pfam[og].items(), key = lambda x: x[1], reverse = True)}
             
-    return fCounts, fOGcounts, fOG2Pfam
+    return fCounts, fHGcounts, fHG2Pfam
 
 def write_node_quants(hg_counts, out_path):
 
@@ -354,7 +357,7 @@ def write_net_file(
         modules[clus].append(og)
     modules = {k: v for k,v in sorted(modules.items(), key = lambda x: len(x[1]), reverse = True)}
 
-    print('\t\t\tModules w/> 1 OG:', len([v for v in modules.values() if len(v) > 1]), flush = True)
+    print('\t\t\tModules w/> 1 HG:', len([v for v in modules.values() if len(v) > 1]), flush = True)
 
     dimScale = 1+round(edgeQuant**0.65)
     if dimScale > 650:
@@ -435,7 +438,7 @@ def write_net_file(
 
 def main(
     db, rank, cloci_dir, connectivity = False, 
-    centrality = False, max_edges = 500, hlg = 'hlg'
+    centrality = False, max_edges = 500, hlg = 'hlg',
     cpus = 1
     ):
 
@@ -459,19 +462,21 @@ def main(
         hg2pfam_path = net_dir + lineage + '.hg2pfam.txt'
         if not os.path.isfile(adj_path): # need to log the factor then
             print('\tAdjacency matrix', flush = True)
-            if cloci_dir:
-                info_cmds = [
-                    [f'{ome_dir}{ome}/{hlg}', ome] \
-                    for ome in omes \
-                    if os.path.isfile(f'{ome_dir}{ome}/{hlg}')
-                    ]
-                with mp.Pool(processes = cpus) as pool:
-                    counts_res = pool.starmap(parse_info, info_cmds)
-                counts, hg_counts, hg2pfam = combine_counts(
-                    counts_res, db, rank = 'species'
-                    )
-                write_json(hg2pfam_path, hg2pfam)
-                write_node_quants(hg_counts, quant_path)
+            info_cmds = [
+                [f'{ome_dir}{ome}/{hlg}.tsv', ome] \
+                for ome in omes \
+                if os.path.isfile(f'{ome_dir}{ome}/{hlg}.tsv')
+                ]
+            if not info_cmds:
+                eprint('\tWARNING: skipping; no output files found', flush = True)
+                continue
+            with mp.Pool(processes = cpus) as pool:
+                counts_res = pool.starmap(parse_info, info_cmds)
+            counts, hg_counts, hg2pfam = combine_counts(
+                counts_res, db, rank = 'species'
+                )
+            write_json(hg2pfam, hg2pfam_path)
+            write_node_quants(hg_counts, quant_path)
             write_adj_matr(counts, adj_path, max_edges)
         
         net_path = adj_path[:-4] + '.svg'
@@ -483,12 +488,12 @@ def main(
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description = 'Takes cloci output, creates networks of OG' + \
+        description = 'Takes CLOCI output, creates networks of HG' + \
         ' relationships'
         )
     parser.add_argument(
         '-i', '--input', required = True,
-        help = 'cloci results directory'
+        help = 'CLOCI results directory'
         )
     parser.add_argument(
         '-g', '--gcfs', help = 'Make networks from GCFs; DEFAULT HLGs',
@@ -496,7 +501,7 @@ if __name__ == '__main__':
         )
     parser.add_argument(
         '-d', '--database', required = True, 
-        help = 'Must be same as cloci input'
+        help = 'Must be same as CLOCI input'
         )
     parser.add_argument(
         '-r', '--rank', help = 'Taxon rank; DEFAULT: class',
@@ -521,11 +526,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     db = mtdb(format_path(args.database))
-    clus_dir = format_path(args.input)
-    if not args.pfam:
-        cloci_dir = clus_dir
-    else:
-        cloci_dir = None
+    cloci_dir = format_path(args.input)
 
     if args.gcfs:
         hlg = 'gcf'
@@ -537,3 +538,4 @@ if __name__ == '__main__':
         centrality = args.centrality, hlg = hlg,
         max_edges = args.maximum, cpus = args.cpu
         )
+    sys.exit(0)
