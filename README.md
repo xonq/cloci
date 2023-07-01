@@ -12,9 +12,18 @@ The most common gene cluster detection algorithms focus on canonical “core” 
 <br />
 
 ## INSTALL
-pypi and conda packages will be built for CLOCI in the coming weeks. Until
-then, please clone the repository and install the necessary dependencies
-manually.
+Please create a conda environment and manually install `graph-tool`
+```bash
+conda create -n cloci graph-tool python pip
+```
+
+Then install cloci into the environment
+```bash
+conda activate cloci
+python3 -m pip install cloci
+```
+
+A conda package will be available in the future.
 
 <br />
 
