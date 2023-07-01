@@ -8,7 +8,7 @@ import subprocess
 import numpy as np
 import multiprocessing as mp
 from tqdm import tqdm
-from graph_tool.all import *
+
 from datetime import datetime
 from itertools import combinations, chain
 from scipy.sparse import lil_matrix, csr_matrix, save_npz, load_npz, triu
@@ -18,6 +18,11 @@ from mycotools.lib.kontools import write_json, read_json, collect_files, \
                                    checkdir, eprint
 from cloci.lib import input_parsing, treecalcs, evo_conco, output_data
 
+try:
+    from graph_tool.all import *
+except ImportError:
+    eprint('\nERROR: graph-tool is not installed. Please install via conda', flush = True)
+    sys.exit(147)
 
 def hash_hgx(gff_path, ome, hgx_genes, gene2hg, clusplusminus):
     """sliding window of size clusplusminus, identify sequences that may have
