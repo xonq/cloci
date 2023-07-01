@@ -2,11 +2,11 @@
 - [ ] Begin USAGE wiki
 - [ ] Begin INSTALL wiki
 - [ ] Begin Output wiki
-- [ ] Build pypi package
+- [x] Build pypi package
 - [ ] Build conda package
 - [x] Update intro page
 - [ ] Add issue format
-- [ ] Mirror with GitHub
+- [x] Mirror with GitHub
 - [ ] Annotate code
 
 ## Algorithm improvements
