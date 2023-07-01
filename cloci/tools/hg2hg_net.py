@@ -395,7 +395,7 @@ def main(
      
             
 
-if __name__ == '__main__':
+def cli():
     parser = argparse.ArgumentParser(
         description = 'Takes CLOCI output, creates networks of HG' + \
         ' relationships. Node sizes are normalized and edge sizes are ' + \
@@ -457,3 +457,7 @@ if __name__ == '__main__':
         skip = args.skip
         )
     sys.exit(0)
+
+
+if __name__ == '__main__':
+    cli()

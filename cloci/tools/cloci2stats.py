@@ -292,7 +292,7 @@ def main(cloci_dir, db, rank, gamma = False, ann_dir = None,
         output_stats(out_f, gcf_stats)
 
 
-if __name__ == '__main__':
+def cli():
     ranks = ['ome', 'kingdom', 'phylum', 'subphylum', 'class', 'order', 'family', 'genus', 'species']
     parser = argparse.ArgumentParser(description = 'Summarize CLOCI output for taxonomic rank')
     parser.add_argument('-i', '--input', required = True, help = 'CLOCI input directory')
@@ -321,3 +321,7 @@ if __name__ == '__main__':
   #       gamma = False, ann_dir = format_path(args.annotations), 
    #      pfam = format_path(args.pfam),    
     sys.exit(0)
+
+
+if __name__ == '__main__':
+    cli()

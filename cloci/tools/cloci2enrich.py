@@ -499,7 +499,7 @@ def main(
 
             WriteOutput(scoresDict, thresh, out_base + '.pfam.tsv', go2onto = None)
 
-if __name__ == '__main__':
+def cli():
 
     parser = argparse.ArgumentParser(description = 'cloci2pfam enrichment')
     parser.add_argument('-a', '--alpha', help = 'Overall Bonferonni corrected alpha; DEFAULT: 0.05',
@@ -556,3 +556,7 @@ if __name__ == '__main__':
     pool.join()
 
     sys.exit(0)
+
+
+if __name__ == '__main__':
+    cli()

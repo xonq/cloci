@@ -3,7 +3,7 @@ requires = ["setuptools", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "CLOCI"
+name = "cloci"
 version = "0.01.00"
 authors = [{name="Zachary Konkel", email="konkelzach@protonmail.com"}]
 description = "Co-occurrence Locus and Orthologous Cluster Identifier"

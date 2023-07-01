@@ -347,7 +347,7 @@ def main(clans, hlgs, res_dir, minimum, passing = False, db = None, rank = None,
     print(f'\nNetwork outputted to {out_file}', flush = True)
 
 
-if __name__ == '__main__':
+def cli():
     ranks = ['kingdom', 'phylum', 'subphylum', 'class', 'order', 'family', 'genus']
     img_exts = ['pdf', 'png', 'ps', 'svg']
     net_exts = ['dot', 'gml', 'graphml', 'gt', 'xml']
@@ -452,3 +452,7 @@ if __name__ == '__main__':
          annotate_loc = args.annotate_loc, annotate_hlg = args.annotate_hlg,
          highlight = locids, scale = args.scale, chrono = args.convert,
          font_size = args.font_size, colors = colors)
+
+
+if __name__ == '__main__':
+    cli()

@@ -161,7 +161,7 @@ def main(db, clo_dir, out_dir, omes = [], hlgs = [], gcf_output = False,
         
 
 
-if __name__ == '__main__':
+def cli():
     parser = argparse.ArgumentParser(description = 'Parse CLOCI output and ' \
            + 'generate biofiles. "-" for stdin; -g specifies GCFs, all HLGs by default')
 
@@ -245,3 +245,7 @@ if __name__ == '__main__':
     main(db, run_dir, out_dir, omes, hlgs, args.gcf, 
          args.gbk, args.gff, args.faa, args.cpu)
     sys.exit(0)
+
+
+if __name__ == '__main__':
+    cli()

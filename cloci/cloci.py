@@ -629,7 +629,7 @@ def main(
          cpus = cpus)
 
 
-if __name__ == '__main__':
+def cli():
     # need these here because spawn mp context forces reimport
 #    from scipy.stats import hypergeom
  #   from dna_features_viewer import GraphicFeature, GraphicRecord
@@ -1021,3 +1021,7 @@ if __name__ == '__main__':
         )
 
     outro(start_time)
+
+
+if __name__ == '__main__':
+    cli()
