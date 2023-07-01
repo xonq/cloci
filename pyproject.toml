@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cloci"
-version = "0.01.00"
+version = "0.01.2"
 authors = [{name="Zachary Konkel", email="konkelzach@protonmail.com"}]
 description = "Co-occurrence Locus and Orthologous Cluster Identifier"
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = '>=3.0,<4'
-dependencies = ['mycotools', 'cogent3', 'tqdm']
+dependencies = ['mycotools', 'cogent3', 'tqdm', 'plotly']
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
