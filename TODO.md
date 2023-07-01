@@ -19,3 +19,4 @@
 - [ ] Account for duplicates of HGs on edge of cluster
 - [ ] Add Pfam extraction feature
 - [ ] Add GO extraction feature
+- [ ] Output networks as interactable files

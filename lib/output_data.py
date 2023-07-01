@@ -506,60 +506,8 @@ def annotate_clusters(genes_list, #gff_path, prot_path,
                       ome, ome_dir, gene2hg, prefix = 'hlg',
                       ann_res = {}):
 
-#    gff_dir, fa_dir = ome_dir + ome + '/gff/', ome_dir + ome + '/fa/'
- #   if not os.path.isdir(gff_dir):
-  #      os.mkdir(gff_dir)
-   # if not os.path.isdir(fa_dir):
-    #    os.mkdir(fa_dir)
-
- #   clus_gffs, clus_fas, clus_anns, scafs, svg_dict = [], [], {}, set(), {}
-#    gff_list, prot_dict = gff2list(gff_path), fa2dict(prot_path)
-#    print('\t' + ome, flush = True)
- #   for genes in genes_list:
-  #      clus_gffs.append([[]])
-   #     clus_fas.append({})
-    #    clus_ann = ''
-     #   for gene in genes:
-      #      geneCoord = None
-       #     geneGff = grabGffAcc(gff_list, gene)
-        #    for entry in geneGff:
-         #       if entry['type'].lower() == 'gene':
-          #          geneCoord = (int(entry['start']), int(entry['end']), entry['strand'])
-           # geneFa = prot_dict[gene]
-            #if gene in ann_res:
-             #   pfamStr = ';Pfam=' + '|'.join([
-              #      (hit[0] + '-' + hit[1]).replace('|','&') for hit in ann_res[gene]
-               #     ])
-                #clus_ann += pfamStr[6:]
-#            else:
- #               pfamStr = ''
-  #          clus_ann += ','
-   #         try:
-    #            ogStr = ';OG=' + str(gene2hg[gene])
-     #       except KeyError: # gene not in an OG or is a singleton
-      #          ogStr = ';OG='
-       #     for entry in geneGff:
-        #        if entry['type'] == 'gene' or entry['type'].lower() == 'mrna':
-         #           entry['attributes'] += pfamStr + ogStr
-          #  geneFa['description'] = pfamStr[6:]
-           # clus_gffs[-1][0].extend(geneGff)
-            #clus_fas[-1][gene] = geneFa
-#        scaf_prep = clus_gffs[-1][0][0]['seqid']
- #       scaf = scaf_prep[:20]
-  #      if scaf_prep != scaf:
-   #         scaf = scaf_prep[:20] + '..'
-    #    count = 0
-     #   while scaf + '_' + str(count) in scafs:
-      #      count += 1
-       # name = scaf + '_' + str(count)
-        #scafs.add(name)
-#        clus_anns[name] = clus_ann[:-1]
- #       clus_gffs[-1].append(name)
-#        svg_dict[name] = copy.deepcopy(t_svg_dict)
-#        with open(gff_dir + name + '.gff3', 'w') as out:
- #           out.write(list2gff(clus_gffs[-1][0]))
-  #      with open(fa_dir + name + '.fa', 'w') as out:
-   #         out.write(dict2fa(clus_fas[-1]))
+    if not os.path.isfile(f'{ome_dir}{ome}/{prefix}.tsv'):
+        return
 
     with open(ome_dir + ome + f'/{prefix}.tsv.tmp', 'w') as out:
         out.write('#name\thgs\tgenes\tgcfs\tpfams\n')
@@ -576,7 +524,7 @@ def annotate_clusters(genes_list, #gff_path, prot_path,
     shutil.move(f'{ome_dir}{ome}/{prefix}.tsv.tmp', 
                 f'{ome_dir}{ome}/{prefix}.tsv')
 
-    return ome#, svg_dict
+#    return ome#, svg_dict
 #    return ome, clus_gffs, clus_fas, svg_dict
 
 
@@ -736,6 +684,8 @@ def threshold_hlg_wpos(gcl_thresh, patch_thresh, id_perc, pos_perc, csb_thresh, 
                     gcfs[hlg] = locs
                     gcf_omes[hlg] = omesc
                     gcf_hgxs[hlg] = hgxc
+            except KeyError:
+                eprint(f'\tWARNING: missing from proxies and removed: {omesc, hgxc}')
         return gcfs, gcf_omes, gcf_hgxs
     else:
         return hlgs, hlg_omes, hlg_hgxs
@@ -946,9 +896,9 @@ def annotation_mngr(hlg_genes, db, wrk_dir, pfam_path, ipr_path,
 
 
     with mp.get_context('fork').Pool(processes = cpus) as pool:
-        clus_info = pool.starmap(annotate_clusters, 
-                                 tqdm(annotate_clusters_cmds, 
-                                      total = len(annotate_clusters_cmds)))
+        pool.starmap(annotate_clusters, 
+                             tqdm(annotate_clusters_cmds, 
+                                  total = len(annotate_clusters_cmds)))
         pool.close()
         pool.join()
 
@@ -998,3 +948,6 @@ def output_hlgs(db, wrk_dir, hlgs, hlg_omes, i2ome, out_dir, hlg_hgxs,
 
     annotation_mngr(hlg_genes, db, wrk_dir, pfam_path, ipr_path, 
                     gene2hg, out_dir, prefix = 'hlg', cpus = cpus)
+    if dist_thresh or gcl_thresh or patch_thresh or id_perc or pos_perc:
+        annotation_mngr(hlg_genes, db, wrk_dir, pfam_path, ipr_path, 
+                        gene2hg, out_dir, prefix = 'gcf', cpus = cpus)

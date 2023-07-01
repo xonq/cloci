@@ -59,6 +59,8 @@ def calc_stats(ome, f, gff_path, alia = None):
     genes_in_clus = []
     hlgs = []
     overall_anns = []
+    if not os.path.isfile(f):
+        return None, None, None, None, None, None, None
  #   ind_shannons = []
     with open(f, 'r') as raw:
         for line in raw:
@@ -113,6 +115,8 @@ def summarize_stats(ome_stats, rank, hlg2data, db, tmp_path):
         out.write('tip\ttmd\tgcl\tmmi\tmmp\tcsb\tpds\tpc\tdivers\ttaxon\n')
         if rank == 'ome':
             for ome, hlgs, mean_gic, median_gic, pc, alia, shan in ome_stats:
+                if not ome:
+                    continue
                 prox = [hlg2data[hlg] for hlg in set(hlgs)]
                 tax_dict[ome]['tmd'].extend([x[0] for x in prox])
                 tax_dict[ome]['gcl'].extend([x[1] for x in prox])
@@ -134,8 +138,10 @@ def summarize_stats(ome_stats, rank, hlg2data, db, tmp_path):
                         + f'{pc}\t{sd}\t\n')
         else:
             for ome, hlgs, mean_gic, median_gic, pc, alia, shan in ome_stats:
+                if not ome:
+                    continue
                 tax = db[ome]['taxonomy'][rank]
-                prox = [hlg2data[hlg] for hlg in set(hlgs)]
+                prox = [hlg2data[hlg] for hlg in set(hlgs) if hlg in hlg2data]                        
                 tmd = [x[0] for x in prox]
                 gcl = [x[1] for x in prox]
                 mmi = [x[2] for x in prox]
@@ -293,7 +299,7 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--rank', help = f'{ranks}; DEFAULT: ome')
     parser.add_argument('-d', '--mtdb', help = 'MycotoolsDB')
 #    parser.add_argument('-g', '--gamma', action = 'store_true',
-        help = 'Calculate gamma and beta diversity')
+   #     help = 'Calculate gamma and beta diversity')
  #   parser.add_argument('-a', '--annotations', 
    #     help = '[-g] Directory of tbl-formatted Pfam annotations for gamma diversity, labeled <ome>.out')
   #  parser.add_argument('-p', '--pfam', help = '[-g] Pfam.hmm path')
@@ -314,4 +320,4 @@ if __name__ == '__main__':
     main(format_path(args.input), mtdb(format_path(args.mtdb)), rank, cpus = args.cpu)
   #       gamma = False, ann_dir = format_path(args.annotations), 
    #      pfam = format_path(args.pfam),    
-   sys.exit(0)
+    sys.exit(0)

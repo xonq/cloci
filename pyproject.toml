@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "CLOCI"
+version = "0.01.00"
+authors = [{name="Zachary Konkel", email="konkelzach@protonmail.com"}]
+description = "Co-occurrence Locus and Orthologous Cluster Identifier"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = '>=3.0,<4'
+dependencies = ['mycotools', 'cogent3', 'tqdm']
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
+    "Operating System :: POSIX :: Linux",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/xonq/cloci"
+"Bug Tracker" = "https://github.com/xonq/cloci/issues"
+
+[project.scripts]
+cloci = "cloci.cloci:cli"
+
+[tool.setuptools.packages.find]
+include = ["cloci*", "tools*"]  # package names should match these glob patterns (["*"] by default)
+exclude = ["dist*", "archive*"]  # exclude packages matching these glob patterns (empty by default)
