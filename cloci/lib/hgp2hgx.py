@@ -10,8 +10,107 @@ from tqdm import tqdm
 from datetime import datetime
 from collections import defaultdict
 from scipy import sparse
-from numba import njit
-from numba.core.errors import NumbaDeprecationWarning, NumbaPendingDeprecationWarning
+try:
+    from numba import njit
+    from numba.core.errors import NumbaDeprecationWarning, NumbaPendingDeprecationWarning
+    @njit
+    def gen_clusters_arr(loci, i2hg, clan_arr, check):
+        """input is an HGp's 2D array of loci represented as a array of HGs
+        presence absence.
+        identify rows with > 2 overlapping HGs by multiplying the inputted
+        2D np.array against its transposed self.
+        if the overlapping loci are from different omes, report their
+        overlapping HGs by pairwise loci summation and extracting coordinates
+        with HG == 2 - indicating overlap.
+        output these overlapping HGs (HGx), omes, and loci anchor genes""" 
+        output = []
+      #  adj_arr = clan_arr @ clan_arr.transpose() # sparse
+        # e.g. hgs x loc     loc x hgs      loc x loc
+        # [[1, 0, 1, 1],   [[1, 1, 1],    [[3, 3, 2],
+        #  [1, 1, 1, 1], @  [0, 1, 1],  =  [3, 4, 3],
+        #  [1, 1, 0, 1]]    [1, 1, 0],     [2, 3, 3]]
+        #                   [1, 1, 1]]
+        
+        #  clan_arr         clan_arr.T      adj_arr
+    
+        # so in this example, loc 0 has an hgx (overlap > 2) with loc 0 and 1
+        # loc 1 hgx with loc 0, 1, 2; and loc 2 an hgx with loc 1, 2
+    
+        # removing same locus and redundant overlap, there is thus a shared hgx
+    
+    
+        adj_arr = clan_arr @ clan_arr.T # dense identify overlap
+        for i0 in range(adj_arr.shape[0]): # for each row
+            row = adj_arr[i0, :] # overlap row
+            row0 = clan_arr[i0, :] # hg representation of locus
+            loc0 = loci[i0] # the actual locus 
+            ome0 = loc0[:loc0.find('_')] # the ome corresponding with the locus
+    
+            # these are loci coordinates non-self and non-redundant w/> 2 overlap
+            overlap_loci = [x for x in np.where(row > 2)[0] if x > i0] # dense
+    
+            # for each of these overlaps
+            for i1 in overlap_loci:
+                loc1 = loci[i1]
+                ome1 = loc1[:loc1.find('_')]
+                if ome0 != ome1:
+                    row1 = clan_arr[i1, :]
+                    row_sum = row0 + row1
+                    # if the sum of the row is 2, it indicates there is overlap
+                    # at that particular HG
+                    hgx = [i2hg[x] for x in np.where(row_sum >= 2)[0]] # dense
+                    output.append((hgx, loc0, loc1))
+        return output
+except ImportError: # no numba 
+    def gen_clusters_arr(loci, i2hg, clan_arr, check):
+        """input is an HGp's 2D array of loci represented as a array of HGs
+        presence absence.
+        identify rows with > 2 overlapping HGs by multiplying the inputted
+        2D np.array against its transposed self.
+        if the overlapping loci are from different omes, report their
+        overlapping HGs by pairwise loci summation and extracting coordinates
+        with HG == 2 - indicating overlap.
+        output these overlapping HGs (HGx), omes, and loci anchor genes""" 
+        output = []
+      #  adj_arr = clan_arr @ clan_arr.transpose() # sparse
+        # e.g. hgs x loc     loc x hgs      loc x loc
+        # [[1, 0, 1, 1],   [[1, 1, 1],    [[3, 3, 2],
+        #  [1, 1, 1, 1], @  [0, 1, 1],  =  [3, 4, 3],
+        #  [1, 1, 0, 1]]    [1, 1, 0],     [2, 3, 3]]
+        #                   [1, 1, 1]]
+        
+        #  clan_arr         clan_arr.T      adj_arr
+    
+        # so in this example, loc 0 has an hgx (overlap > 2) with loc 0 and 1
+        # loc 1 hgx with loc 0, 1, 2; and loc 2 an hgx with loc 1, 2
+    
+        # removing same locus and redundant overlap, there is thus a shared hgx
+    
+    
+        adj_arr = clan_arr @ clan_arr.T # dense identify overlap
+        for i0 in range(adj_arr.shape[0]): # for each row
+            row = adj_arr[i0, :] # overlap row
+            row0 = clan_arr[i0, :] # hg representation of locus
+            loc0 = loci[i0] # the actual locus 
+            ome0 = loc0[:loc0.find('_')] # the ome corresponding with the locus
+    
+            # these are loci coordinates non-self and non-redundant w/> 2 overlap
+            overlap_loci = [x for x in np.where(row > 2)[0] if x > i0] # dense
+    
+            # for each of these overlaps
+            for i1 in overlap_loci:
+                loc1 = loci[i1]
+                ome1 = loc1[:loc1.find('_')]
+                if ome0 != ome1:
+                    row1 = clan_arr[i1, :]
+                    row_sum = row0 + row1
+                    # if the sum of the row is 2, it indicates there is overlap
+                    # at that particular HG
+                    hgx = [i2hg[x] for x in np.where(row_sum >= 2)[0]] # dense
+                    output.append((hgx, loc0, loc1))
+        return output
+
+
 import warnings
 
 warnings.simplefilter('ignore', category=NumbaDeprecationWarning)
@@ -98,55 +197,6 @@ def merge_protos(protohgx_res):
 
     return {k: tuple(v) for k,v in protohgx2omes.items()}, hgp2hgs
 
-
-@njit
-def gen_clusters_arr(loci, i2hg, clan_arr, check):
-    """input is an HGp's 2D array of loci represented as a array of HGs
-    presence absence.
-    identify rows with > 2 overlapping HGs by multiplying the inputted
-    2D np.array against its transposed self.
-    if the overlapping loci are from different omes, report their
-    overlapping HGs by pairwise loci summation and extracting coordinates
-    with HG == 2 - indicating overlap.
-    output these overlapping HGs (HGx), omes, and loci anchor genes""" 
-    output = []
-  #  adj_arr = clan_arr @ clan_arr.transpose() # sparse
-    # e.g. hgs x loc     loc x hgs      loc x loc
-    # [[1, 0, 1, 1],   [[1, 1, 1],    [[3, 3, 2],
-    #  [1, 1, 1, 1], @  [0, 1, 1],  =  [3, 4, 3],
-    #  [1, 1, 0, 1]]    [1, 1, 0],     [2, 3, 3]]
-    #                   [1, 1, 1]]
-    
-    #  clan_arr         clan_arr.T      adj_arr
-
-    # so in this example, loc 0 has an hgx (overlap > 2) with loc 0 and 1
-    # loc 1 hgx with loc 0, 1, 2; and loc 2 an hgx with loc 1, 2
-
-    # removing same locus and redundant overlap, there is thus a shared hgx
-
-
-    adj_arr = clan_arr @ clan_arr.T # dense identify overlap
-    for i0 in range(adj_arr.shape[0]): # for each row
-        row = adj_arr[i0, :] # overlap row
-        row0 = clan_arr[i0, :] # hg representation of locus
-        loc0 = loci[i0] # the actual locus 
-        ome0 = loc0[:loc0.find('_')] # the ome corresponding with the locus
-
-        # these are loci coordinates non-self and non-redundant w/> 2 overlap
-        overlap_loci = [x for x in np.where(row > 2)[0] if x > i0] # dense
-
-        # for each of these overlaps
-        for i1 in overlap_loci:
-            loc1 = loci[i1]
-            ome1 = loc1[:loc1.find('_')]
-            if ome0 != ome1:
-                row1 = clan_arr[i1, :]
-                row_sum = row0 + row1
-                # if the sum of the row is 2, it indicates there is overlap
-                # at that particular HG
-                hgx = [i2hg[x] for x in np.where(row_sum >= 2)[0]] # dense
-                output.append((hgx, loc0, loc1))
-    return output
 
 
 def load_prehgx(wrk_dir, ome2i):
