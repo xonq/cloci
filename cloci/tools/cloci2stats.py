@@ -7,6 +7,7 @@ import gzip
 import argparse
 import multiprocessing as mp
 from math import log
+from tqdm import tqdm
 from collections import defaultdict, Counter
 from cloci.lib.output_data import run_hmmsearch, parse_hmm_res
 from mycotools.lib.kontools import collect_files, eprint, format_path, findExecs
@@ -56,11 +57,11 @@ def calc_shannon(top_anns):
             
 
 def calc_stats(ome, f, gff_path, alia = None):
-    genes_in_clus = []
+    genes_in_clus = {}
     hlgs = []
     overall_anns = []
     if not os.path.isfile(f):
-        return None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None
  #   ind_shannons = []
     with open(f, 'r') as raw:
         for line in raw:
@@ -84,12 +85,14 @@ def calc_stats(ome, f, gff_path, alia = None):
                     eprint(f'WARNING: no HGs for: {line}')
                 genes = genes.split(',')
                 t_hlgs = [int(x) for x in t_hlgs.split(',')]
-                genes_in_clus.append(len(genes))
+                for i, g in enumerate(genes):
+                    genes_in_clus[g] = t_hlgs[i]
                 hlgs.extend(t_hlgs)
 #                ind_shannons.append(clus_shannon)
                 overall_anns.extend(top_anns)
 
-    tot_gic = sum(genes_in_clus)
+    genes_in_clus = sorted(set(genes_in_clus.keys()))
+    tot_gic = len(genes_in_clus)
     mean_gic = tot_gic/len(genes_in_clus)
     genes_in_clus.sort()
     median_gic = genes_in_clus[round(len(genes_in_clus)/2) - 1]
@@ -102,8 +105,61 @@ def calc_stats(ome, f, gff_path, alia = None):
         alia = count_transcripts(gff_path)
     perc_clus = tot_gic/alia
 
-    return ome, hlgs, mean_gic, median_gic, perc_clus, alia, alpha
-                
+    return ome, hlgs, mean_gic, median_gic, \
+           perc_clus, alia, alpha, genes_in_clus
+    
+
+def hg2alien(genes, hg_file, ome2tax):
+    genes = set(genes)
+    g2h = defaultdict(list)
+    with open(hg_file, 'r') as raw:
+        for line in raw:
+            q, s, p, i = line.rstrip().split()
+            if q in genes:
+                g2h[q].append((s, float(i)))
+
+    ome2alien = defaultdict(list)
+    for q, hits in g2h.items():
+        g2h[q] = sorted(hits, key = lambda x: [1], reverse = True)
+        self_ome = q[:q.find('_')]
+        self_tax = ome2tax[self_ome]
+        in_tax, out_tax = None, None
+        while in_tax is None or out_tax is None:
+            s, i = hits[0]
+            s_tax = s[:s.find('_')]
+            if s_tax == self_tax:
+                if in_tax is None:
+                    in_tax = i
+            elif s_tax:
+                if out_tax is None:
+                    out_tax = i
+        if in_tax is None:
+            in_tax = 0
+        elif out_tax is None:
+            out_tax = 0
+        ome2alien[ome].append(in_tax - out_tax)
+
+    return ome2alien
+           
+def alien_mngr(genes_in_clus, algn_dir, cpus = 1):
+    hg2genes = defaultdict(list)
+    for gene, hg in genes_in_clus.items():
+        hg2genes[hg].append(gene)
+
+    with mp.Pool(processes = cpus) as pool:
+        alien_res = pool.starmap(hg2alien, tqdm(((genes, f'{algn_dir}{hg}.out', ome2tax) \
+                                     for hg, genes in hg2genes.items()), 
+                                     total = len(hg2genes)))
+
+    ome_res = defaultdict(list)
+    for ome2alien in alien_res:
+        for ome, aliens in ome2alien.items():
+            ome_res[ome].extend(aliens)
+        if ome_res[ome]:
+            ome_res[ome].sort()
+
+    return ome_res
+
 def summarize_stats(ome_stats, rank, hlg2data, db, tmp_path):
     ome2alia = {}
     tax_dict = defaultdict(lambda: {'tmd': [], 'gcl': [],
@@ -111,12 +167,14 @@ def summarize_stats(ome_stats, rank, hlg2data, db, tmp_path):
                                     'csb': [], 'pds': [], 'sd': [],
                                     'mean_g': [], 'med_g': [], 'pc': []})
 
+    genes_in_clus = {}
     with open(tmp_path, 'w') as out:
         out.write('tip\ttmd\tgcl\tmmi\tmmp\tcsb\tpds\tpc\tdivers\ttaxon\n')
         if rank == 'ome':
-            for ome, hlgs, mean_gic, median_gic, pc, alia, shan in ome_stats:
+            for ome, hlgs, mean_gic, median_gic, pc, alia, shan, genes in ome_stats:
                 if not ome:
                     continue
+                genes_in_clus = {**genes_in_clus, **genes}
                 prox = [hlg2data[hlg] for hlg in set(hlgs)]
                 tax_dict[ome]['tmd'].extend([x[0] for x in prox])
                 tax_dict[ome]['gcl'].extend([x[1] for x in prox])
@@ -137,9 +195,10 @@ def summarize_stats(ome_stats, rank, hlg2data, db, tmp_path):
                         + f'{sum(tax_dict[ome]["pds"])/len(tax_dict[ome]["pds"])}\t' \
                         + f'{pc}\t{sd}\t\n')
         else:
-            for ome, hlgs, mean_gic, median_gic, pc, alia, shan in ome_stats:
+            for ome, hlgs, mean_gic, median_gic, pc, alia, shan, genes in ome_stats:
                 if not ome:
                     continue
+                genes_in_clus = {**genes_in_clus, **genes}
                 tax = db[ome]['taxonomy'][rank]
                 prox = [hlg2data[hlg] for hlg in set(hlgs) if hlg in hlg2data]                        
                 tmd = [x[0] for x in prox]
@@ -164,13 +223,19 @@ def summarize_stats(ome_stats, rank, hlg2data, db, tmp_path):
                         + f'{sum(mmi)/len(mmi)}\t{sum(mmp)/len(mmp)}\t' \
                         + f'{sum(csb)/len(csb)}\t{sum(pds)/len(pds)}\t' \
                         + f'{pc}\t{shan}\t{tax}\n')
-    return tax_dict, ome2alia
+    return tax_dict, ome2alia, genes_in_clus
 
-def output_stats(out_file, tax_dict):
+def output_stats(out_file, tax_dict, alien = False):
     tax_dict = {k: v for k, v in sorted(tax_dict.items(), key = lambda x: x[0])}
     with open(out_file + '.mean.tsv', 'w') as out0, open(out_file + '.median.tsv', 'w') as out1:
-        out0.write('#taxon\ttmd\tgcl\tmmi\tmmp\tcsb\tpds\tgenes\tperc_clustered\tdiversity\n')
-        out1.write('#taxon\ttmd\tgcl\tmmi\tmmp\tcsb\tpds\tgenes\tperc_clustered\tdiversity\n')
+        if alien:
+            out0.write('#taxon\ttmd\tgcl\tmmi\tmmp\tcsb\tpds' \
+                     + '\tgenes\tperc_clustered\tdiversity\talienness\n')
+            out1.write('#taxon\ttmd\tgcl\tmmi\tmmp\tcsb\tpds' \
+                     + '\tgenes\tperc_clustered\tdiversity\talienness\n')
+        else:
+            out0.write('#taxon\ttmd\tgcl\tmmi\tmmp\tcsb\tpds\tgenes\tperc_clustered\tdiversity\n')
+            out1.write('#taxon\ttmd\tgcl\tmmi\tmmp\tcsb\tpds\tgenes\tperc_clustered\tdiversity\n')
         for tax, data in tax_dict.items():
             tmd = sum(data['tmd'])/len(data['tmd'])
             gcl = sum(data['gcl'])/len(data['gcl'])
@@ -184,7 +249,12 @@ def output_stats(out_file, tax_dict):
                 sd = sum(data['sd'])/len(data['sd'])
             except TypeError:
                 sd = None
-            line = f'{tax}\t{tmd}\t{gcl}\t{mmi}\t{mmp}\t{csb}\t{pds}\t{genes}\t{pc}\t{sd}\n'
+            if alien:
+                alien = sum(data['alien'])/len(data['alien'])
+                line = f'{tax}\t{tmd}\t{gcl}\t{mmi}\t{mmp}\t{csb}\t' \
+                     + f'{pds}\t{genes}\t{pc}\t{sd}\t{alien}\n'
+            else:
+                line = f'{tax}\t{tmd}\t{gcl}\t{mmi}\t{mmp}\t{csb}\t{pds}\t{genes}\t{pc}\t{sd}\n'
             out0.write(line)
             
             data['tmd'].sort()
@@ -205,7 +275,14 @@ def output_stats(out_file, tax_dict):
             genes = data['med_g'][round(len(data['med_g'])/2 - 1)]
             pc = data['pc'][round(len(data['pc'])/2 - 1)]
             sd = data['sd'][round(len(data['sd'])/2 - 1)]
-            line = f'{tax}\t{tmd}\t{gcl}\t{mmi}\t{mmp}\t{csb}\t{pds}\t{genes}\t{pc}\t{sd}\n'
+
+            if alien:
+                data['alien'].sort()
+                alien = data['alien'][round(data_alien/2) - 1]
+                line = f'{tax}\t{tmd}\t{gcl}\t{mmi}\t{mmp}\t{csb}\t' \
+                     + f'{pds}\t{genes}\t{pc}\t{sd}\t{alien}\n'
+            else:
+                line = f'{tax}\t{tmd}\t{gcl}\t{mmi}\t{mmp}\t{csb}\t{pds}\t{genes}\t{pc}\t{sd}\n'
             out1.write(line)
 
 
@@ -217,8 +294,37 @@ def calc_gamma_diversity(ome, ann_dir):
     return ome, gamma_diversity
 
 
+def add_alien_data(db, stats_file, stats_dict, rank, ome2alien):
+    if rank != 'ome':
+        tax2alien = defaultdict(list)
+        for ome, aliens in ome2alien.items():
+            tax = db[ome]['taxonomy'][rank]
+            tax2alien[tax].extend(aliens)
+    else:
+        tax2alien = ome2alien
+
+    for tax, aliens in tax2alien.items():
+        stats_dict[tax]['alien'] = aliens
+
+    with open(stats_file + '.tmp', 'w') as out:
+        with open(stats_file, 'r') as raw:
+            for line in raw:
+                if line.startswith('#'):
+                    out.write(line.rstrip() + '\talienness\n')
+                else:
+                    taxon = line.split()[0]
+                    if taxon in tax2alien:
+                        out.write(line.rstrip() \
+                        + f'\t{sum(tax2alien[taxon])/len(tax2alien[taxon])}\n')
+                    else:
+                        out.write(line.rstrip() + '\tna\n')
+    os.rename(stats_file + '.tmp', stats_file)
+
+    return stats_dict
+
+
 def main(cloci_dir, db, rank, gamma = False, ann_dir = None, 
-         pfam = False, cpus = 1):
+         pfam = False, alien = False, gcf_only = False, cpus = 1):
 
     db = db.set_index()
 
@@ -242,36 +348,48 @@ def main(cloci_dir, db, rank, gamma = False, ann_dir = None,
     print('\nCollecting data for omes', flush = True)
     ome_dir = cloci_dir + 'ome/'
     tsvs = collect_files(ome_dir, 'tsv', recursive = True)
-    hlgs = [x for x in tsvs if os.path.basename(x) == 'hlg.tsv']
     gcfs = [x for x in tsvs if os.path.basename(x) == 'gcf.tsv']
     omes = [os.path.basename(os.path.dirname(x)) for x in hlgs]
     omes = [x for x in omes if x in db]
-    primary_hlg = cloci_dir + 'hlgs.tsv.gz'
     primary_gcf = cloci_dir + 'gcfs.tsv.gz'
 
-    if not os.path.isfile(primary_hlg):
-        eprint('\nERROR: `hlgs.tsv.gz` not detected', flush = True)
-        sys.exit(1)
+    if not gcf_only:
+        hlgs = [x for x in tsvs if os.path.basename(x) == 'hlg.tsv']
+        primary_hlg = cloci_dir + 'hlgs.tsv.gz'
+        if not os.path.isfile(primary_hlg):
+            eprint('\nERROR: `hlgs.tsv.gz` not detected', flush = True)
+            sys.exit(1)
+   
+        print('\nAssimilating proxy values for HLGs', flush = True)
+        hlg2data = assimilate_proxies(primary_hlg)
 
-    print('\nAssimilating proxy values for HLGs', flush = True)
-    hlg2data = assimilate_proxies(primary_hlg)
     
-    print('\nCollecting stats by ome', flush = True)
-    with mp.Pool(processes = cpus) as pool:
-        ome_stats = pool.starmap(calc_stats, ((ome, ome_dir + ome + '/hlg.tsv', db[ome]['gff3']) \
-                                              for ome in omes))
+        print('\nCollecting stats by ome', flush = True)
+        with mp.Pool(processes = cpus) as pool:
+            ome_stats = pool.starmap(calc_stats, ((ome, ome_dir + ome + '/hlg.tsv', db[ome]['gff3']) \
+                                                  for ome in omes))
 
-    print('\nSummarizing data by ' + rank, flush = True)
-    tmp_file = cloci_dir + f'.cloci2summary.hlg.{rank}.tsv'
-    hlg_stats, ome2alia = summarize_stats(ome_stats, rank, hlg2data, db, tmp_file)
-#    if os.path.isfile(tmp_file):
- #       os.remove(tmp_file)
 
-    out_f = cloci_dir + 'hlg_stats.' + rank
+        print('\nSummarizing data by ' + rank, flush = True)
+        tmp_file = cloci_dir + f'.cloci2summary.hlg.{rank}.tsv'
+        hlg_stats, ome2alia, genes_in_clus = summarize_stats(ome_stats, rank, hlg2data, 
+                                                             db, tmp_file)
+    #    if os.path.isfile(tmp_file):
+     #       os.remove(tmp_file)
+         if alien:
+            print('\nCalculating HLG alienness', flush = True)
+            ome2alien = alien_mngr(genes_in_clus, alien, cpus = cpus)
+            hlg_stats = add_alien_data(db, tmp_file, hlg_stats, rank, ome2alien)
+        out_f = cloci_dir + 'hlg_stats.' + rank
+    
+        print('\nWriting HLG stats', flush = True)
+        output_stats(out_f, hlg_stats, alien)
+    else:
+        print('\nAssimilating proxy values for GCFs', flush = True)
+        hlg2data = assimilate_proxies(primary_gcf)
 
-    print('\nWriting HLG stats', flush = True)
-    output_stats(out_f, hlg_stats)
 
+    
     if not os.path.isfile(primary_gcf):
         eprint('\nWARNING: `gcfs.tsv.gz` not detected; ignoring GCFs', flush = True)
  #       gcf2data = []
@@ -280,16 +398,20 @@ def main(cloci_dir, db, rank, gamma = False, ann_dir = None,
 #        gcf2data = assimilate_proxies(primary_gcf)
         print('\nCollecting stats by ome', flush = True)
         with mp.Pool(processes = cpus) as pool:
-            ome_stats = pool.starmap(calc_stats, ((ome, ome_dir + ome + '/gcf.tsv', db[ome]['gff3'], ome2alia[ome]) \
+            ome_stats = pool.starmap(calc_stats, ((ome, f'{ome_dir}{ome}/gcf.tsv', 
+                                                   db[ome]['gff3'], ome2alia[ome]) \
                                                   for ome in omes))
         print('\nSummarizing data', flush = True)
         tmp_file = cloci_dir + f'.cloci2summary.gcf.{rank}.tsv'
-        gcf_stats, null = summarize_stats(ome_stats, rank, hlg2data, db, tmp_file)
+        gcf_stats, null, genes_in_clus = summarize_stats(ome_stats, rank, hlg2data, db, tmp_file)
+        if alien:
+            ome2alien = alien_mngr(genes_in_clus, alien, cpus = cpus)
+            gcf_stats = add_alien_data(db, tmp_file, gcf_stats, rank, ome2alien)
   #      if os.path.isfile(tmp_file):
    #         os.remove(tmp_file)
         print('\nWriting GCF stats', flush = True)
         out_f = cloci_dir + 'gcf_stats.' + rank 
-        output_stats(out_f, gcf_stats)
+        output_stats(out_f, gcf_stats, alien)
 
 
 def cli():
@@ -298,6 +420,10 @@ def cli():
     parser.add_argument('-i', '--input', required = True, help = 'CLOCI input directory')
     parser.add_argument('-r', '--rank', help = f'{ranks}; DEFAULT: ome')
     parser.add_argument('-d', '--mtdb', help = 'MycotoolsDB')
+    parser.add_argument('-a', '--alien',
+        help = 'Directory of HG alignments to quantify Alien Index')
+    parser.add_argument('-g', '--gcf', action = 'store_true',
+        help = 'Only run calculations for GCFs')
 #    parser.add_argument('-g', '--gamma', action = 'store_true',
    #     help = 'Calculate gamma and beta diversity')
  #   parser.add_argument('-a', '--annotations', 
@@ -317,7 +443,8 @@ def cli():
  #       findExecs(['hmmsearch', exit = set('hmmsearch')])
 
 
-    main(format_path(args.input), mtdb(format_path(args.mtdb)), rank, cpus = args.cpu)
+    main(format_path(args.input), mtdb(format_path(args.mtdb)), rank, 
+        alien = format_path(args.alien), gcf_only = args.gcf, cpus = args.cpu)
   #       gamma = False, ann_dir = format_path(args.annotations), 
    #      pfam = format_path(args.pfam),    
     sys.exit(0)
