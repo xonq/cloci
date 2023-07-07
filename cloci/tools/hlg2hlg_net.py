@@ -20,7 +20,6 @@ from mycotools.lib.dbtools import mtdb, primaryDB
 # NEED hlg2name conversion
 # NEED node annotation option
      # has to space nodes effectively, probably graphvis
-# NEED taxonomy coloring
 # NEED to filter irrelevant omes
 # NEED option to adjust vertex size by degree
 # NEED option to filter for only one representative of same species per graph
