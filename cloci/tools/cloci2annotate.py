@@ -8,7 +8,7 @@ from tqdm import tqdm
 from cloci.lib.output_res import ann_mngr
 from mycotools.db2search import compile_hmm_queries
 from mycotools.lib.dbtools import mtdb, primaryDB
-from mycotools.lib.kontools import format_path, eprint
+from mycotools.lib.kontools import format_path, eprint, mkOutput, findExecs
 
 # NEED output parsable gcfs.tsv.gz for hlg2biofile
 # NEED variable hmmsearch args
@@ -120,6 +120,7 @@ def cli():
     parser.add_argument('-e', '--extract', 'Extract annotations', action = 'store_true')
     parser.add_argument('--cpus', type = int, default = 1)
 
+    findExecs(['hmmsearch'], exit = ['hmmsearch'])
 
     if os.path.basename(os.path.dirname(format_path(args.cloci)[:-1])) == 'ome':
         out_dir = mkOutput(format_path('./'), 'cloci2annotation') 
