@@ -6,11 +6,13 @@ import sys
 import argparse
 import numpy as np
 import multiprocessing as mp
+from math import log
 from graph_tool import centrality, clustering
 from graph_tool.all import *
 from scipy.sparse import lil_matrix
 from itertools import combinations, chain
 from collections import Counter, defaultdict
+from cloci.lib.hgx2hlgs import MCL, read_clus, read_mci_rows
 from mycotools.lib.kontools import format_path, getColors, hex2rgb, \
     write_json, read_json, eprint, mkOutput
 from mycotools.lib.dbtools import mtdb
@@ -110,8 +112,9 @@ def combine_counts(counts_res, db, rank = 'species'):
 
     fCounts, fHGcounts, fHG2Pfam = Counter(), Counter(), {}
     for taxon in counts:
-        tCounts = {k: round(v/taxonLens[taxon]) for k, v in counts[taxon].items()}
-        tHGcounts = {k: round(v/taxonLens[taxon]) for k, v in hg_counts[taxon].items()}
+        # average across the rank
+        tCounts = {k: round(v/taxonLens[taxon] + 0.5) for k, v in counts[taxon].items()}
+        tHGcounts = {k: round(v/taxonLens[taxon] + 0.5) for k, v in hg_counts[taxon].items()}
         tHG2Pfam = {}
         for hg, pfams in hg2pfam[taxon].items():
             tHG2Pfam[hg] = {k: round(v/taxonLens[taxon]) for k, v in pfams.items()}
@@ -130,8 +133,6 @@ def combine_counts(counts_res, db, rank = 'species'):
 
 def write_node_quants(hg_counts, out_path):
 
-    minC, maxC = min(hg_counts.values()), max(hg_counts.values())
-    denom = maxC - minC
     hg_counts = [
         (k, v) for k,v in sorted(hg_counts.items(), key = lambda x: x[1],
         reverse = True)
@@ -169,9 +170,8 @@ def write_to_adj(oEdges, edges, out_path, oi2ni):
 
 
 def write_adj_matr(oEdges, out_path, maximum = 500, duplicates = False):
-    # write adjancency matrix of counts normalized scaled with factor
 
-    if not duplicates:
+    if not duplicates: # dont look at same HG-HG relationships
         oEdges = {k: v for k,v in oEdges.items() if k[0] != k[1]}
 
     data = sorted(list(oEdges.values()))
@@ -186,7 +186,7 @@ def write_adj_matr(oEdges, out_path, maximum = 500, duplicates = False):
         edges = {k: v for k, v in oEdges.items() if v > minPerc}
 
     edge_ns = sorted(set(chain(*list(oEdges.keys()))))
-    ni2oi = {k: v for k, v in enumerate(edge_ns)}
+    ni2oi = {int(k): int(v) for k, v in enumerate(edge_ns)}
     oi2ni = {v: k for k, v in ni2oi.items()}
 
     print('\t\tEdge #|percentile:', len(edges), percentile, flush = True)
@@ -211,13 +211,31 @@ def import_adj(adj_file, loclen, minimum = 0):
     return adj_arr
 
 
+def run_community_detection(wrk_dir, adj_f, inflation = 1.5, threads = 1):
+    clus_f = adj_f + '.clus'
+    rows_f = adj_f + '.rows'
+    MCL(adj_f, clus_f, inflation, threads, rows_f)
+    mci2pre = read_mci_rows(rows_f)
+    clus = read_clus(clus_f, mci2pre)
+    i2clus = {}
+    for i,v in enumerate(clus):
+        for i1 in v:
+            i2clus[i1] = i
+    return clus, i2clus
+
+
 def make_network(
-    adj_file, quant_path, network_path, hg2pfam_path,
+    wrk_dir, adj_file, quant_path, network_path, hg2pfam_path,
     ni2oi, oi2ni, calc_transitivity = False, calc_centrality = False,
     calc_local_transitivity = False,
-    skip = False, overwrite = False, scale = 2, def_size = 1, annotate = False
+    skip = False, overwrite = False, scale = 1.5, def_size = 1, annotate = False,
+    inflation = 1.5, cpus = 1
     ):
     # open adjacency matrix and construct a network as an html
+
+
+    clus, i2clus = run_community_detection(wrk_dir, adj_file, 
+                                        inflation, cpus * 2 - 1)
 
     adj_arr = import_adj(adj_file, len(oi2ni))
     idx = adj_arr.nonzero()
@@ -227,7 +245,7 @@ def make_network(
     reprop = g.new_edge_property('float')
     reprop.a = weights
     v = weights[:, 1]
-    weights[:, 1] = ((v - v.min()) / (v.max() - v.min()) + def_size) * scale
+    weights[:, 1] = log((v - v.min()) / (v.max() - v.min()) + def_size)
     eprop = g.new_edge_property('float')
     eprop.a = weights
 
@@ -235,20 +253,21 @@ def make_network(
     with open(quant_path, 'r') as raw:
         for line in raw:
             k, v = line.rstrip().split('\t')
-            if int(k) in oi2ni:
+            if int(k) in oi2ni: # HGs with only duplicates may be excluded
                 quants_p[oi2ni[int(k)]] = float(v)
+
 
     max_q, min_q = max(quants_p.values()), min(quants_p.values())
     denom = max_q - min_q
     quants = g.new_vertex_property('float')
-    try:
+    if denom:
         for k, v in quants_p.items():
-            quants[k] = (v - min_q)/denom * scale/2 + def_size
-    except ZeroDivisionError:
+            quants[k] = log((v - min_q)/denom + def_size) + def_size * 3
+    else:
         for k, v in quants_p.items():
-            quants[k] = v * scale + def_size
+            quants[k] = 4
 
-
+    hg2pfam_dict = {}
     hg2pfam = g.new_vertex_property('string')
     if os.path.isfile(hg2pfam_path):
         hg2pfamPrep = read_json(hg2pfam_path)
@@ -257,17 +276,40 @@ def make_network(
             if hg in oi2ni:
                 if pfams:
                     v = list(pfams.keys())[0]
+                    hg2pfam_dict[oi2ni[hg]] = f'{hg}|{v[v.find("-")+1:]}'
                     hg2pfam[oi2ni[hg]] = f'{hg}|{v[v.find("-")+1:]}'
                 else:
                     hg2pfam[oi2ni[hg]] = str(hg)
+                    hg2pfam_dict[oi2ni[hg]] = str(hg)
+            
     else:
         for k, v in enumerate(quants):
             hg2pfam[k] = str(ni2oi[k])
+            hg2pfam_dict[k] = str(ni2oi[k])
 
 
 #    if len(quants) < 2:
  #       eprint('\t\tERROR: less than 2 nodes in network', flush = True)
   #      return
+    count = 0
+    v_fil_col = g.new_vertex_property('vector<float>')
+    colors = getColors(len(clus), ignore = ['#ffffff'])
+    for c, nodes in enumerate(clus):
+        if len(nodes) > 1:
+            try:
+                color = colors[count]
+                count += 1
+            except IndexError:
+                count = 0
+                color = colors[count]
+        else:
+            color = '#ffffff'
+        rgb = [x/255.0 for x in hex2rgb(color)] + [0.8]
+        for hg in nodes:
+#            if hg in oi2ni:
+ #               ni = oi2ni[hg]
+            v_fil_col[hg] = rgb
+        
 
     g.vp['name'] = hg2pfam
     print('\t\tWriting', flush = True)
@@ -275,14 +317,14 @@ def make_network(
         if overwrite or not os.path.isfile(network_path):
             if annotate:
                 graph_draw(g, vertex_size = quants, vertex_text = g.vp['name'],
-                   output = network_path, vertex_halo_color = [0,0,0,1], 
-                   vertex_fill_color = [1,1,1,1],
+                   output = network_path, vertex_halo_color = v_fil_col, 
+                   vertex_fill_color = v_fil_col,
                    edge_pen_width = eprop, edge_color = [0,0,0,1], vertex_font_family = 'arial',
                    vertex_font_size = 1)
             else:
                 graph_draw(g, vertex_size = quants,
-                   output = network_path, vertex_halo_color = [0,0,0,1], 
-                   vertex_fill_color = [1,1,1,1],
+                   output = network_path, vertex_halo_color = v_fil_col, 
+                   vertex_fill_color = v_fil_col,
                    edge_pen_width = eprop, edge_color = [0,0,0,1])
     
     print('\t\tNodes:', len(oi2ni), flush = True)
@@ -308,11 +350,16 @@ def make_network(
         local_transitivity = clustering.local_clustering(g, reprop)
         trans_path = adj_file[:-4] + '.transitivity'
         with open(trans_path, 'w') as out:
-            out.write('\n'.join([
-                f'{hg2pfam[str(k)]}\t{v}\t{quants_p[k]}' \
-                for k,v in sorted(enumerate(local_transitivity),
-                                  key = lambda x: x[1]) if str(k) in hg2pfam \
-                                                       and k in quants_p]))
+            out.write('#hg|pfam\ttransitivity\tnode_size\n')
+            for k, v in sorted(enumerate(local_transitivity),
+                               key = lambda x: x[1], reverse = True):
+                if k in quants_p:
+                    out.write(f'{hg2pfam_dict[k]}\t{v}\t{quants_p[k]}\n')
+                elif k in hg2pfam_dict:
+                    eprint(f'\t\t\tWARNING: {hg2pfam_dict[k]} missing from node sizes',
+                           flush = True)
+                else:
+                    eprint(f'\t\t\tWARNING: rogue network node {k}', flush = True)
 #        print('\t\t\t\tEdge:', flush = True)
  #       edge_transitivity = nx.edge_transitivity(G)
   #      print('\t\t\t\t\t' + str(edge_transitivity), flush = True)
@@ -321,13 +368,18 @@ def make_network(
         v_between, e_between = centrality.betweenness(g)
         central_path = adj_file[:-4] + '.centrality'
         with open(central_path, 'w') as out:
-            out.write('\n'.join([
-                f'{hg2pfam[str(k)]}\t{v}\t{quants_p[k]}'\
-                for k,v in sorted(
-                    enumerate(v_between), key = lambda x: x[1], 
-                    reverse = True
-                    ) if v and str(k) in hg2pfam # why isnt k always in quants
-                ]))
+            out.write('#hg|pfam\tbetweenness\tnode_size\n')
+            for k, v in sorted(enumerate(v_between),
+                               key = lambda x: x[1], reverse = True):
+                if v == 0:
+                    continue
+                if k in quants_p:
+                    out.write(f'{hg2pfam_dict[k]}\t{v}\t{quants_p[k]}\n')
+                elif k in hg2pfam_dict:
+                    eprint(f'\t\t\tWARNING: {hg2pfam_dict[k]} missing from node sizes',
+                           flush = True)
+                else:
+                    eprint(f'\t\t\tWARNING: rogue network node {k}', flush = True)
 
     return stats 
 
@@ -344,8 +396,12 @@ def main(
             eprint('\nERROR: invalid cloci output', flush = True)
             sys.exit(2)
 
+    wrk_dir = net_dir + 'working/'
     if not os.path.isdir(net_dir):
         os.mkdir(net_dir)
+    if not os.path.isdir(wrk_dir):
+        os.mkdir(wrk_dir)
+    
     omesXlineage = extract_lineages(db, rank)
 
     omesXlineage = {
@@ -354,9 +410,9 @@ def main(
     lineage2stats = {}
     for lineage, omes in omesXlineage.items():
         print('\n' + lineage, flush = True)
-        adj_path = net_dir + lineage + '.adj'
-        quant_path = net_dir + lineage + '.tsv'
-        hg2pfam_path = net_dir + lineage + '.hg2pfam.txt'
+        adj_path = wrk_dir + lineage + '.adj'
+        quant_path = wrk_dir + lineage + '.tsv'
+        hg2pfam_path = wrk_dir + lineage + '.hg2pfam.txt'
 #        if not os.path.isfile(adj_path): # need to log the factor then
         print('\tAdjacency matrix', flush = True)
         info_cmds = [
@@ -379,9 +435,9 @@ def main(
         write_node_quants(hg_counts, quant_path)
         ni2oi, oi2ni = write_adj_matr(counts, adj_path, max_edges)
     
-        net_path = adj_path[:-4] + '.svg'
+        net_path = net_dir + lineage + '.svg'
         print('\tNetwork', flush = True)
-        stats = make_network(adj_path, quant_path, net_path, 
+        stats = make_network(wrk_dir, adj_path, quant_path, net_path, 
                          hg2pfam_path, ni2oi, oi2ni,
                          transitivity, calc_centrality, 
                          local_transitivity, skip,

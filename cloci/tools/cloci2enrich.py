@@ -11,7 +11,7 @@
 
 from scipy.stats import hypergeom
 from mycotools.lib.biotools import fa2dict, gff3Comps, gff2list
-from mycotools.lib.kontools import format_path, eprint
+from mycotools.lib.kontools import format_path, eprint, mkOutput
 from mycotools.lib.dbtools import mtdb
 from collections import Counter, defaultdict
 from tqdm import tqdm
@@ -386,7 +386,7 @@ def WriteOutput(scoresDict, thresh, out_file, go2onto = None, go2pfam = False, s
 
 
 def main(
-    db, thresh, rank, cloci_dir, pfam_dir, out_dir,
+    db, thresh, rank, ome_dir, ome_dir, pfam_dir, out_dir,
     pfam2go_path, go_file, go_terms = [], top_hit = True, pool = mp.Pool(processes = 1)
     ):
 
@@ -400,10 +400,10 @@ def main(
     for taxon, omes in ranks.items():
         todel = []
         for i, ome in enumerate(omes):
- #           if cloci_dir:
-            if not os.path.isfile(cloci_dir + 'ome/' + ome + '/hlg.tsv'):
+ #           if ome_dir:
+            if not os.path.isfile(ome_dir + ome + '/hlg.tsv'):
                 todel.append(i)
-            elif not os.path.isfile(cloci_dir + 'ome/' + ome + '/gcf.tsv'):
+            elif not os.path.isfile(ome_dir + ome + '/gcf.tsv'):
                 eprint(f'\tWARNING: {ome} gcf.tsv missing, assuming no GCFs', flush = True)
 #                sys.exit(14)
 #            elif not os.path.isfile(as_dir + ome + '/' + ome + '.gff3'):
@@ -433,13 +433,13 @@ def main(
         print('\tHLGs', flush = True)
         hlgres = pool.starmap(
             clusterGenes,
-            [[ome, cloci_dir + 'ome/' + ome + '/hlg.tsv'] for ome in omes]
+            [[ome, ome_dir + ome + '/hlg.tsv'] for ome in omes]
             )
 
         print('\tGCFs', flush = True)
         gcfres = pool.starmap(
             clusterGenes,
-            [[ome, f'{cloci_dir}ome/{ome}/gcf.tsv'] for ome in omes]
+            [[ome, f'{ome_dir}{ome}/gcf.tsv'] for ome in omes]
             )
 #        elif as_dir:
  #           gffs = collectGffs(omes, as_dir)
@@ -506,7 +506,7 @@ def cli():
         type = float, default = 0.05)
     parser.add_argument('-d', '--mtddb', help = 'CLOCI mycotools db input', required = True)
     parser.add_argument('-r', '--rank', help = 'taxon rank', required = True)
-    parser.add_argument('-c', '--cloci_dir', help = 'CLOCI output dir', required = True)
+    parser.add_argument('-c', '--cloci', help = 'CLOCI|CLOCI/ome output dir', required = True)
 #    parser.add_argument('-a', '--antismash_dir', help = 'antiSMASH dir with ome subfolders')
     parser.add_argument('-p', '--pfam_dir', help = 'Pfam tbl output dir', required = True)
     parser.add_argument('-p2g', '--pfam2go', help = 'pfam2go file for GO')
@@ -521,24 +521,26 @@ def cli():
     taxon_set = {'kingdom', 'phylum', 'subphylum', 'class', 'order', 'family', 'genus', 'species'}
     if args.rank.lower() not in taxon_set:
         raise ValueError('Taxon must be in ' + str(taxon_set))
-#    elif (args.cloci_dir and args.antismash_dir) or (not args.cloci_dir and not args.antismash_dir):
+#    elif (args.cloci and args.antismash_dir) or (not args.cloci and not args.antismash_dir):
  #       raise ValueError('-o2c OR -as must be inputted')
 
     db = mtdb(format_path(args.db))
-    #if args.cloci_dir:
-    cloci_dir = format_path(args.cloci_dir, force_dir = True)
+    #if args.cloci:
+    ome_dir = format_path(args.cloci, force_dir = True)
    #     as_dir = None
   #  else:
- #       cloci_dir = None
+ #       ome_dir = None
 #        as_dir = format_path(args.antismash_dir)
     pfam_dir = format_path(args.pfam_dir)
 
     if not args.out_dir:
-        out_dir = cloci_dir + 'enrichment/'
-        if not os.path.isdir(out_dir):
-            os.mkdir(out_dir)
+        if os.path.basename(os.path.dirname(format_path(args.cloci)[:-1])) == 'ome':
+            out_dir = mkOutput(format_path('./'), 'cloci2enrichment')
+        else:
+            out_dir = mkOutput(format_path(args.cloci), 'cloci2enrichment', 
+                             suffix = None)
     else:
-        out_dir = os.getcwd() + '/'
+        out_dir = mkOutput(format_path(out_dir), 'cloci2enrichment')
 
     if args.pfam2go:
         pfam2go_path = format_path(args.pfam2go)
@@ -550,7 +552,7 @@ def cli():
         go_terms, go_file = [], None
 
     pool = mp.Pool(processes = args.cpu)
-    main(db, args.alpha, args.rank.lower(), cloci_dir, pfam_dir, out_dir, pfam2go_path, 
+    main(db, args.alpha, args.rank.lower(), ome_dir, pfam_dir, out_dir, pfam2go_path, 
          go_file, go_terms, pool = pool, top_hit = args.top_hit)
     pool.close()
     pool.join()

@@ -9,6 +9,7 @@ import random
 import argparse
 #import networkx as nx
 import numpy as np
+from graph_tool import clustering
 from graph_tool.all import *
 import matplotlib.pyplot as plt
 from collections import defaultdict
@@ -241,6 +242,8 @@ def make_network(net_file, adj_arr, locIdata, nl2ol, img,
         else:
             g.save(net_file)
 
+    global_transitivity = clustering.global_clustering(g, eprop)
+    print(f'\tTransitivity: {global_transitivity[0]}, stdev: {global_transitivity[1]}')
 
 def parse_hlgs(hlg_file):
     clans, hlgs = set(), set()

@@ -166,7 +166,7 @@ def cli():
            + 'generate biofiles. "-" for stdin; -g specifies GCFs, all HLGs by default')
 
     in_opt = parser.add_argument_group('Input parameters')
-    in_opt.add_argument('-c', '--cloci_dir', help = 'CLOCI output dir', required = True)
+    in_opt.add_argument('-c', '--cloci', help = 'CLOCI output dir', required = True)
     in_opt.add_argument('-g', '--gcf', action = 'store_true', help = 'Generate files for GCFs')
     in_opt.add_argument('-o', '--ome', help = 'Generate files for all ome(s) HLG/GCFs')
     in_opt.add_argument('--hlg', help = 'Generate files for specific HLG/GCF(s)')
