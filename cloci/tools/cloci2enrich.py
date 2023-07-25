@@ -130,22 +130,25 @@ def parsePfam(ome, pfam_res, clusGenes, hlg_genes, top_hit = True):
     clusGenes = dict(clusGenes)
     hlgGenes = dict(hlg_genes)
     pfam2def = {}
-    with open(pfam_res, 'r') as raw:
-        for line in raw:
-            if line.startswith('#'):
-                continue
-            data = line.rstrip().split()
-            g, p, q, b = data[0], data[4], data[3], float(data[7])
-            
-            # this is where a post-hoc threshold would be applied
-            if q not in gene2pfam[g]: # in case there is a duplicate
-            # for the same gene, add in the better score 
-                gene2pfam[g][q] = b
-            else:
-                if b > gene2pfam[g][q]:
+    try:
+        with open(pfam_res, 'r') as raw:
+            for line in raw:
+                if line.startswith('#'):
+                    continue
+                data = line.rstrip().split()
+                g, p, q, b = data[0], data[4], data[3], float(data[7])
+                
+                # this is where a post-hoc threshold would be applied
+                if q not in gene2pfam[g]: # in case there is a duplicate
+                # for the same gene, add in the better score 
                     gene2pfam[g][q] = b
-            pfam2def[p[:p.find('.')]] = q
-
+                else:
+                    if b > gene2pfam[g][q]:
+                        gene2pfam[g][q] = b
+                pfam2def[p[:p.find('.')]] = q
+    except FileNotFoundError:
+        return ome, None, None, None, None
+    
     if top_hit:
         gene2pfam = {k: dict(sorted(v.items(), key = lambda x: x[1], reverse = True)) \
                      for k, v in gene2pfam.items()}
@@ -318,9 +321,9 @@ def GetPopResults(omes2genes2pfams, omes2clus2pfam, totalGenes, totalClusGenes, 
             tPfams.extend(pfams)
         for pfams, clus in list(clusGenes2pfam.values()):
             for pfam in pfams:
-                print(pfam, flush = True)
-                if pfam == 'DUF3435':
-                    print(ome, clus, flush = True)
+#                print(pfam, flush = True)
+                if pfam == 'DUF3435' or pfam.lower() == 'plavaka':
+                    print(ome, clus, pfam, flush = True)
                 pfam2clusters[pfam].append(ome + '_' + clus)
                 tClusPfams.append(pfam)
         totalPfams += Counter(tPfams)
@@ -378,23 +381,26 @@ def WriteOutput(scoresDict, thresh, out_file, go2onto = None, go2pfam = False, s
                     sig.append(d)
                 else:
                     insig.append(d)
-        with open(out_file + '.tmp', 'w') as raw: 
-            sig = sorted(sig, key = lambda x: (int(x[3]), x[2]), reverse = True)
+        with open(out_file + '.tmp', 'w') as out: 
+            sig = sorted(sig, key = lambda x: float(x[2]), reverse = True)
             out.write('\n'.join(['\t'.join([str(x) for x in y]) for y in sig]) + '\n')
             out.write('\n'.join(['\t'.join([str(x) for x in y]) for y in insig]))
         os.rename(out_file + '.tmp', out_file)
 
 
 def main(
-    db, thresh, rank, ome_dir, ome_dir, pfam_dir, out_dir,
-    pfam2go_path, go_file, go_terms = [], top_hit = True, pool = mp.Pool(processes = 1)
+    db, thresh, rank, ome_dir, pfam_dir, out_dir,
+    pfam2go_path, go_file, go_terms = [], top_hit = True, 
+    pool = mp.Pool(processes = 1), minimum = 0
     ):
 
     db = db.set_index()
     ranks = defaultdict(list)
     for ome, row in db.items():
-        taxon = {r.lower(): t for r, t in row['taxonomy'].items()}[rank]
+        taxon = row['taxonomy'][rank]
         ranks[taxon].append(ome)
+
+    ranks = {k: v for k, v in ranks.items() if len(v) > minimum}
 
     print('\nChecking input', flush = True)
     for taxon, omes in ranks.items():
@@ -459,12 +465,15 @@ def main(
 
         pfamres = pool.starmap(
             parsePfam,
-            [[ome, f'{pfam_dir}{ome}.out', ome2clus_genes[ome], ome2hlg_genes[ome], top_hit] \
+            [[ome, f'{pfam_dir}{ome}_pfam.out', ome2clus_genes[ome], ome2hlg_genes[ome], top_hit] \
             for ome in omes]
             )
 
         ome2genes2pfam, ome2clus_genes2pfam, ome2hlgGenes2pfam, pfam2def = {}, {}, {}, {}
         for ome, tgene2pfam, tclusGenes2pfam, thlgGenes2pfam, tpfam2def in pfamres:
+            if not tgene2pfam:
+                eprint(f'\t\tWARNING: {ome} missing annotation', flush = True)
+                continue
             ome2genes2pfam[ome] = {x[0]: dict(x[1]) for x in tgene2pfam}
             ome2clus_genes2pfam[ome] = {x[0]: x[1] for x in tclusGenes2pfam}
             ome2hlgGenes2pfam[ome] = {x[0]: x[1] for x in thlgGenes2pfam}
@@ -494,21 +503,28 @@ def main(
                 WriteOutput(ref_scores[1], thresh, out_base + '_cvh.ref.go.tsv', go2pfam = True)
                 WriteOutput(ref_scores[2], thresh, out_base + '_hvt.ref.go.tsv', go2pfam = True)
         else:
-            scoresDict = GetPopResults(ome2genes2pfam, ome2clus_genes2pfam, taxonGenes, taxonClusGenes, pool)
+            scoresDict = GetPopResults(ome2genes2pfam, ome2clus_genes2pfam, 
+                                       taxonGenes, taxonClusGenes, pool)
             print(f'\tWriting', flush = True)
 
-            WriteOutput(scoresDict, thresh, out_base + '.pfam.tsv', go2onto = None)
+            WriteOutput(scoresDict, thresh, out_base + '.gcf.pfam.tsv', go2onto = None, sort = True)
+            scoresDict = GetPopResults(ome2genes2pfam, ome2hlgGenes2pfam, 
+                                       taxonGenes, taxonClusGenes, pool)
+
+            WriteOutput(scoresDict, thresh, out_base + '.hlg.pfam.tsv', go2onto = None, sort = True)
 
 def cli():
 
     parser = argparse.ArgumentParser(description = 'cloci2pfam enrichment')
     parser.add_argument('-a', '--alpha', help = 'Overall Bonferonni corrected alpha; DEFAULT: 0.05',
         type = float, default = 0.05)
-    parser.add_argument('-d', '--mtddb', help = 'CLOCI mycotools db input', required = True)
+    parser.add_argument('-d', '--mtdb', help = 'CLOCI mycotools db input', required = True)
     parser.add_argument('-r', '--rank', help = 'taxon rank', required = True)
-    parser.add_argument('-c', '--cloci', help = 'CLOCI|CLOCI/ome output dir', required = True)
+    parser.add_argument('-c', '--cloci', help = 'CLOCI output dir', required = True)
 #    parser.add_argument('-a', '--antismash_dir', help = 'antiSMASH dir with ome subfolders')
     parser.add_argument('-p', '--pfam_dir', help = 'Pfam tbl output dir', required = True)
+    parser.add_argument('-m', '--minimum', help = 'Minimum omes to consider rank', 
+                        type = int, default = 0)
     parser.add_argument('-p2g', '--pfam2go', help = 'pfam2go file for GO')
     parser.add_argument('-g', '--go_terms', help = '[-gf] Specific GO terms to mine')
     parser.add_argument('-gf', '--go_obo', help = 'GO ontology file')
@@ -524,9 +540,9 @@ def cli():
 #    elif (args.cloci and args.antismash_dir) or (not args.cloci and not args.antismash_dir):
  #       raise ValueError('-o2c OR -as must be inputted')
 
-    db = mtdb(format_path(args.db))
+    db = mtdb(format_path(args.mtdb))
     #if args.cloci:
-    ome_dir = format_path(args.cloci, force_dir = True)
+    ome_dir = format_path(args.cloci + 'ome/', force_dir = True)
    #     as_dir = None
   #  else:
  #       ome_dir = None
@@ -534,16 +550,18 @@ def cli():
     pfam_dir = format_path(args.pfam_dir)
 
     if not args.out_dir:
-        if os.path.basename(os.path.dirname(format_path(args.cloci)[:-1])) == 'ome':
-            out_dir = mkOutput(format_path('./'), 'cloci2enrichment')
-        else:
-            out_dir = mkOutput(format_path(args.cloci), 'cloci2enrichment', 
+#        if os.path.basename(os.path.dirname(format_path(args.cloci)[:-1])) == 'ome':
+ #           out_dir = mkOutput(format_path('./'), 'cloci2enrichment')
+  #      else:
+        out_dir = mkOutput(format_path(args.cloci), 'cloci2enrichment', 
                              suffix = None)
     else:
         out_dir = mkOutput(format_path(out_dir), 'cloci2enrichment')
 
     if args.pfam2go:
         pfam2go_path = format_path(args.pfam2go)
+    else:
+        pfam2go_path = None
 
     if args.go_terms:
         go_terms = args.go_terms.replace('"','').replace("'",'').replace(',',' ').split()
@@ -553,7 +571,7 @@ def cli():
 
     pool = mp.Pool(processes = args.cpu)
     main(db, args.alpha, args.rank.lower(), ome_dir, pfam_dir, out_dir, pfam2go_path, 
-         go_file, go_terms, pool = pool, top_hit = args.top_hit)
+         go_file, go_terms, pool = pool, top_hit = args.top_hit, minimum = args.minimum)
     pool.close()
     pool.join()
 
