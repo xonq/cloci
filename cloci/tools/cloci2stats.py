@@ -10,6 +10,8 @@ from math import log
 from tqdm import tqdm
 from collections import defaultdict, Counter
 from cloci.lib.output_data import run_hmmsearch, parse_hmm_res
+from mycotools.annotationStats import main as annotation_stats
+from mycotools.assemblyStats import main as assembly_stats
 from mycotools.lib.kontools import collect_files, eprint, format_path, findExecs, mkOutput
 from mycotools.lib.biotools import gff3Comps, gff2list
 from mycotools.lib.dbtools import mtdb
@@ -180,22 +182,24 @@ def alien_mngr(genes_in_clus, algn_dir, ome2tax, cpus = 1):
     
     return ome_res
 
-def summarize_stats(ome_stats, rank, hlg2data, db, tmp_path):
+def summarize_stats(ome_stats, rank, hlg2data, db, tmp_path, ass_stats):
     ome2alia = {}
     tax_dict = defaultdict(lambda: {'tmd': [], 'gcl': [], 'genes': [],
                                     'mmi': [], 'mmp': [], 'gic': [],
                                     'csb': [], 'pds': [], 'sd': [],
-                                    'mean_g': [], 'med_g': [], 'pc': []})
+                                    'mean_g': [], 'med_g': [], 'pc': [],
+                                    'n50': [], 'bp': [], 'mask': []})
     tax2genes2hg = {}
     with open(tmp_path, 'w') as out:
         out.write('tip\ttmd\tgcl\tmmi\tmmp\tcsb\tpds\tpc' \
-                + '\tclus_genes\tgenes\tdivers\ttaxon\n')
+                + '\tclus_genes\tgenes\tdivers\ttaxon\tn50\tbp\tmask\n')
         if rank == 'ome':
             for ome, hlgs, mean_gic, median_gic, pc, gic, alia, shan, genes in ome_stats:
                 if not ome:
                     continue
                 tax2genes2hg[ome] = genes
                 prox = [hlg2data[hlg] for hlg in set(hlgs) if hlg in hlg2data]
+                n50, alen, mask = ass_stats[ome]['n50'], ass_stats[ome]['len'], ass_stats[ome]['mask']
                 tax_dict[ome]['tmd'].extend([x[0] for x in prox])
                 tax_dict[ome]['gcl'].extend([x[1] for x in prox])
                 tax_dict[ome]['mmi'].extend([x[2] for x in prox])
@@ -208,6 +212,9 @@ def summarize_stats(ome_stats, rank, hlg2data, db, tmp_path):
                 tax_dict[ome]['sd'].append(shan)
                 tax_dict[ome]['genes'].append(alia)
                 tax_dict[ome]['gic'].append(gic)
+                tax_dict[ome]['n50'].append(ass_stats[ome]['n50'])
+                tax_dict[ome]['bp'].append(ass_stats[ome]['len'])
+                tax_dict[ome]['mask'].append(ass_stats[ome]['mask'])
                 ome2alia[ome] = alia
                 try:
                     out.write(f'{ome}\t{sum(tax_dict[ome]["tmd"])/len(tax_dict[ome]["tmd"])}\t' \
@@ -216,7 +223,7 @@ def summarize_stats(ome_stats, rank, hlg2data, db, tmp_path):
                             + f'{sum(tax_dict[ome]["mmp"])/len(tax_dict[ome]["mmp"])}\t' \
                             + f'{sum(tax_dict[ome]["csb"])/len(tax_dict[ome]["csb"])}\t' \
                             + f'{sum(tax_dict[ome]["pds"])/len(tax_dict[ome]["pds"])}\t' \
-                            + f'{pc}\t{gic}\t{alia}\t{shan}\t\n')
+                            + f'{pc}\t{gic}\t{alia}\t{shan}\t{ome}\t{n50}\t{alen}\t{mask}\n')
                 except ZeroDivisionError:
                     continue
         else:
@@ -232,6 +239,7 @@ def summarize_stats(ome_stats, rank, hlg2data, db, tmp_path):
                 mmp = [x[3] for x in prox]
                 csb = [x[4] for x in prox]
                 pds = [x[5] for x in prox]
+                n50, alen, mask = ass_stats[ome]['n50'], ass_stats[ome]['len'], ass_stats[ome]['mask']
 
                 tax_dict[tax]['tmd'].extend(tmd)
                 tax_dict[tax]['gcl'].extend(gcl)
@@ -245,12 +253,15 @@ def summarize_stats(ome_stats, rank, hlg2data, db, tmp_path):
                 tax_dict[tax]['sd'].append(shan)
                 tax_dict[tax]['genes'].append(alia)
                 tax_dict[tax]['gic'].append(gic)
+                tax_dict[tax]['n50'].append(n50)
+                tax_dict[tax]['bp'].append(alen)
+                tax_dict[tax]['mask'].append(mask)
                 ome2alia[ome] = alia
                 try:
                     out.write(f'{ome}\t{sum(tmd)/len(tmd)}\t{sum(gcl)/len(gcl)}\t' \
                         + f'{sum(mmi)/len(mmi)}\t{sum(mmp)/len(mmp)}\t' \
                         + f'{sum(csb)/len(csb)}\t{sum(pds)/len(pds)}\t' \
-                        + f'{pc}\t{gic}\t{alia}\t{shan}\t{tax}\n')
+                        + f'{pc}\t{gic}\t{alia}\t{shan}\t{tax}\t{n50}\t{alen}\t{mask}\n')
                 except ZeroDivisionError:
                     continue
 
@@ -262,17 +273,21 @@ def output_stats(out_file, tax_dict, run_alien = False):
         if run_alien:
             out0.write('#taxon\ttmd\tgcl\tmmi\tmmp\tcsb\tpds' \
                      + '\tgenes_per_clus\tperc_clustered\t' \
-                     + 'genes_in_clus\ttot_genes\tdiversity\talienness\n')
+                     + 'genes_in_clus\ttot_genes\tdiversity\talienness\t' \
+                     + 'n50\tbase_pairs\tmask\n')
             out1.write('#taxon\ttmd\tgcl\tmmi\tmmp\tcsb\tpds' \
                      + '\tgenes_per_clus\tperc_clustered\t' \
-                     + 'genes_in_clus\ttot_genes\tdiversity\talienness\n')
+                     + 'genes_in_clus\ttot_genes\tdiversity\talienness\t' \
+                     + 'n50\tbase_pairs\tmask\n')
         else:
             out0.write('#taxon\ttmd\tgcl\tmmi\tmmp\tcsb\tpds' \
                      + '\tgenes_per_clus\tperc_clustered\t' \
-                     + 'genes_in_clus\ttot_genes\tdiversity\n')
+                     + 'genes_in_clus\ttot_genes\tdiversity\t' \
+                     + 'n50\tbase_pairs\tmask\n')
             out1.write('#taxon\ttmd\tgcl\tmmi\tmmp\tcsb\tpds\t' \
                      + 'genes_per_clus\tperc_clustered\t' \
-                     + 'genes_in_clus\ttot_genes\tdiversity\n')
+                     + 'genes_in_clus\ttot_genes\tdiversity\t' \
+                     + 'n50\tbase_pairs\tmask\n')
         for tax, data in tax_dict.items():
             if len(data['tmd']) == 0:
                 eprint(f'\tWARNING: {tax} has no results', flush = True)
@@ -287,6 +302,12 @@ def output_stats(out_file, tax_dict, run_alien = False):
             tot_genes = sum(data['genes'])/len(data['genes'])
             tot_cg = sum(data['gic'])/len(data['gic'])
             pc = sum(data['pc'])/len(data['pc'])
+            n50 = sum(data['n50'])/len(data['n50'])
+            bp = sum(data['bp'])/len(data['bp'])
+            try:
+                mask = sum(data['mask'])/len(data['mask'])
+            except TypeError:
+                mask = None
             try:
                 sd = sum(data['sd'])/len(data['sd'])
             except TypeError:
@@ -295,11 +316,11 @@ def output_stats(out_file, tax_dict, run_alien = False):
                 alien = sum(data['alien'])/len(data['alien'])
                 line = f'{tax}\t{tmd}\t{gcl}\t{mmi}\t{mmp}\t{csb}\t' \
                      + f'{pds}\t{genes}\t{pc}\t{tot_cg}\t{tot_genes}\t' \
-                     + f'{sd}\t{alien}\n'
+                     + f'{sd}\t{alien}\t{n50}\t{bp}\t{mask}\n'
             else:
                 line = f'{tax}\t{tmd}\t{gcl}\t{mmi}\t{mmp}\t{csb}\t' \
                      + f'{pds}\t{genes}\t{pc}\t{tot_cg}\t{tot_genes}\t' \
-                     + f'{sd}\n'
+                     + f'{sd}\t{n50}\t{bp}\t{mask}\n'
             out0.write(line)
             
             data['tmd'].sort()
@@ -312,6 +333,9 @@ def output_stats(out_file, tax_dict, run_alien = False):
             data['pc'].sort()
             data['genes'].sort()
             data['gic'].sort()
+            data['n50'].sort()
+            data['bp'].sort()
+            data['mask'].sort()
             prox_len = len(data['tmd'])
             tmd = data['tmd'][round(prox_len/2) - 1]
             gcl = data['gcl'][round(prox_len/2) - 1]
@@ -324,16 +348,24 @@ def output_stats(out_file, tax_dict, run_alien = False):
             tot_cg = data['gic'][round(len(data['gic'])/2 - 1)]
             pc = data['pc'][round(len(data['pc'])/2 - 1)]
             sd = data['sd'][round(len(data['sd'])/2 - 1)]
+            n50 = data['n50'][round(len(data['n50'])/2 - 1)]
+            bp = data['bp'][round(len(data['bp'])/2 - 1)]
+            data['mask'] = [x for x in data['mask'] if x] # IGNORES TRUE 0% MASKED
+            try:
+                mask = data['mask'][round(len(data['mask'])/2) - 1]
+            except IndexError:
+                mask = None
 
             if run_alien:
                 data['alien'].sort()
                 alien = data['alien'][round(len(data['alien'])/2) - 1]
                 line = f'{tax}\t{tmd}\t{gcl}\t{mmi}\t{mmp}\t{csb}\t' \
                      + f'{pds}\t{genes}\t{pc}\t{tot_cg}\t{tot_genes}\t' \
-                     + f'{sd}\t{alien}\n'
+                     + f'{sd}\t{alien}\t{n50}\t{bp}\t{mask}\n'
             else:
                 line = f'{tax}\t{tmd}\t{gcl}\t{mmi}\t{mmp}\t{csb}' \
-                     + f'\t{pds}\t{genes}\t{pc}\t{tot_cg}\t{tot_genes}\t{sd}\n'
+                     + f'\t{pds}\t{genes}\t{pc}\t{tot_cg}\t{tot_genes}\t{sd}' \
+                     + f'\t{n50}\t{bp}\t{mask}\n'
             out1.write(line)
 
 
@@ -396,21 +428,35 @@ def main(out_dir, ome_dir, db, rank, gamma = False, ann_dir = None,
                                       max_hits = 1)
         
 
+    print('\nPreparing assembly statistics', flush = True)
+    assembly_stats('', log_path = out_dir + 'assembly_stats.tsv', cpus = cpus, db = db)
+
+    with open(out_dir + 'assembly_stats.tsv', 'r') as raw:
+        ome2ass_stats = {}
+        for line in raw:
+            if not line.startswith('#'):  
+                d = line.rstrip().split()
+                ome, n50, mask, ass_len = d[0], d[1], d[-1], d[-5]
+                ome2ass_stats[ome] = {'n50': int(n50), 'mask': float(mask),
+                                      'len': int(ass_len)}
+
+
+
     print('\nCollecting data for omes', flush = True)
-    tsvs = collect_files(ome_dir, 'tsv', recursive = True)
+    tsvs_p = collect_files(ome_dir, 'tsv', recursive = True)
+    tsvs = [x for x in tsvs_p if os.path.basename(os.path.dirname(x)) in db]
     gcfs = [x for x in tsvs if os.path.basename(x) == 'gcf.tsv']
     omes = [os.path.basename(os.path.dirname(x)) for x in gcfs]
-    omes = [x for x in omes if x in db]
     if rank != 'ome':
         ome2tax = {o: db[o]['taxonomy'][rank] for o in omes}
     else:
         ome2tax = {o: o for o in omes}
-    primary_gcf = out_dir + 'gcfs.tsv.gz'
+    primary_gcf = ome_dir + '../gcfs.tsv.gz'
 
     if not gcf_only:
         hlgs = [x for x in tsvs if os.path.basename(x) == 'hlg.tsv']
         omes = [os.path.basename(os.path.dirname(x)) for x in hlgs]
-        primary_hlg = out_dir + 'hlgs.tsv.gz'
+        primary_hlg = out_dir + '../hlgs.tsv.gz'
         if not os.path.isfile(primary_hlg):
             eprint('\nERROR: `hlgs.tsv.gz` not detected', flush = True)
             sys.exit(1)
@@ -424,11 +470,13 @@ def main(out_dir, ome_dir, db, rank, gamma = False, ann_dir = None,
             ome_stats = pool.starmap(calc_stats, ((ome, ome_dir + ome + '/hlg.tsv', db[ome]['gff3']) \
                                                   for ome in omes))
 
+        
+
 
         print('\nSummarizing data by ' + rank, flush = True)
         tmp_file = out_dir + f'.cloci2summary.hlg.{rank}.tsv'
         hlg_stats, ome2alia, genes_in_clus = summarize_stats(ome_stats, rank, hlg2data, 
-                                                             db, tmp_file)
+                                                             db, tmp_file, ome2ass_stats)
     #    if os.path.isfile(tmp_file):
      #       os.remove(tmp_file)
         if alien:
@@ -463,7 +511,8 @@ def main(out_dir, ome_dir, db, rank, gamma = False, ann_dir = None,
                                                        total = len(omes)))
         print('\nSummarizing data', flush = True)
         tmp_file = out_dir + f'.cloci2summary.gcf.{rank}.tsv'
-        gcf_stats, null, genes_in_clus = summarize_stats(ome_stats, rank, hlg2data, db, tmp_file)
+        gcf_stats, null, genes_in_clus = summarize_stats(ome_stats, rank, hlg2data, 
+                                                         db, tmp_file, ome2ass_stats)
         if not ome2alia:
             ome2alia = null
         if alien:
@@ -491,9 +540,7 @@ def cli():
  #   parser.add_argument('-a', '--annotations', 
    #     help = '[-g] Directory of tbl-formatted Pfam annotations for gamma diversity, labeled <ome>.out')
   #  parser.add_argument('-p', '--pfam', help = '[-g] Pfam.hmm path')
-
-
-    parser.add_argument('-c', '--cpu', type = int)
+    parser.add_argument('--cpus', type = int, default = 1)
     args = parser.parse_args()
 
     rank = args.rank.lower().rstrip().lstrip()
@@ -512,7 +559,7 @@ def cli():
         ome_dir = format_path(args.cloci) + 'ome/'
 
     main(out_dir, ome_dir, mtdb(format_path(args.mtdb)), rank, 
-         alien = format_path(args.alien), gcf_only = args.gcf, cpus = args.cpu)
+         alien = format_path(args.alien), gcf_only = args.gcf, cpus = args.cpus)
   #       gamma = False, ann_dir = format_path(args.annotations), 
    #      pfam = format_path(args.pfam),    
     sys.exit(0)
