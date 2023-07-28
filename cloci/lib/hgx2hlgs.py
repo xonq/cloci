@@ -114,10 +114,11 @@ def read_mci_rows(rows_file):
     return mci2pre
 
 
-def MCL(adj_path, clus_file, inflation = 1.5, threads = 1):
+def MCL(adj_path, clus_file, inflation = 1.5, threads = 1, rows_file = None):
 
     mci_file = adj_path[:-4] + '.mci'
-    rows_file = os.path.dirname(adj_path) + '/mcl_rows.tsv'
+    if not rows_file:
+        rows_file = os.path.dirname(adj_path) + '/mcl_rows.tsv'
     if not os.path.isfile(mci_file):
         subprocess.call(['mcxload', '-abc', adj_path, '-o',
                          mci_file + '.tmp', '--write-binary',
@@ -1009,9 +1010,9 @@ def check_tune(tune, hlg_hgxs, hlg_omes):
     return satisfied
 
 
-def read_clus(hlg_dir, mci2pre):
+def read_clus(clus_f, mci2pre):
     t_hlgs = defaultdict(list)
-    with open(hlg_dir + 'loci.clus', 'r') as raw:
+    with open(clus_f, 'r') as raw:
         for line in raw: # loci indices
             hlg, mci = [int(x) for x in line.rstrip().split()]
             t_hlgs[hlg].append(mci2pre[mci])
@@ -1039,7 +1040,7 @@ def mcl2hlgs(hlg_dir, loci, hgxXloci, ome2i, inflation,
         # could add iterative subsample MCL option here
 
     mci2pre = read_mci_rows(hlg_dir + 'mcl_rows.tsv')
-    t_hlgs = read_clus(hlg_dir, mci2pre)
+    t_hlgs = read_clus(hlg_dir + 'loci.clus', mci2pre)
 
     # list(hlg) = [{hgx: (omes,)}]
     hlgs, hlg_hgxs, hlg_omes, hlg2dom = [], [], [], {}

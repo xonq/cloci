@@ -3,7 +3,7 @@
 **\.pyc
 cloci/archive/
 prepUpdate.py
-cloci.egg_info/
+cloci.egg-info/
 dist/
 build/
 __init__.py/
