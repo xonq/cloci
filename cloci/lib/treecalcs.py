@@ -93,8 +93,7 @@ def calc_tmd(phylo, omes):
     try:
         mrca = phylo.lowest_common_ancestor(omes)
         mrca_omes = set(x.name for x in mrca.iter_tips())
-        tmd = mrca.total_descending_branch_length() \
-            - addPatch(phylo.lowest_common_ancestor(omes),
+        tmd = addPatch(phylo.lowest_common_ancestor(omes),
                        omes_set)
         return tmd, tuple([int(i) for i in omes])
     except ValueError:
@@ -111,8 +110,7 @@ def calc_tmd_uniq_omes(phylo, omes, o_omes):
     try:
         mrca = phylo.lowest_common_ancestor(omes)
         mrca_omes = set(x.name for x in mrca.iter_tips())
-        tmd = mrca.total_descending_branch_length() \
-            - addPatch(phylo.lowest_common_ancestor(omes),
+        tmd = addPatch(phylo.lowest_common_ancestor(omes),
                        omes_set)
         return tmd, tuple([int(i) for i in o_omes])
     except ValueError:
