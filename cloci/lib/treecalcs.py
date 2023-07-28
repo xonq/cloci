@@ -10,21 +10,21 @@ from collections import Counter, defaultdict
 from mycotools.lib.kontools import eprint
 
 def addPatch(phylo, omes_set):
-    """recursively add branches without the trait to the missing total"""
-    
+    """recursively add branches with the trait to the presence total"""
     total = 0
     for sphylo in phylo:
         subOmes = [str(x)[:str(x).find(':')] for x in sphylo.tips(True)]
-        if all(
-            x not in omes_set \
-            for x in subOmes
-            ): # if all descendents aren't in the set, add the total length
-            total += sphylo.total_descending_branch_length()
-        elif not all(
+        if any(
             x in omes_set \
             for x in subOmes
             ): # if some descendents aren't in the set, search this branch
-            total += addPatch(sphylo, omes_set)
+            if all(x in omes_set for x in subOmes):
+                if len(subOmes) > 1:
+                    total += sphylo.total_descending_branch_length()
+                else:
+                    total += sphylo.length
+            else:
+                total += addPatch(sphylo, omes_set)
     return total
 
 def calc_pds(phylo, omes):
@@ -45,7 +45,7 @@ def calc_pds(phylo, omes):
     else:
         totalDist = mrca.total_descending_branch_length()
         subDist = addPatch(mrca, omes_set)
-        return tuple([int(x) for x in omes]), subDist/totalDist
+        return tuple([int(x) for x in omes]), 1 - subDist/totalDist
 
 
 
