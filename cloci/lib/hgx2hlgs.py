@@ -685,6 +685,149 @@ def merge_clan_loci(preclan_loci, gene2hg, hgx2omes_path, hgx2dist_path,
     return clan_loci, hg_loci
 
 
+def grab_contiguous_singletons(singletons, final_loci,
+                               loc2hgx, gene2i,
+                               hgx2omes, hgx2dist):
+
+    window = max([len(v) for v in loc2hgx.values()])
+    passing_genes = set(chain(*[x[0] for x in final_loci]))
+    singletons_tmp = []
+    for i, s in enumerate(singletons):
+        if s[0] not in passing_genes:
+            singletons_tmp.append(s)
+    singletons = singletons_tmp
+
+    final_singletons = []
+    new_locs, new_dps = [], []
+    contiguous = True
+    count = 0
+    while contiguous:
+        count += 1
+        singleton_i2g = {gene2i[v[0]]: v[0] for v in singletons}
+        skip = set()
+        singletons = sorted(singletons, key = lambda x: gene2i[x[0]])
+        contiguous = set()
+        for i, v in enumerate(singletons):
+            s, null, omes0  = v
+            if s in skip:
+                continue
+            skip.add(s)
+            s_i = gene2i[s]
+            b = s_i + 1
+            contig = [s]
+            while b in singleton_i2g:
+                b_g = singleton_i2g[b]
+                contig.append(b_g)
+                b += 1 
+                skip.add(b_g)
+            if len(contig) < 3:
+                final_singletons.append(v)
+            else:
+                contiguous.add(tuple(contig))
+    
+        new_singletons, todel, contiguous = [], [], list(contiguous)
+        for ci, contig in enumerate(contiguous):
+            t_new_locs = []
+            for size in reversed(range(3, window + 1)):
+                size_dec = len(contig) - size + 1
+                if size_dec < 1:
+                    continue
+                for i, g in enumerate(contig[:size_dec]):
+                    combo = tuple(contig[i:i+size])
+                    if combo in loc2hgx:
+                        hgx = loc2hgx[combo]
+                        omes = hgx2omes[hgx]
+                        dist = hgx2dist[hgx]
+                        t_new_locs.append([list(combo), dist, omes])
+            if not t_new_locs:
+                todel.append(ci)
+            t_new_locs = sorted(t_new_locs, key = lambda x: x[1], reverse = True)
+            new_f_locs, new_singletons_p, new_dp = derep_loop(t_new_locs, gene2i)
+            passing_genes = set(chain(*[x[0] for x in new_f_locs]))
+            singletons_tmp = []
+            for i, s in enumerate(new_singletons_p):
+                if s[0] not in passing_genes:
+                    singletons_tmp.append(s)
+            new_singletons_p = singletons_tmp
+        
+            new_locs.extend(new_f_locs)
+            new_dps.extend(new_dp)
+            new_singletons.extend(new_singletons_p)
+        for i in reversed(todel):
+            del contiguous[i]
+        singletons = new_singletons
+
+    final_singletons.extend(singletons)
+
+    return new_locs, new_dps
+            
+
+def derep_loop(loci, gene2i):
+    final_loci, singletons_prep, dualtons = [], [], []
+    while loci:
+        locd0 = loci[0]
+        loc0 = set(locd0[0])
+        overi = 1
+        for i1, locd1 in enumerate(loci[1:]):
+            loc1 = set(locd1[0])
+
+            locIntersection = loc0.intersection(loc1)
+            if locIntersection:
+    
+                # index from the back because some may have hgx still
+                dist1, omes1 = locd1[-2], locd1[-1]
+                # the loci are sorted from largest to lowest distribution, so
+                # we award the overlap to the largest TMD
+                loc_dif = loc1.difference(loc0)
+                # delete the initial version with overlap
+                loci.pop(i1+overi)
+                overi -= 1
+                if loc_dif:
+#                    if len(loc_dif) == 1:
+ #                        singletons_prep.append([list(loc_dif)[0], dist1, omes1])
+  #                       continue
+                    new_locs = [sorted(loc_dif, key = lambda x: gene2i[x])]
+                    break_i = True
+                    # check for contuity, break-up noncontinuous loci
+                    while new_locs:
+                        new_loc = new_locs[0]
+                        break_i = False
+                        i_loc = [gene2i[x] for x in new_loc]
+                        for i2, v in enumerate(i_loc[:-1]):
+                            if not i_loc[i2+1] - v == 1:
+                                break_i = i2 + 1
+                                break
+                        # if there's a break, reiterate and add singletons
+                        if break_i:
+                            n_loc0 = new_loc[:break_i]
+                            n_loc1 = new_loc[break_i:]
+              #              if len(n_loc0) > 1:
+                            new_locs.append(n_loc0)
+                #            else:
+                 #               singletons_prep.append([n_loc0[0], dist1, omes1])
+                  #          if len(n_loc1) > 1:
+                            new_locs.append(n_loc1)
+                            #else:
+                             #   singletons_prep.append([n_loc1[0], dist1, omes1])
+                        else:
+                            loci.insert(i1+overi+1, [new_loc, dist1, omes1])
+                            overi += 1
+                        new_locs.pop(0)
+
+        if len(loc0) > 2:
+            final_loci.append(locd0)
+        elif len(loc0) == 2:
+            dualtons.append(locd0)
+            for g in locd0[0]:
+                singletons_prep.append([g, locd0[-2], locd0[-1]])
+        else:
+            singletons_prep.append([locd0[0][0], locd0[-2], locd0[-1]])
+        loci.pop(0)
+    return final_loci, singletons_prep, dualtons
+        
+
+
+
 def dereplicate_loci(preclan_loci, gene2hg,
                      hgx2omes_path, hgx2dist_path, scaf2gene2i,
                      min_branch_sim = 0.5, phylo = None):
@@ -697,9 +840,11 @@ def dereplicate_loci(preclan_loci, gene2hg,
     out_clan_loci = defaultdict(lambda: defaultdict(list))
     for clan, scaf_dict in preclan_loci.items():
         for scaf, loci in scaf_dict.items():
+            loc2hgx = {}
             gene2i = scaf2gene2i[scaf]
             for i, loc_d in enumerate(loci):
                 loc, hgx = loc_d[0], loc_d[1]
+                loc2hgx[tuple(loc)] = tuple(hgx)
                 loci[i].append(hgx2dist[hgx])
                 loci[i].append(hgx2omes[hgx])
  #               loci[i].append([])
@@ -708,69 +853,31 @@ def dereplicate_loci(preclan_loci, gene2hg,
             loci = sorted(loci, key = lambda x: x[-2], reverse = True)
             # give the remaining overlapping genes to the highest distance group
             # will need to add the new HGxs in the end
-            final_loci, singletons_prep = [], []
-            while loci:
-                locd0 = loci[0]
 
-                loc0 = set(locd0[0])
-                overi = 1
-                for i1, locd1 in enumerate(loci[1:]):
-                    loc1 = set(locd1[0])
-                    locIntersection = loc0.intersection(loc1)
-                    if locIntersection:
-                        # index from the back because some may have hgx still
-                        dist1, omes1 = locd1[-2], locd1[-1]
-                        # the loci are sorted from largest to lowest distribution, so
-                        # we award the overlap to the largest TMD
-                        loc_dif = loc1.difference(loc0)
-                        # delete the initial version with overlap
-                        loci.pop(i1+overi)
-                        overi -= 1
-                        if loc_dif:
-     #                       if len(loc_dif) == 1:
-      #                          singletons_prep.append([list(loc_dif)[0], dist1, omes1])
-       #                         continue
-                            new_locs = [sorted(loc_dif, key = lambda x: gene2i[x])]
-                            break_i = True
-                            # check for contuity, break-up noncontinuous loci
-                            while new_locs:
-                                new_loc = new_locs[0]
-                                break_i = False
-                                i_loc = [gene2i[x] for x in new_loc]
-                                for i2, v in enumerate(i_loc[:-1]):
-                                    if not i_loc[i2+1] - v == 1:
-                                        break_i = i2 + 1
-                                        break
-                                # if there's a break, reiterate and add singletons
-                                if break_i:
-                                    n_loc0 = new_loc[:break_i]
-                                    n_loc1 = new_loc[break_i:]
-                      #              if len(n_loc0) > 1:
-                                    new_locs.append(n_loc0)
-                        #            else:
-                         #               singletons_prep.append([n_loc0[0], dist1, omes1])
-                          #          if len(n_loc1) > 1:
-                                    new_locs.append(n_loc1)
-                                    #else:
-                                     #   singletons_prep.append([n_loc1[0], dist1, omes1])
-                                else:
-                                    loci.insert(i1+overi+1, [new_loc, dist1, omes1])
-                                    overi += 1
-                                new_locs.pop(0)
+            final_loci, singletons_prep, dualtons = derep_loop(loci, gene2i)
 
-                if len(loc0) > 1:
-                    final_loci.append(locd0)
-                else:
-                    singletons_prep.append([locd0[0][0], locd0[-2], locd0[-1]])
-                loci.pop(0)
-    
+
+            add_loci, new_dp = grab_contiguous_singletons(singletons_prep, 
+                                                  final_loci,
+                                                  loc2hgx, gene2i,
+                                                  hgx2omes, hgx2dist)  
+            dualtons = sorted(dualtons, key = lambda x: x[-2], reverse = True)
+            
+            final_loci.extend(add_loci)
+
             genes_set = set(chain(*[x[0] for x in final_loci]))
-            gene2loc_i, i2gene = {}, {}
+            for d in dualtons:
+                if all(x not in genes_set for x in d[0]):
+                    final_loci.append(d)
+            genes_set = set(chain(*[x[0] for x in final_loci]))
+           
+            gene2loc_i, i2gene, not_singleton = {}, {}, set()
             for i, locd in enumerate(final_loci):
                 loc, omes = locd[0], locd[-1]
                 for gene in loc:
                     gene2loc_i[gene] = [i, omes]
                     i2gene[gene2i[gene]] = gene
+                    not_singleton.add(gene)
 
             #singletons_prep1 = [x for x in singletons_prep \
              #                   if x[0] not in genes_set]
@@ -780,9 +887,10 @@ def dereplicate_loci(preclan_loci, gene2hg,
                                 key = lambda y: y[-2], reverse = True)
             singletons, s_set = [], set()
             for s in sorted_s_prep:
-                if s[0] not in s_set:
+                if s[0] not in s_set and s[0] not in not_singleton:
                     singletons.append(s)
                     s_set.add(s[0])
+
 
             singletons = sorted(singletons, key = lambda y: gene2i[y[0]])
             todel = True
@@ -874,6 +982,7 @@ def dereplicate_loci(preclan_loci, gene2hg,
                 out_clan_loci[clan][scaf].append([sorted(loc, key = lambda x: gene2i[x]),
                                                   omes])
 
+
     clan_loci = {} 
     for clan, scaf_dict in out_clan_loci.items():
         clan_loci[clan] = {}
@@ -884,6 +993,13 @@ def dereplicate_loci(preclan_loci, gene2hg,
             clan_loci[clan][scaf] = sorted(clan_loci[clan][scaf],
                                            key = lambda x: scaf2gene2i[scaf][x[0][0]])
 
+  #  genes = Counter(list(chain(*list(chain(*[list(chain(*[y[0] for y in s_d.values()])) \
+   #                 for s_d in out_clan_loci.values()])))))
+    #if max(genes.values()) > 1:
+     #   eprint('\t\t\tERROR: failed to dereplicate', flush = True)
+      #  raise ValueError('ERROR: duplicate genes')
+
+
     return clan_loci #, out_hg_loci
 
 
@@ -893,7 +1009,7 @@ def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus,
                    merge_via_sim = False, min_branch_sim = 0.5, phylo = None):
     """sliding window of size clusplusminus, identify sequences that may have
     hgs that may be significant, grab their window, and check for a significant
-    higher order og combo in the locus"""
+    higher order hgx in the locus"""
 
     gff_list, protoclus, clus_out = gff2list(gff_path), {}, []
     cds_dict = input_parsing.compileCDS(gff_list, os.path.basename(gff_path).replace('.gff3',''))
@@ -920,13 +1036,13 @@ def hash_clan_loci(ome, gff_path, ome_sig_clus, gene2hg, clusplusminus,
                     for i1, seq1 in enumerate(locus): # for each index and sequence
                     # in the locus
                         try:
-                            og = gene2hg[seq1]
+                            hg = gene2hg[seq1]
                         except KeyError:
                             continue
-                        if og in sig_clus[0] and start is None: # if the og is
+                        if hg in sig_clus[0] and start is None: # if the og is
                         # in the sig clus and we haven't started
                             start = i1 # this is the start index
-                        elif og in sig_clus[0]: # otherwise if it is in the
+                        elif hg in sig_clus[0]: # otherwise if it is in the
                         # sig clus label this the other border unless another is
                         # found
                             end = i1 + 1
@@ -1645,16 +1761,13 @@ def classify_hlgs(
     clanFile = wrk_dir + 'clan2loci.'
     if not os.path.isfile(clanFile + 'hg.json.gz'):
         print('\t\tPreparing locus extraction', flush = True)
-        ome2clus2extract = defaultdict(dict)
+        ome2clus2extract = defaultdict(lambda: defaultdict(list))
         for i, clan in enumerate(clans):
             for hgx, omes in clan.items():
                 # create a seed hash of the hgx and its seed gene
                 for gene in hgx2loc[hgx]:
                     ome = gene[:gene.find('_')]
-                    if gene not in ome2clus2extract[ome]:
-                        ome2clus2extract[ome][gene] = [[set(hgx), i]]
-                    else:
-                        ome2clus2extract[ome][gene].append([set(hgx), i])
+                    ome2clus2extract[ome][gene].append([set(hgx), i])
                     # {ome: {gene: [[set(hgx), clanI]]}}
 
         print('\t\tExtracting clan loci', flush = True)

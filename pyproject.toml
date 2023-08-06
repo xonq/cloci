@@ -22,7 +22,7 @@ classifiers = [
 "Bug Tracker" = "https://github.com/xonq/cloci/issues"
 
 [project.scripts]
-cloci = "cloci.cloci:cli"
+cloci = "cloci.main:cli"
 cloci2enrich = "cloci.tools.cloci2enrich:cli"
 cloci2stats = "cloci.tools.cloci2stats:cli"
 hg2hg_net = "cloci.tools.hg2hg_net:cli"

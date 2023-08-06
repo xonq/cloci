@@ -320,25 +320,47 @@ def main(
         print('\tJust kidding', flush = True)
         gcf_ready = False
 
-    ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_dict = \
-        db2microsyntree.main(db, hg_file, out_dir, wrk_dir,
-                            method, tree_path, plusminus = plusminus,
-                            min_cov = 0, min_id = 0.3, n50thresh = n50thresh,
-                            near_single_copy_genes = near_single_copy_genes,
-                            constraint = constraint_path, verbose = verbose,
-                            return_post_compile = gcf_ready, cpus = cpus)
 
     if gcf_ready:
         print('\nThresholding and outputting GCFs', flush = True)
         try:
-            output_data.threshold_gcf_bypass(db, out_dir, wrk_dir, i2ome, gene2hg, 
-                                             dist_thresh, gcl_thresh, patch_thresh,
-                                             id_perc, pos_perc, csb_thresh, ipr_path,
-                                             pfam, cpus)
+            ome_dir = out_dir + 'ome/'
+            annotate = False
+            if ipr_path or pfam: # check if all are annotated
+                hlg_files_p = collect_files(ome_dir, 'tsv', recursive = True)
+                hlg_files = [x for x in hlg_files_p \
+                            if os.path.basename(x) == 'hlg.tsv']
+                for hlg_f in hlg_files:
+                    with open(hlg_f, 'r') as raw:
+                        for line in raw:
+                            if len(line.split()) < 5: # annotations missing
+                                annotate = True
+                            break
+                    if annotate:
+                        print('\t\tAnnotations missing and requested. Long filter',
+                              flush = True)
+                        break
+            if annotate:         
+                ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_dict = \
+                    db2microsyntree.main(db, hg_file, out_dir, wrk_dir,
+                                    method, tree_path, plusminus = plusminus,
+                                    min_cov = 0, min_id = 0.3, n50thresh = n50thresh,
+                                    near_single_copy_genes = near_single_copy_genes,
+                                    constraint = constraint_path, verbose = verbose,
+                                    return_post_compile = gcf_ready, cpus = cpus)
+                   
+                output_data.threshold_gcf_bypass(db, out_dir, wrk_dir, i2ome, gene2hg, 
+                                                 dist_thresh, gcl_thresh, patch_thresh,
+                                                 id_perc, pos_perc, csb_thresh, ipr_path,
+                                                 pfam, cpus)
+            else:
+                output_data.threshold_gcf_quick(db, out_dir, ome_dir, dist_thresh, gcl_thresh,
+                                    patch_thresh, id_perc, pos_perc, csb_thresh, cpus)
             print('\nSUCCESS!', flush = True)
             sys.exit(0)
         except FileNotFoundError:
             eprint('\t\tWARNING: necessary files missing; must resume run', flush = True)
+            raise FileNotFoundError
             ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_dict = \
                 db2microsyntree.main(db, hg_file, out_dir, wrk_dir,
                                     method, tree_path, plusminus = plusminus,
@@ -346,6 +368,15 @@ def main(
                                     near_single_copy_genes = near_single_copy_genes,
                                     constraint = constraint_path, verbose = verbose,
                                     return_post_compile = gcf_ready, cpus = cpus)
+    else:
+        ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_dict = \
+            db2microsyntree.main(db, hg_file, out_dir, wrk_dir,
+                                method, tree_path, plusminus = plusminus,
+                                min_cov = 0, min_id = 0.3, n50thresh = n50thresh,
+                                near_single_copy_genes = near_single_copy_genes,
+                                constraint = constraint_path, verbose = verbose,
+                                return_post_compile = gcf_ready, cpus = cpus)
+    
 
 
     if tune_file:
@@ -421,7 +452,6 @@ def main(
     hgx2omes, hgx2loc = hgp2hgx.hgp2hgx(db, wrk_dir, top_hgs,
                                         gene2hg, ome2i, phylo, 
                                         plusminus, cpus) 
-    ome_combos = set([tuple(sorted(list(x))) for x in list(hgx2omes.values())])
 
     print('\tCalculating HGx microsynteny distances', flush = True)
     hgx_start = datetime.now()

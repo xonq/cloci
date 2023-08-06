@@ -358,7 +358,7 @@ def rm_old_data(
         kern_file = out_dir + 'hgxs.tsv.gz'
         ome_dir = out_dir + 'ome/'
         ann_dir = wrk_dir + 'ann/'
-        tosave.extend([hlg_output, gcf_file])
+        tosave.extend([hlg_output, gcf_output])
         if os.path.isdir(ome_dir):
             count = 0
             save_dir = f'{out_dir}run{count}/'
@@ -393,14 +393,14 @@ def rm_old_data(
             for f in collect_files(f'{wrk_dir}hlg/lg/', '*'):
                 shutil.copy(f, f'{save_dir}working/hlg/lg/{os.path.basename(f)}')
 
-        else:
-            if os.path.isfile(clus_file):
-                os.remove(clus_file)
+#        else:
+ #           if os.path.isfile(clus_file):
+  #              os.remove(clus_file)
     
-        if os.path.isdir(hmm_dir):
-            shutil.rmtree(hmm_dir)
-        if os.path.isdir(f'{out_dir}net/'):
-            shutil.move(f'{out_dir}net/', f'{save_dir}net/')
+#        if os.path.isdir(hmm_dir):
+ #           shutil.rmtree(hmm_dir)
+  #      if os.path.isdir(f'{out_dir}net/'):
+   #         shutil.move(f'{out_dir}net/', f'{save_dir}net/')
 
     if not log_res['hg_dir']:
         if os.path.isdir(f'{wrk_dir}hg/'):
@@ -468,9 +468,10 @@ def log_check(log_dict, log_path, out_dir, wrk_dir, flag = True):
         else:
             if os.path.isdir(out_dir + 'ome/'):
                 tsvs = set(collect_files(out_dir + 'ome/', 'tsv', recursive = True))
+                # NEED an intelligent resume
                 ome_dirs = [f'{out_dir}ome/{x}/' for x in os.listdir(out_dir + 'ome/') \
                             if os.path.isdir(f'{out_dir}ome/{x}/')]
-                if all(f'{x}hlg.tsv' in tsvs for x in ome_dirs):
+                if all(f'{x}hlg.tsv' in tsvs for x in ome_dirs) or os.path.isfile(out_dir + 'hlgs.tsv.gz'):
                     print('\nBypassing to filtration', flush = True)
                     gcf_thresh = True
                 else:

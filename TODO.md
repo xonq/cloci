@@ -9,6 +9,8 @@
 - [x] Mirror with GitHub
 
 ## Algorithm improvements
+- [ ] Multiprocess null generation
+- [ ] Lineage-based thresholds
 - [ ] Standardize code annotation
 - [ ] Account for tandem dup HGs
 - [ ] Tune hyperparameters for global maximum quality output

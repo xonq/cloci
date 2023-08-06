@@ -791,6 +791,53 @@ def output_figures(hlg_output, prefix, out_dir):
     fig.write_html(out_dir + f'{prefix}s.html')
 
 
+def quick_thresh(ome, ome_dir, hlgs):
+    hlg_f = ome_dir + ome + '/hlg.tsv'
+    gcf_f = ome_dir + ome + '/gcf.tsv'
+    with open(hlg_f, 'r') as raw, open(gcf_f, 'w') as out:
+        for line in raw:
+            if line.startswith('#'):
+                out.write(line)
+            else:
+                hlg = int(line.rstrip().split()[3])
+                if hlg in hlgs:
+                    out.write(line)
+
+
+def threshold_gcf_quick(db, out_dir, ome_dir, 
+                        dist_thresh, gcl_thresh, patch_thresh,
+                        id_perc, pos_perc, csb_thresh, cpus = 1):
+
+    ome2hlgs = defaultdict(set)
+    print('\tLoading HLGs file', flush = True)
+    with gzip.open(out_dir + 'hlgs.tsv.gz', 'rt') as raw, \
+        gzip.open(out_dir + 'gcfs.tsv.gz', 'wt') as out:
+        for line in raw:
+            if line.startswith('#'):
+                out.write(line)
+            else:
+                d = line.rstrip().split()
+                hlg = int(d[1])
+                tmd = float(d[3])
+                pds = float(d[4])
+                gcl = float(d[5])
+                mmi = float(d[6])
+                mmp = float(d[7])
+                csb = float(d[8])
+                omes = d[9].split(',')
+                if tmd >= dist_thresh and gcl >= gcl_thresh \
+                    and pds >= patch_thresh and mmi >= id_perc \
+                    and mmp >= pos_perc and csb >= csb_thresh:
+                    for ome in omes:
+                        ome2hlgs[ome].add(hlg)
+                    out.write(line)
+
+    print('\tExtracting GCFs')    
+    with mp.Pool(processes = cpus) as pool:
+        pool.starmap(quick_thresh, ((ome, ome_dir, hlgs) \
+                                    for ome, hlgs in ome2hlgs.items()))                        
+
+
 def threshold_gcf_bypass(db, out_dir, wrk_dir, i2ome, gene2hg,
                          dist_thresh, gcl_thresh, patch_thresh,
                          id_perc, pos_perc, csb_thresh, ipr_path,

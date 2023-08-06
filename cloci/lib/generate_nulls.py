@@ -232,6 +232,8 @@ def gen_pair_nulls(db, phylo, ome2i, wrk_dir, nul_dir, seed_perc, ome2pairs,
     if os.path.isfile(wrk_dir + 'omes2dist.pickle'):
         with open(wrk_dir + 'omes2dist.pickle', 'rb') as raw:
             omes2dist = pickle.load(raw)
+    else:
+        omes2dist = {}
 
     if not os.path.isfile(f'{wrk_dir}hgx2loc.pickle'):
         # create null distribution for orthogroup pairs
