@@ -823,7 +823,7 @@ def threshold_gcf_quick(db, out_dir, ome_dir,
                 gcl = float(d[5])
                 mmi = float(d[6])
                 mmp = float(d[7])
-                csb = float(d[8])
+                csb = float(d[8])/100
                 omes = d[9].split(',')
                 if tmd >= dist_thresh and gcl >= gcl_thresh \
                     and pds >= patch_thresh and mmi >= id_perc \
