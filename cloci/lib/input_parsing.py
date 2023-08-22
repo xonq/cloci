@@ -308,7 +308,7 @@ def rm_old_data(
         hlg_dir = wrk_dir + 'hlg/'
         if os.path.isdir(hlg_dir):
             todel.append(hlg_dir)
-        groups = ['group.I', 'group.II']
+        groups = ['hgcs', 'gene2hgx']
         for group in groups:
              if os.path.isfile(f'{wrk_dir}{group}.pickle'):
                  os.remove(f'{wrk_dir}{group}.pickle')
@@ -373,7 +373,7 @@ def rm_old_data(
             if os.path.isfile(kern_file):
                 shutil.copy(kern_file, save_dir + os.path.basename(kern_file))
             if os.path.isfile(hlg_output):
-                shutil.move(hlg_output, save_dir + os.path.basename(clus_file))
+                shutil.move(hlg_output, save_dir + os.path.basename(hlg_output))
             if os.path.isfile(out_dir + 'hlgs.html'):
                 shutil.move(out_dir + 'hlgs.html', save_dir + 'hlgs.html')
             if os.path.isfile(out_dir + 'hlg_metrics.html'):
