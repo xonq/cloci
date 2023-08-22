@@ -282,7 +282,9 @@ def GetPopResultsGO(
             go_in_hlg = len(set(go2hlgs[go]))
             hvt_c.append([go, totCount, hlgCount, totalGenes, total_hlg_genes, go_in_hlg])
         g_hvt_pval = pool.starmap(calcP, hvt_c)
-
+        r_cvt_pval = g_cvt_pval
+        r_cvh_pval = g_cvh_pval
+        r_hvt_pval = g_hvt_pval
     else: 
  #       r_cvt_pval, r_cvh_pval, r_hvt_pval = [], [], []
         for ref_go, gos in ref_go2clusters.items():
