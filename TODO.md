@@ -26,3 +26,4 @@
 - [ ] Add a force skip to filtering that reads in old runs and converts
 - [ ] Output version in the log, have a version output statement
 - [ ] aPDS that removes the signal of HLG loss
+- [ ] rPDS calculation with GCL threshold in cloci2stats
