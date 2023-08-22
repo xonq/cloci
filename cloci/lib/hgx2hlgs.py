@@ -879,8 +879,8 @@ def dereplicate_loci(preclan_loci, gene2hg,
                     i2gene[gene2i[gene]] = gene
                     not_singleton.add(gene)
 
-            #singletons_prep1 = [x for x in singletons_prep \
-             #                   if x[0] not in genes_set]
+            singletons_prep = [x for x in singletons_prep \
+                                if x[0] not in genes_set]
             # sort the singletons by TMD, highest to lowest to take the largest
             # branch length representative of the singleton
             sorted_s_prep = sorted(singletons_prep,
