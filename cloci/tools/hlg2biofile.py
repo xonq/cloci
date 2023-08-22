@@ -196,7 +196,7 @@ def cli():
         print('\nOutputting all GCFs', flush = True)
 
 
-    run_dir = format_path(args.cloci_dir)
+    run_dir = format_path(args.cloci)
     if not run_dir.endswith('/'):
         eprint('\nERROR: -c does not exist', flush = True)
         sys.exit(5)
