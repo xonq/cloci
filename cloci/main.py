@@ -320,13 +320,13 @@ def main(
         print('\tJust kidding', flush = True)
         gcf_ready = False
 
-
+    # sometimes will not enter on benign changes to log
     if gcf_ready:
         print('\nThresholding and outputting GCFs', flush = True)
         try:
             ome_dir = out_dir + 'ome/'
             annotate = False
-            if ipr_path or pfam: # check if all are annotated
+            if ipr_path or pfam and annotate: # check if all are annotated
                 hlg_files_p = collect_files(ome_dir, 'tsv', recursive = True)
                 hlg_files = [x for x in hlg_files_p \
                             if os.path.basename(x) == 'hlg.tsv']
@@ -639,7 +639,7 @@ def main(
     if not uniq_sp:
         omes2dist = treecalcs.update_dists(phylo, 
                                         {i: v for i, v in hlg_omes.items()}, 
-                                        cpus, omes2dist) 
+                                        cpus, omes2dist, func = dist_func) 
     else:
         omes2dist = treecalcs.update_dists(phylo,
                                         {i: v for i, v in hlg_omes.items()},
