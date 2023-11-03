@@ -1,6 +1,7 @@
 ## NOTE
 Extensive alpha testing has been conducted, though this software is in a beta state. Errors are expected, often rerunning without changing parameters is sufficient to resume appropriately. 
-Kindly raise git issues for errors - if you can find the bug, even better! This software will have longterm maintenance, but maintenance is currently not the priority. Documentation is currently lacking, please be patient as I build out the repository and wiki.
+Kindly raise git issues for errors - if you can find the bug, even better!
+Documentation is currently in the works.
 
 Please also note that this software interfaces with the comparative genomics
 software suite, Mycotools. I am hopeful you will find Mycotools useful. Please
