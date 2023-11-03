@@ -1,4 +1,9 @@
 #! /usr/bin/env python3
+"""
+Co-occurrence Locus and Orthologous Cluster Identifier (CLOCI)
+(C) Zachary Konkel, Jason Slot 2023
+BSD 3-clause License
+"""
 
 #NEED to make similarity coefficient adjustable for domains and HLGs
 #NEED to detect when a bypass failed
@@ -43,11 +48,14 @@ from mycotools import db2microsyntree
 from cloci.lib import treecalcs, evo_conco, \
      hgx2hlgs, input_parsing, hgp2hgx, generate_nulls, output_data
 
-
+# if numba is available, let's import it
 try:
+    # this is deprecated
     from numba import njit, jit
     @njit
     def est_conds(ome_arr, cooccur_array):
+        """Estimate the conditional probability a given HG combination would occur based
+        on the hypergeometric distribution of each HGs' presence-absence"""
         p = 1
         for i in range(len(ome_arr) - 1): # for all but the last organisms hgx
             others, ome0 = ome_arr[i + 1:], cooccur_array[ome_arr[i]] #all others and i's hits
@@ -61,8 +69,9 @@ try:
         return p
 
 except ModuleNotFoundError:
-
     def est_conds(ome_arr, cooccur_array):
+        """Estimate the conditional probability a given HG combination would occur based
+        on the hypergeometric distribution of each HGs' presence-absence"""
         p = 1
         for i in range(len(ome_arr) - 1):
             others, ome0 = ome_arr[i + 1:], cooccur_array[ome_arr[i]]
@@ -75,50 +84,59 @@ except ModuleNotFoundError:
             p *= sucs/tot
         return p
 
-def est_combo_probs(hgx, omes, genesInOGinOme, genesInOme, window,
+# deprecated
+def est_combo_probs(hgx, omes, genes_in_hg_in_ome, genes_in_ome, window,
                     cooccur_arr):
+    """Estimate the probability a given HGx would exist given the abundance of
+    each HG and the hypergeometric probability of each HG co-occurrence"""
 #    win_size = [win_size[x] for x in win_size]
 #    p_coeff = calc_coeff(og0, og1, tot_genes, win_size)
     p_conds = est_conds(np.array(omes), cooccur_arr)
     p_coef = 1
     for og in hgx:
-        p_coef *= est_hypergeo(omes, genesInOGinOme[og],
-                               genesInOme, window)
+        p_coef *= est_hypergeo(omes, genes_in_hg_in_ome[og],
+                               genes_in_ome, window)
     p = p_conds * p_coef
     return hgx, p
 
-
+# deprecated
 def est_hypergeo(
-    omes, genesInOGinOme, genesInOme, window
+    omes, genes_in_hg_in_ome, genes_in_ome, window
     ):
+    """Estimate the hypergeometric-derived probability of a particular
+    HG being randomly sampled"""
     # NEED to modify to account for sliding window
 
     # should this be for all omes, or each og in each ome and then multiplied?
-    pval = hypergeom.sf(1, genesInOme, genesInOGinOme, window)
+    pval = hypergeom.sf(1, genes_in_ome, genes_in_hg_in_ome, window)
     return pval
 
-
+# deprecated
 def combo_prob_mngr(
     hgx2omes, omes2hg2genes, omes2genes, window, cooccur_array, cpus = 1
     ):
+    """Manage the estimation of the probability of randomly sampling each HG
+    co-occurrence combination"""
 
     cmds = []
-    for hgx, omes in hgx2omes.items(): # take each hgx
+    # prepare commands for each hgx
+    for hgx, omes in hgx2omes.items():
         ome = omes[-1] # coefficient ome
-        genesInOGinOme = {og: len(omes2hg2genes[ome][og]) for og in hgx}
-        genesInOme = len(omes2genes[ome])
+        genes_in_hg_in_ome = {og: len(omes2hg2genes[ome][og]) for og in hgx}
+        genes_in_ome = len(omes2genes[ome])
         cmds.append([
-            hgx, omes, genesInOGinOme, genesInOme, window,
+            hgx, omes, genes_in_hg_in_ome, genes_in_ome, window,
             cooccur_array
             ])
 
-    # run og-by-og, then accumulate via hgx at the end
+    # run hg-by-hg, then accumulate via hgx at the end
     with mp.get_context('fork').Pool(processes = cpus) as pool: # will fail on Windows
         hypergeoRes = pool.starmap(est_combo_probs, cmds)
         pool.close()
         pool.join()
 
-    comparisons = len(hgx2omes) # for Bonferroni correction
+    # prepare a Bonferroni correction
+    comparisons = len(hgx2omes)
     hgx2pval = {}
     for hgx, pval in hypergeoRes:
         hgx2pval[hgx] = comparisons * pval
@@ -126,66 +144,10 @@ def combo_prob_mngr(
     return hgx2pval
 
 
-def outputSVG(clus, svg_dict, svg_dir, width):
-
-    colors = [
-        '#000000', '#010067', '#d5ff00', '#ff0056', '#9e008e', '#0e4ca1', 
-        '#ffe502', '#005f39', '#00ff00', '#95003a', '#ff937e', '#a42400', 
-        '#001544', '#91d0cb', '#620e00', '#6b6882', '#0000ff', '#007db5', 
-        '#6a826c', '#00ae7e', '#c28c9f', '#be9970', '#008f9c', '#5fad4e', 
-        '#ff0000', '#ff00f6', '#ff029d', '#683d3b', '#ff74a3', '#968ae8', 
-        '#98ff52', '#a75740', '#01fffe', '#ffeee8', '#fe8900', '#bdc6ff', 
-        '#01d0ff', '#bb8800', '#7544b1', '#a5ffd2', '#ffa6fe', '#774d00', 
-        '#7a4782', '#263400', '#004754', '#43002c', '#b500ff', '#ffb167', 
-        '#ffdb66', '#90fb92', '#7e2dd2', '#bdd393', '#e56ffe', '#deff74', 
-        '#00ff78', '#009bff', '#006401', '#0076ff', '#85a900', '#00b917', 
-        '#788231', '#00ffc6', '#ff6e41', '#e85ebe'
-        ]
-
-    features, color_dict = [], {}
-    geneMin = min([svg_dict[x]['gene'][0] for x in svg_dict])
-    geneMax = max([svg_dict[x]['gene'][1] for x in svg_dict])
-    for gene in svg_dict:
-        feature = GraphicFeature(
-            start=svg_dict[gene]['gene'][0] - geneMin, 
-            end=svg_dict[gene]['gene'][1] - geneMin,
-            color='#ffffff', strand=int(svg_dict[gene]['gene'][2] + '1'),
-            label=gene
-            )
-        features.append(feature)
-    colorI = 0
-    for gene in svg_dict:
-        for pfam in svg_dict[gene]['pfam']:
-            if pfam[0] not in color_dict:
-                color_dict[pfam[0]] = colors[colorI]
-                colorI += 1
-                if colorI >= len(colors):
-                    colorI = 0
-            feature = GraphicFeature(
-                start=pfam[2] - geneMin, end=pfam[3] - geneMin,
-                label=pfam[0], strand=int(svg_dict[gene]['gene'][2] + '1'),
-                color=color_dict[pfam[0]]
-                )
-            features.append(feature)
-
-    record = GraphicRecord(
-        sequence_length = geneMax - geneMin, features = features
-        )
-    ax, _ = record.plot(figure_width = width)
-    ax.figure.savefig(svg_dir + clus + '.svg')
-
-
-def runGFF2SVG(ome_dir, regex = r'Pfam=[^;]+'):
-    if not os.path.isdir(ome_dir + 'svg/'):
-        os.mkdir(ome_dir + 'svg/')
-    gffs = collect_files(ome_dir + 'gff/', 'gff3')
-    for gff in gffs:
-        svg_path = ome_dir + 'svg/' + re.sub(r'\.gff3$', '.svg', os.path.basename(gff))
-        gff2svg(gff2list(gff), svg_path, prod_comp = regex, types = types)
-
-
 def threshold_hgx(hgx2omes, hgx2loc, omes2dist, 
                   ome2partition, bord_scores_list):
+    """Acquire HGxs that meet minimum microsynteny tree branch length
+    distributions"""
     i2hgx, hgx2i, hgx2dist, count = {}, {}, {}, 0
     for hgx, omes in hgx2omes.items():
         dist = omes2dist[omes]
@@ -212,6 +174,8 @@ def threshold_hgx(hgx2omes, hgx2loc, omes2dist,
 
 
 def read_tune_file(tune_file, gene2hg, ome2i):
+    """Read a file to tune GCF circumscription based on the genomes that should
+    be included in a particular GCF"""
     with open(tune_file, 'r') as raw:
         tune_data = [x.rstrip() for x in raw if not x.startswith('#')]
     tune = {}
@@ -277,11 +241,12 @@ def main(
     ):
     """
     The general workflow:
-    log management -> input data parsing -> orthogroup pair identification ->
-    microsynteny distance thresholding -> HGx formation ->
-    microsynteny distance border thresholding -> HGx-GCF grouping ->
-    microsynteny distance cluster thresholding -> pdd calculation ->
-    gcl calculation -> optional dN/dS calculations ->
+    log management -> input data parsing -> homology group pair (HGp) 
+    identification -> microsynteny distance thresholding -> homology 
+    group combination (HGx) HGx formation -> microsynteny distance 
+    border thresholding -> HGx-GCF grouping ->
+    microsynteny distance cluster thresholding -> PDS calculation ->
+    GCL calculation -> optional dN/dS calculations (deprecated) ->
     HGx data output -> cluster retrieving -> data output
     """
     db = db.set_index()
@@ -290,11 +255,15 @@ def main(
     if not tree_path:
         tree_path = f'{out_dir}microsynt.newick'
 
+    # determine the distance function: TMD = total microsynteny distance, MMD =
+    # maximum microsynteny distance
     if dist_type == 'tmd':
         dist_func = treecalcs.calc_tmd
     else:
         dist_func = treecalcs.calc_mmd
 
+    # import the null distribution partition data, use an established rank, or
+    # generate a single null distribution for all genomes
     if partition_file:
         partition = partition_file
     elif partition_rank:
@@ -302,6 +271,7 @@ def main(
     else:
         partition = None
 
+    # initialize the run by parsing and updating the log
     wrk_dir, nul_dir, inflation_1, inflation_2, gcf_ready = \
                        input_parsing.init_run(db, out_dir, 
                                               near_single_copy_genes, constraint_path,
@@ -316,11 +286,14 @@ def main(
                                               min_branch_sim, merge_via_sim, hg_dir, hgx_dir,
                                               ipr_path, pfam)
 
+    # we are going to rerun, regardless what the log parser claims
     if force and gcf_ready:
         print('\tJust kidding', flush = True)
         gcf_ready = False
 
-    # sometimes will not enter on benign changes to log
+    # !! sometimes will not enter on benign changes to log
+    # Skip straight to output thresholding to avoid rerunning and regenerating
+    # unnecessary data structures
     if gcf_ready:
         print('\nThresholding and outputting GCFs', flush = True)
         try:
@@ -336,10 +309,13 @@ def main(
                             if len(line.split()) < 5: # annotations missing
                                 annotate = True
                             break
+                    # a long filter is necessary to annotate missing
+                    # annotations
                     if annotate:
                         print('\t\tAnnotations missing and requested. Long filter',
                               flush = True)
                         break
+            # proceed to the long process
             if annotate:         
                 ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_dict = \
                     db2microsyntree.main(db, hg_file, out_dir, wrk_dir,
@@ -353,11 +329,16 @@ def main(
                                                  dist_thresh, gcl_thresh, patch_thresh,
                                                  id_perc, pos_perc, csb_thresh, ipr_path,
                                                  pfam, cpus)
+            # proceed to the short thresholding process
             else:
                 output_data.threshold_gcf_quick(db, out_dir, ome_dir, dist_thresh, gcl_thresh,
                                     patch_thresh, id_perc, pos_perc, csb_thresh, cpus)
             print('\nSUCCESS!', flush = True)
             sys.exit(0)
+
+        # there are missing files that are necessary for one of the above
+        # thresholding processes, so we have to proceed through the standard
+        # script
         except FileNotFoundError:
             eprint('\t\tWARNING: necessary files missing; must resume run', flush = True)
             raise FileNotFoundError
@@ -368,6 +349,9 @@ def main(
                                     near_single_copy_genes = near_single_copy_genes,
                                     constraint = constraint_path, verbose = verbose,
                                     return_post_compile = gcf_ready, cpus = cpus)
+
+    # build the microsynteny tree, and toss-out any genomes that
+    # failed to have any overlapping HGps with others
     else:
         ome2i, gene2hg, i2ome, hg2gene, ome2pairs, cooccur_dict = \
             db2microsyntree.main(db, hg_file, out_dir, wrk_dir,
@@ -377,18 +361,19 @@ def main(
                                 constraint = constraint_path, verbose = verbose,
                                 return_post_compile = gcf_ready, cpus = cpus)
     
-
-
+    # read a tune file to tune GCF formation downstream
     if tune_file:
         print('\tReading tune file', flush = True)
         tune = read_tune_file(tune_file, gene2hg, ome2i)
     else:
         tune = None
 
+    # compile the microsynteny tree
     print('\tReading microsynteny tree', flush = True)
     phylo = input_parsing.compile_tree(
         i2ome, tree_path, root = root
         )
+    # generate null distributions for HGps
     partition_omes, ome2partition, omes2dist, min_pair_scores = \
                                 generate_nulls.gen_pair_nulls(
                                             db, phylo, ome2i, wrk_dir,
@@ -399,22 +384,26 @@ def main(
                                             uniq_sp = uniq_sp, dist_func = dist_func,
                                             cpus = cpus
                                             )
-    # seed clusters by calcuating total microsynteny distance for 
-    # orthogroup pairs
+    # seed clusters by calcuating total microsynteny distance for HGps
     print('\nIII. Seeding HG pairs (HGp)', flush = True) 
     if not os.path.isfile(out_dir + 'hgps.tsv.gz'):
         print('\tCalculating seed HG-pair scores', flush = True)
         seed_score_start = datetime.now()
+        # we are looking at all genomes
         if not uniq_sp:
             omes2dist = treecalcs.update_dists(phylo, cooccur_dict, cpus, omes2dist,
                                                func = dist_func)
+        # we are only looking at genomes of unique species
         else:
             omes2dist = treecalcs.update_dists(phylo, cooccur_dict, cpus, omes2dist,
                                                func = treecalcs.calc_tmd,
                                                uniq_sp = db, i2ome = i2ome)
+        # output the updated dictionary that relates a sorted tuple of ome
+        # indices to their microsynteny distance (TMD/MMD) between them
         with open(wrk_dir + 'omes2dist.pickle', 'wb') as out:
             pickle.dump(omes2dist, out)
 
+        # identify the HGps that pass thresholding
         top_hgs = []
         for hgp, omes in cooccur_dict.items():
             score = omes2dist[omes]
@@ -440,7 +429,8 @@ def main(
                 out.write('\t'.join([str(x) for x in line]) + '\n')
         print('\t\t' + str(len(top_hgs)) + ' significant HG pairs', flush = True)
         top_hgs = [(x[0], x[1]) for x in top_hgs]
-    elif not os.path.isfile(wrk_dir + 'hgx2loc.pickle'): # load previous hg pairs
+    # load previous HGps
+    elif not os.path.isfile(wrk_dir + 'hgx2loc.pickle'):
         print('\tLoading previous seed HG pairs', flush = True)
         top_hgs = input_parsing.load_seedScores(out_dir + 'hgps.tsv.gz')
         print('\t\t' + str(len(top_hgs)) + ' significant HG pairs', flush = True)
@@ -470,7 +460,8 @@ def main(
         pickle.dump(omes2dist, out)
     print('\t\t' + str(datetime.now() - hgx_start), flush = True)
 
-
+    # deprecated mechanism of estimating the probability of randomly sampling
+    # an HGx from the genomes provided - needs conceptual work
     calc_hgx_p = False
     if not os.path.isfile(wrk_dir + 'hgx2pval.pickle'):
         if calc_hgx_p:
@@ -529,7 +520,7 @@ def main(
         with open(wrk_dir + 'hgx2omes.pickle', 'wb') as out:
             pickle.dump(hgx2omes, out)
 
-    print('\nV. Classifying homologous locus groups (HLGs) from HGxs', flush = True)
+    print('\nV. Circumscribing homologous locus groups (HLGs) from HGxs', flush = True)
     if not os.path.isfile(wrk_dir + 'hlgs.pickle'): # need to add this to
     # log parsing
         # Group hgxs
@@ -572,9 +563,6 @@ def main(
 
 #    if dist_thresh:
  #       print(f'\t{len(hlgs)} HLGs pass threshold', flush = True)
-
-
-
     # this is a crude pseudo cluster family expectedness check; its pseudo because the HGx
     # is now the conglomerate of the extracted loci's, and if that locus is derived from
     # multiple HGxs or the set of omes with that locus is truncated relative to the original
@@ -607,7 +595,7 @@ def main(
     #    del hlg_hgxs[i]
      #   del hlg2clan[i]
 
-    print('\nVI. Quantifying gene committment and intrafamily similarity', flush = True)
+    print('\nVI. Quantifying GCL and intra-HLG alignment similarity', flush = True)
     hgx2omes2gcl, hgx2omes2id, hgx2omes2pos, hlgs, hlg_omes = evo_conco.gcl_main( 
                             hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
                             aligner, db, gene2hg, plusminus, hg2gene, phylo,
@@ -618,23 +606,22 @@ def main(
                             skipalgn = skipalgn, cpus = cpus
                             )
 
-
     runOmes = [
         omes for omes in hlg_omes.values()
-        ] # omes without pdd scores
+        ] # omes without pds scores
     runHGxs = [
         hgx for i, hgx in hlg_hgxs.items()
-        ] # hgxs without pdd scores
-    print('\nVII. Quantifying HLG Phylogenetic Distribution Sparsity', flush = True)
+        ] # hgxs without pds scores
+
+    print('\nVII. Quantifying PDS', flush = True)
     omes2patch = treecalcs.patch_main(phylo, runOmes, wrk_dir,
                             old_path = 'pds.pickle', 
                             cpus = cpus) # could make more efficient by skipping redos
 
-
-
     # this is the output directory for hgx2hlg and evo_conco
     hg_dir = f'{wrk_dir}hg/'
 
+    # deprecated placeholder for dnds methodology
     hgx2dnds = {}
     if not uniq_sp:
         omes2dist = treecalcs.update_dists(phylo, 
@@ -808,6 +795,7 @@ def cli():
         help = 'HGx alignment DB and results dir, format <HG>.out and <HG>.dmnd/<HG>.mmseqs')
     args = parser.parse_args()
 
+    # NEED to reinstate, currently does not function correctly
     if args.compress:
         if not args.output_dir:
             eprint('\nERROR: compression requires -o', flush = True)
@@ -818,6 +806,7 @@ def cli():
             tardir(d, True)
         sys.exit(4)
 
+    # grab the proposed root for the microsynteny tree
     if args.root:
         if '"' in args.root or "'" in args.root:
             args.root = args.root.replace('"','').replace("'",'')
@@ -832,6 +821,7 @@ def cli():
 
     min_topology_sim = args.min_topology_sim/100
 
+    # parse the similarity coefficient used in HLG circumscription
     if not args.similarity:
         simfun = hgx2hlgs.overlap # set default function
         sim = 'overlap'
@@ -849,6 +839,7 @@ def cli():
                flush = True)
         sys.exit(43)
 
+    # check for dependency presence
     execs = ['mafft', 'mcl',
              'mcxdump', 'mcxload', 'iqtree']
     if args.aligner.lower() not in aligners:
@@ -866,6 +857,9 @@ def cli():
             eprint(f'\nERROR: -a mmseqs and -pp are incompatible',
                    flush = True)
             sys.exit(613)
+
+    # choose the annotation software
+    # NEED to implement interpro
     if args.pfam and args.interpro:
         eprint('\nERROR: --pfam and --interpro are incompatible',
                flush = True)
@@ -874,11 +868,15 @@ def cli():
         execs.append('hmmsearch')
     if args.interpro:
         execs.append(format_path(args.interpro))
-    
+
+    # if the proposed alignment methodology fails, implement Diamond as a
+    # back-up
+    # NEED to remove MMseqs as an option
     if args.fallback:
         if 'diamond' not in set(execs):
             execs.append('diamond')
 
+    # parse OrthoFinder data for the homology groups
     if args.orthofinder:
         of_out = format_path(args.orthofinder)
         if os.path.isdir(of_out):
@@ -890,15 +888,18 @@ def cli():
         if not os.path.isfile(hg_dir + 'OG0000000.fa'):
             hg_dir = format_path(args.hg_dir)
         method = 'orthofinder'
+    # parse an inputted set of homology groups
     elif args.input:
         homogroups = format_path(args.input)
         hg_dir = format_path(args.hg_dir)
         method = 'mmseqs easy-cluster'
+    # circumscribe homology groups using linclust
     elif args.linclust:
         method = 'mmseqs easy-linclust'
         hg_dir = format_path(args.hg_dir)
         homogroups = None
         execs.append('mmseqs')
+    # circumscribe homology groups using easy-cluster
     else:
         method = 'mmseqs easy-cluster'
         hg_dir = format_path(args.hg_dir)
@@ -907,10 +908,12 @@ def cli():
 
     hgx_dir = format_path(args.hgx_dir)
 
+    # set the minimum ID for considering something a homolog
     if args.minimum_gene_id < 30:
         eprint('\nERROR: -mg must be > 30', flush = True)
         sys.exit(107)
 
+    # set the tune arguments if there is a tune file
     if args.tune:
         tune_file = format_path(args.tune)
         args.inflation_rnd1 = None
@@ -920,7 +923,8 @@ def cli():
             sys.exit(103)
     else:
         tune_file = None
-        
+
+    # set the distance type used for microsynteny distance qunatitation
     if args.maximum_dist:
         dist = 'mmd'
         if args.unique_sp:
@@ -931,6 +935,7 @@ def cli():
         dist = 'tmd'
         uniq_sp = args.unique_sp
 
+    # set the method of generating null distributions
     if args.null_partitions and args.null_rank:
         eprint('\nERROR: -np and -nr are incompatible', flush = True)
         sys.exit(105)
@@ -953,6 +958,7 @@ def cli():
  #       print('\nERROR: invalid Pfam-A.hmm path', flush = True)
   #      sys.exit(4)
 
+    # check the dependencies
     findExecs(execs, exit = set(execs))
 #    if args.gcf_percentile < args.hgx_percentile and args.gcf_percentile:
  #       print('\nERROR: HGx percentile is greater than GCF percentile',
@@ -961,7 +967,7 @@ def cli():
     #elif not args.gcf_percentile:
      #   args.gcf_percentile = args.hgx_percentile
 
-
+    # create/check the output directory
     if not args.output_dir:
         out_dir = os.getcwd() + '/cloci_' + date + '/'
         if not os.path.isdir(out_dir):
@@ -972,11 +978,13 @@ def cli():
             os.mkdir(out_dir)
             out_dir += '/'
 
-
+    # set the topological constraint for microsynteny tree reconstruction
     if args.constraint:
         constraint_path = format_path(args.constraint)
     else:
         constraint_path = None
+
+    # set the percentiles for HGps and HGxs
     if len(str(args.hgp_percentile)) > 1:
         hgp_perc = float('.' + str(args.hgp_percentile))
     else:
@@ -990,7 +998,7 @@ def cli():
     else:
         hgx_perc = float('.0' + str(args.hgx_percentile))   
 
-
+    # prepare the introduction dictionary
     args_dict = {
         'Homology groups': homogroups, 'Sequence clusters': method, 'MycotoolsDB': args.database, 
         'Focal genes': args.focal_genes, 
@@ -1019,7 +1027,7 @@ def cli():
                        'Zachary Konkel, Laura Kubatko, Jason Slot')
     date = datetime.strftime(start_time, '%Y%m%d')
 
-
+    # choose focal genes for microsynteny tree reconstruction
     if args.focal_genes:
         with open(format_path(args.focal_genes), 'r') as raw:
             focal_genes = [x.rstrip() for x in raw.read().split() \
