@@ -39,7 +39,8 @@ from datetime import datetime
 from collections import defaultdict
 from mycotools.lib.kontools import \
     intro, outro, format_path, collect_files, \
-    findExecs, eprint, tardir, write_json
+    findExecs, eprint, tardir, write_json, \
+    mkOutput
 from mycotools.lib.biotools import \
     gff2list
 from mycotools.lib.dbtools import mtdb, primaryDB
@@ -695,8 +696,8 @@ def cli():
         help = 'Precomputed cluster results file')
     det_opt.add_argument('-l', '--linclust', action = 'store_true',
         help = 'Less sensitive Homology inference via linclust; DEFAULT: mmseqs cluster')
-    det_opt.add_argument('-w', '--window', default = 3, type = int,
-        help = 'Max genes +/- for each locus window. DEFAULT: 3 (7 gene window)')
+    det_opt.add_argument('-w', '--window', default = 2, type = int,
+        help = 'Max genes +/- for each locus window. DEFAULT: 2 (5 gene window)')
     det_opt.add_argument('-mmd', '--maximum_dist', action = 'store_true',
         help = 'Calculated maximum microsynteny distance; DEFAULT: total microsynteny distance')
     det_opt.add_argument('-us', '--unique_sp', action = 'store_true',
@@ -969,14 +970,8 @@ def cli():
 
     # create/check the output directory
     if not args.output_dir:
-        out_dir = os.getcwd() + '/cloci_' + date + '/'
-        if not os.path.isdir(out_dir):
-            os.mkdir(out_dir)
-    else:
-        out_dir = format_path(args.output_dir)
-        if not os.path.isdir(out_dir):
-            os.mkdir(out_dir)
-            out_dir += '/'
+        args.output_dir = format_path('./')
+    out_dir = mkOutput(format_path(args.output_dir), 'cloci')
 
     # set the topological constraint for microsynteny tree reconstruction
     if args.constraint:
