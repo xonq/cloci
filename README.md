@@ -43,7 +43,7 @@ A conda package will be available in the future.
 ## USE
 
 ### Input dataset
-*CLOCI* inputs a [MycotoolsDB](https://gitlab.com/xonq/mycotools)
+*CLOCI* inputs a [MycotoolsDB](https://github.com/xonq/mycotools)
 that contains genomes ('omes') of interest. It is important
 to adequately sample a cluster's distribution to detect it. I thus generally 
 recommend implementing *CLOCI* at least at the subphylum-level. This varies
