@@ -477,6 +477,7 @@ def compile_ipr_res(ann_dir, passing_omes, evalue = 0.01, threshold = 0.5, cpus 
 def ann_mngr(genes_list, prot_paths, wrk_dir, pfam, ipr_scan,
              evalue = 0.0001, threshold = 0.5, cpus = 1):
 
+    ann_res = None
     ann_dir = wrk_dir + 'ann/'
     if not os.path.isdir(ann_dir):
         os.mkdir(ann_dir)
