@@ -761,9 +761,9 @@ def cli():
     thr_opt.add_argument('-ct', '--csb_threshold', default = 0, type = float,
         help = "Threshold [0 < value < 1] conservative substitution bias minimum for " \
              + ' gene cluster family')
-    thr_opt.add_argument('-pt', '--pdd_threshold', default = 0, type = float,
+    thr_opt.add_argument('-pt', '--pds_threshold', default = 0, type = float,
         help = "Threshold [0 < value < 1] of gene cluster family " \
-             + " phylogenetic distribution densityt scores")
+             + " phylogenetic distribution sparsity scores")
     thr_opt.add_argument('-gt', '--gcl_threshold', default = 0, type = float,
         help = "Threshold [0 < value < 1] of gene cluster committment scores")
     thr_opt.add_argument('-tt', '--md_threshold', default = 0, type = float,
@@ -971,7 +971,9 @@ def cli():
     # create/check the output directory
     if not args.output_dir:
         args.output_dir = format_path('./')
-    out_dir = mkOutput(format_path(args.output_dir), 'cloci')
+        out_dir = mkOutput(format_path(args.output_dir), 'cloci')
+    elif os.path.isdir(args.output_dir):
+        out_dir = format_path(args.output_dir)
 
     # set the topological constraint for microsynteny tree reconstruction
     if args.constraint:
@@ -1010,7 +1012,7 @@ def cli():
         'Tune clusters': tune_file, 'Minimum CSB': args.csb_threshold,
 #        'GCF percentile': args.gcf_percentile, 
         'Minimum GCF %id': args.id_percent, 'Minimum GCF %pos': args.pos_percent,
-        'PDS threshold': args.pdd_threshold, 'GCL threshold': args.gcl_threshold,
+        'PDS threshold': args.pds_threshold, 'GCL threshold': args.gcl_threshold,
         'Log Normal TMD threshold': args.md_threshold, 'Null partitions': partition,
         'Null samples': args.null_sample, #'Calculate dN/dS': args.dnds, 
         'Minimum N50': args.n50, # 'Family sensitivity': args.sensitivity,
@@ -1042,7 +1044,7 @@ def cli():
         n50thresh = args.n50, near_single_copy_genes = focal_genes,
         root = root, gcl_thresh = args.gcl_threshold, 
         constraint_path = constraint_path, simfun = simfun,
-        patch_thresh = args.pdd_threshold, method = method,
+        patch_thresh = args.pds_threshold, method = method,
         printexit = args.stop, skipalgn = args.skip, flag = bool(not args.new),
         min_hlg_id = args.minimum_loc_id / 100, sim = sim, 
         tree_path = format_path(args.tree), tune_file = tune_file,
