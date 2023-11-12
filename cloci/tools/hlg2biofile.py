@@ -9,7 +9,7 @@ from tqdm import tqdm
 from itertools import chain
 from collections import defaultdict
 from mycotools.acc2gbk import ome_main as acc2gbk
-from mycotools.acc2gff import gffMain as acc2gff
+from mycotools.acc2gff import gff_main as acc2gff
 from mycotools.lib.dbtools import primaryDB, mtdb
 from mycotools.lib.biotools import gff2list, fa2dict, list2gff, dict2fa
 from mycotools.lib.kontools import stdin2str, format_path, eprint
