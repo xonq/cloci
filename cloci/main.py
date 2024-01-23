@@ -974,6 +974,9 @@ def cli():
         out_dir = mkOutput(format_path(args.output_dir), 'cloci')
     elif os.path.isdir(args.output_dir):
         out_dir = format_path(args.output_dir)
+    else:
+        os.mkdir(format_path(args.output_dir + '/'))
+        out_dir = format_path(args.output_dir)
 
     # set the topological constraint for microsynteny tree reconstruction
     if args.constraint:
