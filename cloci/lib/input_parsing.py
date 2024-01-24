@@ -636,9 +636,14 @@ def compile_tree(i2ome, tree_path, root = []):
         eprint(f'\tWARNING: removing {len(missing)} ' \
               + 'missing tips from microsynteny tree',
                flush = True)
-        for tip in list(missing):
-            phylo.remove(tip) 
-    
+        todel = []
+        for n in phylo.tips():
+            if n.name in missing:
+                todel.append(n)
+        for n in todel:
+            n.parent.remove(n)
+            phylo.prune()
+        
     if len(root) == 1:
         phylo = phylo.rooted_with_tip(root[0])
         phylo.write(tree_path, with_distances = True)
