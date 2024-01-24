@@ -36,7 +36,8 @@ def calc_pds(phylo, omes):
  #   except ValueError:
 #        print(phylo, omes)
     except AttributeError: # 1 ome
-        eprint('\t\t' + ','.join([str(x) for x in omes]) + ' raised a tip not found error', flush = True)
+        eprint('\t\t' + ','.join([str(x) for x in omes]) \
+             + ' missing/extraneous tip(s)', flush = True)
         print(phylo)
 
     mrca_omes = set(x.name for x in mrca.iter_tips())
@@ -97,7 +98,8 @@ def calc_tmd(phylo, omes):
                        omes_set)
         return tmd, tuple([int(i) for i in omes])
     except ValueError:
-        eprint('\t\t' + ','.join([str(x) for x in omes]) + ' raised a tip not found error', flush = True)
+        eprint('\t\t' + ','.join([str(x) for x in omes]) \
+             + ' missing/extraneous tip(s)', flush = True)
         return 0, tuple([int(i) for i in omes])
     except AttributeError:
         print(omes, '\n', phylo)
@@ -114,7 +116,8 @@ def calc_tmd_uniq_omes(phylo, omes, o_omes):
                        omes_set)
         return tmd, tuple([int(i) for i in o_omes])
     except ValueError:
-        eprint('\t\t' + ','.join([str(x) for x in omes]) + ' raised a tip not found error', flush = True)
+        eprint('\t\t' + ','.join([str(x) for x in omes]) \
+             + ' missing/extraneous tip(s)', flush = True)
         return 0, tuple([int(i) for i in o_omes])
     except AttributeError:
         print(omes, '\n', phylo)
