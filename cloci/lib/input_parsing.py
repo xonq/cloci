@@ -632,7 +632,6 @@ def compile_tree(i2ome, tree_path, root = []):
     omes = set(i2ome)
     tips = set(phylo.get_tip_names())
     missing = tips.difference(omes)
-    print(missing, '\n\n', tips, '\n\n', omes)
     if missing:
         eprint(f'\tWARNING: removing {len(missing)} ' \
               + 'missing tips from microsynteny tree',
