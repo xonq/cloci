@@ -37,7 +37,7 @@ def calc_pds(phylo, omes):
 #        print(phylo, omes)
     except AttributeError: # 1 ome
         eprint('\t\t' + ','.join([str(x) for x in omes]) \
-             + ' missing/extraneous tip(s)', flush = True)
+             + ' missing tip(s)', flush = True)
         print(phylo)
 
     mrca_omes = set(x.name for x in mrca.iter_tips())
