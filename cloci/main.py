@@ -1032,6 +1032,8 @@ def cli():
         with open(format_path(args.focal_genes), 'r') as raw:
             focal_genes = [x.rstrip() for x in raw.read().split() \
                            if x.rstrip()]
+    else:
+        focal_genes = []
 
     db = mtdb(format_path(args.database))
     main(
