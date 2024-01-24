@@ -91,8 +91,11 @@ def calc_tmd(phylo, omes):
     # need to verify wtf descending branch length v total of supplied nodes is
     omes = [str(x) for x in omes]
     omes_set = set(omes)
-    try:
-        mrca = phylo.lowest_common_ancestor(omes)
+
+    print(phylo.get_tip_names(), flush = True)
+
+    try: 
+        mrca = phylo.lowest_common_ancestor(omes) # this is the failing step
         mrca_omes = set(x.name for x in mrca.iter_tips())
         tmd = addPatch(phylo.lowest_common_ancestor(omes),
                        omes_set)
