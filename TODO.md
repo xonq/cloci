@@ -16,8 +16,8 @@
 - [ ] Tune hyperparameters for global maximum quality output
 	- [ ] High percentage of 1 domain/reference cluster
 - [ ] Convert sliding window to nucleotide-based slide
-- [ ] Account for alternate splicing appropriately
-- [ ] Implement probabilistic pass for 2 HG HG combinations
+- [ ] Account for alternate splicing appropriately (gene-wise v RNA-wise)
+- [ ] Implement random sampling probability HGps and HGxs
 - [ ] Account for duplicates of HGs on edge of cluster
 - [ ] Add Pfam extraction feature
 - [ ] Add GO extraction feature
@@ -27,3 +27,8 @@
 - [ ] Output version in the log, have a version output statement
 - [ ] aPDS that removes the signal of HLG loss
 - [ ] rPDS calculation with GCL threshold in cloci2stats
+
+## Qualit of life
+- [ ] pruning discrepancies from microsynteny tree and input database and
+  removing from analysis
+- [ ] common visualization outputs
