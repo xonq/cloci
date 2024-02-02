@@ -388,7 +388,7 @@ def main(
     # seed clusters by calcuating total microsynteny distance for HGps
     print('\nIII. Seeding HG pairs (HGp)', flush = True) 
     if not os.path.isfile(out_dir + 'hgps.tsv.gz'):
-        print('\tCalculating seed HG-pair scores', flush = True)
+        print('\tCalculating seed HG-pair TMDs', flush = True)
         seed_score_start = datetime.now()
         # we are looking at all genomes
         if not uniq_sp:
@@ -423,7 +423,7 @@ def main(
         # write scores            
         print('\t\t' + str(datetime.now() - seed_score_start), flush = True)
         top_hgs = sorted(top_hgs, key = lambda x: x[3])
-        print('\tWriting seed scores', flush = True)
+        print('\tWriting HGp TMDs', flush = True)
         with gzip.open(out_dir + 'hgps.tsv.gz', 'wt') as out:
             out.write('#hg0\thg1\tcooccurrences\tscore\tadj_score\n')
             for line in top_hgs:
@@ -432,7 +432,7 @@ def main(
         top_hgs = [(x[0], x[1]) for x in top_hgs]
     # load previous HGps
     elif not os.path.isfile(wrk_dir + 'hgx2loc.pickle'):
-        print('\tLoading previous seed HG pairs', flush = True)
+        print('\tLoading previous seed HGps', flush = True)
         top_hgs = input_parsing.load_seedScores(out_dir + 'hgps.tsv.gz')
         print('\t\t' + str(len(top_hgs)) + ' significant HG pairs', flush = True)
     else:
@@ -655,20 +655,14 @@ def cli():
                   'order', 'family', 'genus', 'species']
     aligners = ['mmseqs', 'diamond', 'blastp']
     description = \
-           """CLOCI elucidates gene clusters de novo by first
-           classifying microsynteny-informed sub-cluster domains and
-           homologous locus groups. CLOCI calls gene cluster families 
-           by filtering homologous locus groups using measurements
-           of gene cluster selection. CLOCI requires evidence of 
-           unexpected microsynteny to call loci, and thus requires an
-           adequate sample. The recommended sample will vary depending
-           on your lineage's rate of microsynteny decay, horizontal transfer,
-           and other factors. A subphylum-level analysis is a generally good
-           for fungi. If you are filtering homologous locus groups for
-           a particular type of syntenic locus, such as gene clusters, then
-           run your dataset, and tune your minimum values to a reference set
-           of gene clusters. These values can vary depending on the sample,
-           so it is ideal to retune filtering parameters for each sample."""
+           """The Co-occurrence Locus and Orthologous Cluster Identifier
+              (CLOCI) identifies groups of homologous loci. CLOCI enriches
+              gene cluster families from groups of homologous loci in a 
+              function-agnostic framework, which allows for de novo
+              prediction of novel biosynthetic and non-biosynthetic cluster 
+              classes. CLOCI infers the boundaries of clusters using
+              evidence of unexpectedly shared microsynteny, thereby
+              facilitating evidence-based locus boundary predictions."""
     parser = argparse.ArgumentParser(description = description)
     i_opt = parser.add_argument_group('Input parameters')
     i_opt.add_argument('-d', '--database', required = True, default = primaryDB(), 
@@ -763,11 +757,11 @@ def cli():
              + ' gene cluster family')
     thr_opt.add_argument('-pt', '--pds_threshold', default = 0, type = float,
         help = "Threshold [0 < value < 1] of gene cluster family " \
-             + " phylogenetic distribution sparsity scores")
+             + " phylogenetic distribution sparsity")
     thr_opt.add_argument('-gt', '--gcl_threshold', default = 0, type = float,
-        help = "Threshold [0 < value < 1] of gene cluster committment scores")
+        help = "Threshold [0 < value < 1] of gene cluster committment")
     thr_opt.add_argument('-tt', '--md_threshold', default = 0, type = float,
-        help = "Threshold [0 < value < 1] of log normalized GCF TMDs")
+        help = "Threshold [0 < value < 1] of log-normalized GCF TMDs")
 
     run_opt = parser.add_argument_group('Runtime parameters')
 #    run_opt.add_argument('-s', '--dnds', action = 'store_true', help = 'Run dN/dS calculations')
