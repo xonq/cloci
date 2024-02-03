@@ -745,7 +745,7 @@ def cli():
         help = 'Null percentile of HG pair distances; DEFAULT: 20')
     thr_opt.add_argument('-xp', '--hgx_percentile', type = int,
         help = 'Null percentile [0 < value < 100] of HGx microsynteny distances. ' \
-             + 'Must be less than -fp; DEFAULT: 60', default = 60)
+             + 'Must be less than -fp; DEFAULT: 61', default = 61)
 #    thr_opt.add_argument('-fp', '--gcf_percentile', type = int, default = 0, 
  #       help = 'Pseudonull percentile [0 < value < 100] of GCF microsynteny distances')
     thr_opt.add_argument('-ip', '--id_percent', default = 0, type = float,
