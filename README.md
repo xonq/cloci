@@ -92,3 +92,12 @@ cloci -d agaricomycotina.mtdb -r <ROOT_OME> -o <PREVIOUS_DIR>
 ### Boundary assessment of 33 reference clusters
 ![Boundary assessment of 33 reference
 clusters](https://gitlab.com/xonq/cloci/-/raw/master/etc/boundaries.png)
+
+### Common Errors
+#### Memory error
+```
+OSError: [Errno 12] Cannot allocate memory
+```
+
+Simply rerun specifying the run output directory in your command via 
+`-o <PREVIOUS_OUTPUT_DIR>`
