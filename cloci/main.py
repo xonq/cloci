@@ -40,7 +40,7 @@ from collections import defaultdict
 from mycotools.lib.kontools import \
     intro, outro, format_path, collect_files, \
     findExecs, eprint, tardir, write_json, \
-    mkOutput
+    mkOutput, split_input
 from mycotools.lib.biotools import \
     gff2list
 from mycotools.lib.dbtools import mtdb, primaryDB
@@ -803,9 +803,7 @@ def cli():
 
     # grab the proposed root for the microsynteny tree
     if args.root:
-        if '"' in args.root or "'" in args.root:
-            args.root = args.root.replace('"','').replace("'",'')
-        root = args.root.split()
+        root = split_input(args.root)
         root_txt = ','.join(root)
     else:
         root = []
