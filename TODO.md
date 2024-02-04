@@ -9,6 +9,7 @@
 - [x] Mirror with GitHub
 
 ## Algorithm improvements
+- [ ] Fix rooting system for nodes that overlap current root/ambiguous
 - [ ] Multiprocess null generation
 - [ ] Lineage-based thresholds
 - [ ] Standardize code annotation

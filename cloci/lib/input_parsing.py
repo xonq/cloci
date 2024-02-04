@@ -625,15 +625,15 @@ def load_seedScores(file_):#, seed_thresh):
 
 
 def compile_tree(i2ome, tree_path, root = []):
-    with open(tree_path, 'r') as raw:
-        nwk = raw.read()
+#    with open(tree_path, 'r') as raw:
+ #       nwk = raw.read()
 
     phylo = load_tree(tree_path)
     omes = set(i2ome)
     tips = set(phylo.get_tip_names())
     missing = tips.difference(omes)
     if missing:
-        eprint(f'\tWARNING: removing {len(missing)} ' \
+        eprint(f'\t\tWARNING: removing {len(missing)} ' \
               + 'missing tips from microsynteny tree',
                flush = True)
         todel = []
