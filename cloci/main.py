@@ -40,7 +40,7 @@ from collections import defaultdict
 from mycotools.lib.kontools import \
     intro, outro, format_path, collect_files, \
     findExecs, eprint, tardir, write_json, \
-    mkOutput
+    mkOutput, split_input
 from mycotools.lib.biotools import \
     gff2list
 from mycotools.lib.dbtools import mtdb, primaryDB
@@ -745,7 +745,7 @@ def cli():
         help = 'Null percentile of HG pair distances; DEFAULT: 20')
     thr_opt.add_argument('-xp', '--hgx_percentile', type = int,
         help = 'Null percentile [0 < value < 100] of HGx microsynteny distances. ' \
-             + 'Must be less than -fp; DEFAULT: 60', default = 60)
+             + 'Must be less than -fp; DEFAULT: 61', default = 61)
 #    thr_opt.add_argument('-fp', '--gcf_percentile', type = int, default = 0, 
  #       help = 'Pseudonull percentile [0 < value < 100] of GCF microsynteny distances')
     thr_opt.add_argument('-ip', '--id_percent', default = 0, type = float,
@@ -803,9 +803,7 @@ def cli():
 
     # grab the proposed root for the microsynteny tree
     if args.root:
-        if '"' in args.root or "'" in args.root:
-            args.root = args.root.replace('"','').replace("'",'')
-        root = args.root.split()
+        root = split_input(args.root)
         root_txt = ','.join(root)
     else:
         root = []

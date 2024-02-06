@@ -86,7 +86,7 @@ def calc_mmd(phylo, omes):
     mmd = mrca.get_max_tip_tip_distance()[0]
     return mmd, tuple([int(x) for x in omes])
 
-def calc_tmd(phylo, omes):
+def calc_tmd(phylo, omes, error = False):
     """calculate descending branch length from cogent3 tree"""
     # need to verify wtf descending branch length v total of supplied nodes is
     omes = [str(x) for x in omes]
@@ -99,8 +99,27 @@ def calc_tmd(phylo, omes):
                        omes_set)
         return tmd, tuple([int(i) for i in omes])
     except ValueError:
-        eprint('\t\t' + ','.join([str(x) for x in omes]) \
-             + ' missing/extraneous tip(s)', flush = True)
+        # get the missing tips
+        missing_tips = set(omes).difference(set(phylo.get_tip_names()))
+        # get the extraneous tips if no missing
+        if not missing_tips:
+            extraneous_tips = set(phylo.get_tip_names()).difference(set(omes))
+            if error:
+                eprint(f'\t\tERROR: {",".join(sorted(extraneous_tips))}' \
+                     + ' extraneous tip(s)', flush = True)
+                sys.exit(13)
+            else:
+                eprint(f'\t\tWARNING: {",".join(sorted(extraneous_tips))}' \
+                     + ' extraneous tip(s)', flush = True)
+        else:
+            if error:
+                eprint(f'\t\tERROR: {",".join(sorted(missing_tips))}' \
+                     + ' missing tip(s)', flush = True)
+                sys.exit(13)
+            else:
+                eprint(f'\t\tWARNING: {",".join(sorted(missing_tips))}' \
+                     + ' missing tip(s)', flush = True)
+
         return 0, tuple([int(i) for i in omes])
     except AttributeError:
         print(omes, '\n', phylo)
