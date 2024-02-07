@@ -69,9 +69,9 @@ Extract a MycotoolsDB of Agaricomycotina
 mtdb e -l Agaricomycotina > agaricomycotina.mtdb
 ```
 
-Run *CLOCI*
+Run *CLOCI* rooting upon the MRCA of two inputted genomes
 ```bash
-cloci -d agaricomycotina.mtdb -r <ROOT_OME>
+cloci -d agaricomycotina.mtdb --root "<OME1>,<OME2>"
 ```
 
 Resume a *CLOCI* run, i.e. to add proxy thresholds or resume following error
@@ -99,5 +99,5 @@ clusters](https://gitlab.com/xonq/cloci/-/raw/master/etc/boundaries.png)
 OSError: [Errno 12] Cannot allocate memory
 ```
 
-Simply rerun specifying the run output directory in your command via 
+Simply resume specifying the run output directory in your command via 
 `-o <PREVIOUS_OUTPUT_DIR>`
