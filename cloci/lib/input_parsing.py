@@ -654,7 +654,7 @@ def compile_tree(i2ome, tree_path, root = []):
         mrca_tip_len = min([v[1] for v in list(nodes.values())])
         mrca_edge = [k for k, v in nodes.items() if v[1] == mrca_tip_len]
         try:
-            phylo = phylo.rooted_at(mrca_edge)
+            phylo = phylo.rooted_at(mrca_edge[0])
         except:
             eprint(f'\nERROR: tree could not be rooted with supplied tips: ' \
                  + f'{root}', flush = True)
