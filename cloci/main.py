@@ -679,7 +679,7 @@ def cli():
     mt_opt.add_argument('-c', '--constraint',
         help = 'Constrain microsynteny topology to species tree w/ome code tips')
     mt_opt.add_argument('-r', '--root', 
-        help = 'Ome(s) to root upon; DEFAULT: midpoint')
+        help = 'Ome to root upon; DEFAULT: midpoint')
     mt_opt.add_argument('-t', '--tree',
         help = 'Precomputed microsynteny tree path')
 
