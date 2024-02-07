@@ -653,7 +653,12 @@ def compile_tree(i2ome, tree_path, root = []):
                  if set(root).issubset(set(v.get_tip_names()))}
         mrca_tip_len = min([v[1] for v in list(nodes.values())])
         mrca_edge = [k for k, v in nodes.items() if v[1] == mrca_tip_len]
-        phylo = phylo.rooted_at(mrca_edge[0])
+        try:
+            phylo = phylo.rooted_at(mrca_edge[0])
+        except:
+            eprint(f'\nERROR: tree could not be rooted with supplied tips: ' \
+                 + f'{root}', flush = True)
+            sys.exit(449)
         phylo.write(tree_path, with_distances = True)
 
     phylo.reassign_names({v: str(i) for i, v in enumerate(i2ome)})
