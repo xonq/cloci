@@ -714,7 +714,7 @@ def cli():
     fam_opt.add_argument('-sa', '--sensitive_align',
         help = f'[diamond ultra-sensitive] or [mmseqs -s 7.5 --num_iterations 3]')
     fam_opt.add_argument('-s', '--similarity', default = 'sorensen',
-        help = 'HLG similarity metric: [J]accard, [O]verlap, [S]orensen; ' \
+        help = 'HLG similarity coefficient: [J]accard, [O]verlap, [S]orensen; ' \
              + 'DEFAULT: Sorensen')
     fam_opt.add_argument('-mg', '--minimum_gene_id', type = float, default = 45,
         help = 'Percent [30 < value < 100] ID minimum between gene for loci; ' \
