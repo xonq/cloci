@@ -1850,7 +1850,7 @@ def classify_hlgs(
     lgs, lg_hgxs, lg_omes, lg2clan, hgxXloci = refine_group(
                  db, ome2i, clan_hg_loci, clan_loci,
                  hg_dir, hgx_dir, wrk_dir, lg_dir, minid, min_loc_id,
-                 simfun, inflation_1, tune, min_omes, 'domain', cpus = cpus)
+                 overlap, inflation_1, tune, min_omes, 'domain', cpus = cpus)
     print('\t\t\t' + str(len(lgs)) + ' domains', flush = True)
 
     print('\t\tMerging loci', flush = True)
@@ -1869,7 +1869,7 @@ def classify_hlgs(
     hlgs, hlg_hgxs, hlg_omes, hlg2dom, hgxXloci = refine_group(
                  db, ome2i, lg_hg_loci, lg_locs,
                  hg_dir, hgx_dir, wrk_dir, hlg_dir, minid, min_loc_id,
-                 sorensen, inflation_2, tune, min_omes, 'hlg', cpus = cpus, rnd = 2)
+                 simfun, inflation_2, tune, min_omes, 'hlg', cpus = cpus, rnd = 2)
     print('\t\t\t' + str(len(hlgs)) + ' HLGs', flush = True)
 
     print('\tExtending incomplete loci and contig edge loci', flush = True)
