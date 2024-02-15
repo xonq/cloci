@@ -10,6 +10,7 @@ from itertools import chain
 from collections import defaultdict
 from mycotools.acc2gbk import ome_main as acc2gbk
 from mycotools.acc2gff import gff_main as acc2gff
+from mycotools.acc2locus import main as acc2locus
 from mycotools.lib.dbtools import primaryDB, mtdb
 from mycotools.lib.biotools import gff2list, fa2dict, list2gff, dict2fa
 from mycotools.lib.kontools import stdin2str, format_path, eprint
@@ -55,17 +56,30 @@ def parse_ome(ome, ome_file, hlgs = []):
     return ome, hlg2genes
 
         
-def compile_ome_gffs(row, ome, hlg2genes, out_dir, by_ome = False, gbks = False, gffs = False):
+def compile_ome_gffs(row, ome, hlg2genes, out_dir, 
+                     by_ome = False, gbks = False, gffs = False,
+                     retrieve_locus = False):
     gff = gff2list(row['gff3'])
     hlg2gffs = defaultdict(list)
-    for hlg, gene_ls in hlg2genes.items():
-        for genes in gene_ls:
-            acc2gff_dict = acc2gff(gff, genes)
-            comp_gff = []
-            for acc, acc_gff in acc2gff_dict.items():
-                comp_gff.extend(acc_gff)
-            hlg2gffs[hlg].append(comp_gff)
-
+    if not retrieve_locus:
+        for hlg, gene_ls in hlg2genes.items():
+            for genes in gene_ls:
+                acc2gff_dict = acc2gff(gff, genes)
+                comp_gff = []
+                for acc, acc_gff in acc2gff_dict.items():
+                    comp_gff.extend(acc_gff)
+                hlg2gffs[hlg].append(comp_gff)
+    else:
+        for hlg, gene_ls in hlg2genes.items():
+            for genes in gene_ls:
+                n_genes = acc2locus(gff, [genes[0], genes[-1]], 
+                                    between = True)
+                print(n_genes[genes[0]], '\t', genes, flush = True)
+                acc2gff_dict = acc2gff(gff, n_genes[genes[0]])
+                comp_gff = list(chain(*list(acc2gff_dict.values())))
+                hlg2gffs[hlg].append(comp_gff)
+            
+    
     if gffs:
         for hlg, gffs in hlg2gffs.items():
             for i, gff in enumerate(gffs):
@@ -109,7 +123,8 @@ def compile_ome_faas(faa_path, ome, hlg2genes, out_dir, by_ome = False):
 
 
 def main(db, clo_dir, out_dir, omes = [], hlgs = [], gcf_output = False, 
-         make_gbk = False, make_gff = False, make_faa = False, cpus = 1):
+         make_gbk = False, make_gff = False, make_faa = False, 
+         retrieve_locus = False, cpus = 1):
     """Generate a dictionary of the output file formats"""
 
     db = db.set_index('ome')
@@ -146,12 +161,17 @@ def main(db, clo_dir, out_dir, omes = [], hlgs = [], gcf_output = False,
         if cpus > 1:
             with mp.Pool(processes = cpus) as pool:
                 pool.starmap(compile_ome_gffs, 
-                             tqdm(((db[ome], ome, hlg2genes, out_dir, bool(omes), make_gbk, make_gff) \
-                              for ome, hlg2genes in ome_res if hlg2genes), total = len(ome_res)))
+                             tqdm(((db[ome], ome, hlg2genes, out_dir, 
+                                    bool(omes), make_gbk, make_gff,
+                                    retrieve_locus) \
+                               for ome, hlg2genes in ome_res if hlg2genes), 
+                              total = len(ome_res)))
         else:
             for ome, hlg2genes in ome_res:
                 if hlg2genes:
-                    compile_ome_gffs(db[ome], ome, hlg2genes, out_dir, bool(omes), make_gbk, make_gff)
+                    compile_ome_gffs(db[ome], ome, hlg2genes, out_dir, 
+                                     bool(omes), make_gbk, make_gff,
+                                     retrieve_locus)
     if make_faa:
         print(f'\nGenerating protein fastas', flush = True)
         with mp.Pool(processes = cpus) as pool:
@@ -172,6 +192,8 @@ def cli():
     in_opt.add_argument('--hlg', help = 'Generate files for specific HLG/GCF(s)')
     in_opt.add_argument('-d', '--mtdb', help = 'Reference MTDB; DEFAULT: primaryDB',
                         default = primaryDB())
+    in_opt.add_argument('-i', '--inclusive',  action = 'store_true',
+        help = '[--gbk|--gff] Include non-protein coding genes')
 
     out_opt = parser.add_argument_group('Output parameters')
     out_opt.add_argument('--gbk', action = 'store_true', 
@@ -243,7 +265,7 @@ def cli():
             print('\nOutputting specified HLGs', flush = True)
 
     main(db, run_dir, out_dir, omes, hlgs, args.gcf, 
-         args.gbk, args.gff, args.faa, args.cpu)
+         args.gbk, args.gff, args.faa, args.inclusive, args.cpu)
     sys.exit(0)
 
 
