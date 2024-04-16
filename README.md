@@ -50,10 +50,22 @@ recommend implementing *CLOCI* at least at the subphylum-level. This varies
 depending on the lineage's rate of microsynteny decay and the phylogenetic distance 
 with which horizontal transfer occurs. 
 
+*CLOCI* fundamentally relies on reconstructing an microsynteny phylogeny that
+accurately depicts divergence in gene order between genomes. While *CLOCI*
+attempts to automatically detect near single-copy gene families for
+reconstructing this tree, it is recommended to explicitly input these
+near single-copy genes using the `-f` argument referencing a file of reference genes,
+separated by lines. Ideally, these same genes would be used to reconstruct a
+phylogenomic tree and the microsynteny topology will be constrained to this
+reference phylogenomic tree via the `-c` argument in conjunction with `-r`
+for selecting genomes to derive the outgroup branch from.
+
 ### Hyperparameters
 *CLOCI* default parameters have been tuned for our initial dataset on ~2,250
-fungi across the kingdom. These should suffice for most analyses. By default,
-thresholds for all proxies of coordinated gene evolution are set to 0. 
+fungi across the kingdom. These should suffice for circumscribing homologous
+loci in most analyses, though the gene cluster family filtering parameters
+are ideally determined referencing known clusters from your particular dataset. 
+By default, thresholds for all proxies of coordinated gene evolution are set to 0. 
 These thresholds will vary for the type of clusters of interest and the
 lineage. I recommend compiling a dataset of known cluster reference genes,
 running *CLOCI*, identifying those genes in the output, determining the
