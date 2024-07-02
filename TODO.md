@@ -9,6 +9,9 @@
 - [x] Mirror with GitHub
 
 ## Algorithm improvements
+- [ ] Merge loci extensions that overlap after the second round
+- [ ] Option to merge adjacent reported loci that belong to the same HLG on
+  output based on a gene intermediance
 - [x] Fix rooting system for nodes that overlap current root/ambiguous
 - [ ] Multiprocess null generation
 - [ ] Lineage-based thresholds
@@ -29,7 +32,7 @@
 - [ ] aPDS that removes the signal of HLG loss
 - [ ] rPDS calculation with GCL threshold in cloci2stats
 
-## Qualit of life
+## Quality of life
 - [ ] pruning discrepancies from microsynteny tree and input database and
   removing from analysis
 - [ ] common visualization outputs
