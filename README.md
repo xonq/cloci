@@ -3,10 +3,6 @@ Extensive alpha testing has been conducted, though this software is in a beta st
 Kindly raise git issues for errors - if you can find the bug, even better!
 Documentation is currently in the works.
 
-Please also note that this software interfaces with the comparative genomics
-software suite, Mycotools. I am hopeful you will find Mycotools useful. Please
-find its manuscript and the [associated repository](https://github.com/xonq/mycotools).
-
 <br />
 
 ## PURPOSE
@@ -25,9 +21,9 @@ orthogroups to the locus-level. Our approach generalizes gene cluster detection 
 <br />
 
 ## INSTALL
-Please create a conda environment and manually install `graph-tool`
+Please create a conda environment and manually install some dependencies
 ```bash
-conda create -n cloci graph-tool python pip
+conda create -n cloci mycotools graph-tool python pip
 ```
 
 Then install cloci into the environment
@@ -43,8 +39,13 @@ A conda package will be available in the future.
 ## USE
 
 ### Input dataset
-*CLOCI* inputs a [MycotoolsDB](https://github.com/xonq/mycotools)
-that contains genomes ('omes') of interest. It is important
+*CLOCI* inputs a tab-delimitted file of genome metadata with the following columns: 
+
+```
+#genus	species	strain	assembly_path	gffpath
+```
+
+or a preassembled [MycotoolsDB](https://github.com/xonq/mycotools). It is important
 to adequately sample a cluster's distribution to detect it. I thus generally 
 recommend implementing *CLOCI* at least at the subphylum-level. This varies
 depending on the lineage's rate of microsynteny decay and the phylogenetic distance 
@@ -113,3 +114,11 @@ OSError: [Errno 12] Cannot allocate memory
 
 Simply resume specifying the run output directory in your command via 
 `-o <PREVIOUS_OUTPUT_DIR>`
+
+
+#### Single-copy gene detection
+```
+ERROR: could not detect 10 genes present in all genomes with median 2 copy number and less than 2 copy number standard deviation. Manually input focal homology groups.
+```
+
+Near single-copy genes were not automatically determined from the dataset. It is recommended to manually input a list of focal homology groups/genes via `-f`.
