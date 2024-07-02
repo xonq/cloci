@@ -44,6 +44,7 @@ from mycotools.lib.kontools import \
 from mycotools.lib.biotools import \
     gff2list
 from mycotools.lib.dbtools import mtdb, primaryDB
+from mycotools.update_mtdb import control_flow as update_mtdb
 #from mycotools.gff2svg import main as gff2svg
 from mycotools import db2microsyntree
 from cloci.lib import treecalcs, evo_conco, \
@@ -647,6 +648,40 @@ def main(
          cpus = cpus)
 
 
+def gen_mtdb(predb_path, out_dir, cpus = 1):
+    """Create a MycotoolsDB on the fly from inputted genome metadata"""
+    genome_metadata = []
+    with open(predb_path, 'r') as raw:
+        for line in raw:
+            if not line.startswith('#'):
+                data = line.rstrip().split('\t')
+                if data:
+                    if len(data) < 5:
+                        eprint('\nERROR: --input rows have less than 5 columns', flush = True)
+                        sys.exit(10)
+                    data[3] = format_path(data[3])
+                    data[4] = format_path(data[4])
+                    if not os.path.isfile(data[3]):
+                        eprint(f'\nERROR: invalid FNA in --input: {data[3]}', flush = True)
+                        sys.exit(101)
+                    elif not os.path.isfile(data[4]):
+                        eprint(f'\nERROR: invalid GFF3 in --input: {data[4]}', flush = True)
+                        sys.exit(102)
+                    genome_metadata.append(data)
+
+    with open(out_dir + 'predb.tsv', 'w') as out:
+        out.write('#assembly_accession\tgenus\tspecies\tstrain\tassemblyPath\tgffPath' \
+                + '\tgenomeSource (ncbi/jgi/new)\trestriction\n')
+        for i, v in enumerate(genome_metadata):
+            gen, sp, st, fna, gff = v
+            out.write(f'{i}\t{gen}\t{sp}\t{st}\t{fna}\t{gff}\tnew\tfalse\n')
+    
+    db_path = update_mtdb(out_dir, False, False, False, False, out_dir + 'predb.tsv', 
+                False, False, False, False, False, False, False, False, False, False, cpus,
+                ncbi_email = 'konkelzach@gmail.com')    
+    return db_path
+
+
 def cli():
     # need these here because spawn mp context forces reimport
 #    from scipy.stats import hypergeom
@@ -665,8 +700,10 @@ def cli():
               facilitating evidence-based locus boundary predictions."""
     parser = argparse.ArgumentParser(description = description)
     i_opt = parser.add_argument_group('Input parameters')
-    i_opt.add_argument('-d', '--database', required = True, default = primaryDB(), 
-        help = 'MycotoolsDB. DEFAULT: masterdb')
+    i_opt.add_argument('-i', '--input', 
+        help = 'Tab delimitted file with columns: genus, species, strain, assembly path, gff path')
+    i_opt.add_argument('-d', '--database',
+        help = 'MycotoolsDB. DEFAULT: primaryDB')
  #   parser.add_argument('-i', '--input', 
 #        help = 'Precomputed whitespace delimitted file of homologous sequences')
     i_opt.add_argument('--pfam', help = 'Pfam-A.hmm for Pfam annotations')
@@ -686,8 +723,8 @@ def cli():
     det_opt = parser.add_argument_group('Detection parameters')
     det_opt.add_argument('-of', '--orthofinder',
         help = 'Precomputed OrthoFinder output directory')
-    det_opt.add_argument('-i', '--input',
-        help = 'Precomputed cluster results file')
+    det_opt.add_argument('-g', '--homology_groups',
+        help = 'Precomputed homology group results file')
     det_opt.add_argument('-l', '--linclust', action = 'store_true',
         help = 'Less sensitive Homology inference via linclust; DEFAULT: mmseqs cluster')
     det_opt.add_argument('-w', '--window', default = 2, type = int,
@@ -790,6 +827,43 @@ def cli():
         help = 'HGx alignment DB and results dir, format <HG>.out and <HG>.dmnd/<HG>.mmseqs')
     args = parser.parse_args()
 
+    # create/check the output directory
+    if not args.output_dir:
+        args.output_dir = format_path('./')
+        out_dir = mkOutput(format_path(args.output_dir), 'cloci')
+    elif os.path.isdir(args.output_dir):
+        out_dir = format_path(args.output_dir)
+    else:
+        os.mkdir(format_path(args.output_dir + '/'))
+        out_dir = format_path(args.output_dir)
+
+    # input/create the mycotoolsdb
+    if not args.database and not args.input:
+        db_path = primaryDB()
+        if not db_path:
+            eprint('\nERROR: --database (linked MycotoolsDB) or --input required. ' \
+                 + 'Format --input as follows:', flush = True)
+            print('#genus\tspecies\tstrain\tassembly_path\tgff3_path', flush = True)
+            sys.exit(24)
+    elif args.input:
+        db_path_check = primaryDB(verbose = False)
+        if db_path_check:
+            if not db_path_check.startswith(out_dir):
+                eprint('\nERROR: Separate MycotoolsDB linked and --input specified. ' \
+                     + 'Unlink from MycotoolsDB via `mtdb -u` or use the `--database` ' \
+                     + 'argument', flush = True)
+                sys.exit(43)
+            else:
+                eprint('\nWARNING: Assuming previously generated MycotoolsDB: ' \
+                    + f'{db_path_check} corresponds to --input', flush = True)
+                db_path = db_path_check
+        else:
+            predb_path = format_path(args.input)
+            print('\nCurating inputted genome data', flush = True)
+            db_path = gen_mtdb(predb_path, out_dir, cpus = args.cpus)
+    else:
+        db_path = format_path(args.database)
+
     # NEED to reinstate, currently does not function correctly
     if args.compress:
         if not args.output_dir:
@@ -882,8 +956,8 @@ def cli():
             hg_dir = format_path(args.hg_dir)
         method = 'orthofinder'
     # parse an inputted set of homology groups
-    elif args.input:
-        homogroups = format_path(args.input)
+    elif args.homology_groups:
+        homogroups = format_path(args.homology_groups)
         hg_dir = format_path(args.hg_dir)
         method = 'mmseqs easy-cluster'
     # circumscribe homology groups using linclust
@@ -960,15 +1034,6 @@ def cli():
     #elif not args.gcf_percentile:
      #   args.gcf_percentile = args.hgx_percentile
 
-    # create/check the output directory
-    if not args.output_dir:
-        args.output_dir = format_path('./')
-        out_dir = mkOutput(format_path(args.output_dir), 'cloci')
-    elif os.path.isdir(args.output_dir):
-        out_dir = format_path(args.output_dir)
-    else:
-        os.mkdir(format_path(args.output_dir + '/'))
-        out_dir = format_path(args.output_dir)
 
     # set the topological constraint for microsynteny tree reconstruction
     if args.constraint:
@@ -992,7 +1057,7 @@ def cli():
 
     # prepare the introduction dictionary
     args_dict = {
-        'Homology groups': homogroups, 'Sequence clusters': method, 'MycotoolsDB': args.database, 
+        'Homology groups': homogroups, 'Sequence clusters': method, 'MycotoolsDB': db_path, 
         'Focal genes': args.focal_genes, 
         'Microsynteny tree': format_path(args.tree), 'Toplogy constraint': constraint_path,
         'Root': root_txt, 
@@ -1027,7 +1092,7 @@ def cli():
     else:
         focal_genes = []
 
-    db = mtdb(format_path(args.database))
+    db = mtdb(db_path)
     main(
         db, homogroups, out_dir, plusminus = args.window,
         cpus = args.cpus, hg_dir = hg_dir, inflation_1 = args.inflation_rnd1,
