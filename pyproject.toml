@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cloci"
-version = "0.01.11"
+version = "0.03.0"
 authors = [{name="Zachary Konkel", email="konkelzach@protonmail.com"}]
 description = "Co-occurrence Locus and Orthologous Cluster Identifier"
 readme = "README.md"
