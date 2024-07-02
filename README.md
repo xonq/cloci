@@ -1,4 +1,4 @@
-![*CLOCI*](https://raw.githubusercontent.com/xonq/cloci/master/etc/logo.png)
+![*CLOCI*](https://raw.githubusercontent.com/xonq/cloci/master/etc/abstract.png)
 
 <br />
 
