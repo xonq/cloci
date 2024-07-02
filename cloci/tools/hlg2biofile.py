@@ -74,7 +74,7 @@ def compile_ome_gffs(row, ome, hlg2genes, out_dir,
             for genes in gene_ls:
                 n_genes = acc2locus(gff, [genes[0], genes[-1]], 
                                     between = True)
-                print(n_genes[genes[0]], '\t', genes, flush = True)
+                print(n_genes, '\t', genes, flush = True)
                 acc2gff_dict = acc2gff(gff, n_genes[genes[0]])
                 comp_gff = list(chain(*list(acc2gff_dict.values())))
                 hlg2gffs[hlg].append(comp_gff)
