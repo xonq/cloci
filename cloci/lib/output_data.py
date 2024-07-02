@@ -357,7 +357,7 @@ def call_iprscan(ome, iprscan, ann_dir, threads = 4):
 
 
 def run_ipr_scan(iprscan, passing_omes, ann_dir, cpus):
-
+    """Initialize IPR scan for all genomes"""
     threads = 4
     with mp.Pool(processes = round(cpus/2)) as pool:
         ipr_res = pool.starmap(call_iprscan, 
