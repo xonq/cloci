@@ -209,11 +209,18 @@ def acquire_clus_hlg_sim_noq(
             for gene1 in hg_dict[hg][1]:
                 try:
                     scores[-1].append(blast_ids[hg][gene0][gene1])
+#                    if any(x == 'mycste1_96440' for x in [gene0, gene1]):
+ #                       print('mycste1_96440 recovered 4, no error', 
+  #                            gene0, gene1, flush = True)
                 # if the genes are missing its a 0
                 # the alignment algorithm MUST output enough alignments
                 # for this is to reliably work on widely dispersed clusters
                 except KeyError: 
                     scores[-1].append(0)
+  #                  if any(x == 'mycste1_96440' for x in [gene0, gene1]):
+   #                     print('mycste1_96440 recovered 5, error', 
+    #                          gene0, gene1, flush = True)
+
     scores = [x for x in scores if x]
     if scores:
         maxScores = [max(i) for i in scores]
@@ -485,6 +492,12 @@ def rnd2_loc2loc_mngr(hlg_dir, loci, hg_loci,
         i0, i1 = v
         for i2 in range(i0, i1):
             locus = loci[i2]
+            # error check
+#            for x in locus:
+ #               if "mycste1_96440" == x:
+  #                  print('mycste1_96440 recovered 3', flush = True)
+   #                 error_group = g
+
             hgs = hg_loci[i2]
             for i4, hg in enumerate(hgs):
                 if hg is not None:
@@ -530,6 +543,9 @@ def rnd2_loc2loc_mngr(hlg_dir, loci, hg_loci,
         for g, v in enumerate(groups):
             i0, i1 = v
             clan_arr = clan_arrs[g]
+            # error check
+#            if g == error_group:
+ #               print(clan_arr)
             loc2loc_sim_mngr(clan_arr, finished_file, i0, loci, hg_loci,
                              0, blast_ids, min_hlg_id, simfun)
         # the file is now complete
@@ -1361,6 +1377,11 @@ def refine_group(db, ome2i, group_hg_loci, group_loci,
         for gI, locs in enumerate(group_loci):
             groups.append([index, -1])
             for i, locus in enumerate(locs):
+                # error check
+  #              for x in locus:
+ #                  if "mycste1_96440" == x:
+#                       print('mycste1_96440 recovered 2', flush = True)
+
                 hgs = group_hg_loci[gI][i]
                 hg_loci[index] = hgs
                 hg_loc = set(hgs)
@@ -1854,7 +1875,20 @@ def classify_hlgs(
     print('\t\t\t' + str(len(lgs)) + ' domains', flush = True)
 
     print('\t\tMerging loci', flush = True)
+    # error check
+    #for k, v in lgs.items():
+   #     for x in v:
+  #          if not isinstance(x, bool):
+ #               if 'mycste1_96440' in set(x[0]):
+#                    print('mycste1_96440 recovered 0', flush = True)
     lg2locs, lg2hg_locs = lg_loc_mngr(db, lgs, gene2hg, max_between, cpus)
+    # error check
+    #for lg, locs in lg2locs.items():
+   #     for x in locs:
+  #          if x:
+ #               if "mycste1_96440" in set(x):
+#                    print('mycste1_96440 recovered 1', flush = True)
+        
     lg_locs = {k: v for k,v in sorted(lg2locs.items(), key = lambda x: len(x[1]), reverse = True)}
     lg_hg_loci = [lg2hg_locs[k] for k in lg_locs]
     lg_locs = [v for v in lg_locs.values()]
