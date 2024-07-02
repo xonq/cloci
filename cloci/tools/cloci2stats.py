@@ -14,7 +14,7 @@ from mycotools.annotationStats import main as annotation_stats
 from mycotools.assemblyStats import main as assembly_stats
 from mycotools.lib.kontools import collect_files, eprint, format_path, findExecs, mkOutput
 from mycotools.lib.biotools import gff3Comps, gff2list
-from mycotools.lib.dbtools import mtdb
+from mycotools.lib.dbtools import mtdb, primaryDB
 
 
 def assimilate_proxies(prox_file):
@@ -406,7 +406,7 @@ def add_alien_data(db, stats_file, stats_dict, rank, ome2alien):
     return stats_dict
 
 
-def main(out_dir, ome_dir, db, rank, gamma = False, ann_dir = None, 
+def main(out_dir, ome_dir, db, rank, mtdb_path, gamma = False, ann_dir = None, 
          pfam = False, alien = False, gcf_only = False, cpus = 1):
 
     db = db.set_index()
@@ -429,7 +429,8 @@ def main(out_dir, ome_dir, db, rank, gamma = False, ann_dir = None,
         
 
     print('\nPreparing assembly statistics', flush = True)
-    assembly_stats('', log_path = out_dir + 'assembly_stats.tsv', cpus = cpus, db = db)
+    assembly_stats(mtdb_path, log_path = out_dir + 'assembly_stats.tsv', 
+                   cpus = cpus, db = db)
 
     with open(out_dir + 'assembly_stats.tsv', 'r') as raw:
         ome2ass_stats = {}
@@ -529,8 +530,8 @@ def cli():
     ranks = ['ome', 'kingdom', 'phylum', 'subphylum', 'class', 'order', 'family', 'genus', 'species']
     parser = argparse.ArgumentParser(description = 'Summarize CLOCI output for taxonomic rank')
     parser.add_argument('-c', '--cloci', required = True, help = 'CLOCI|CLOCI/ome output')
-    parser.add_argument('-r', '--rank', help = f'{ranks}; DEFAULT: ome')
-    parser.add_argument('-d', '--mtdb', help = 'MycotoolsDB')
+    parser.add_argument('-r', '--rank', help = f'{ranks}; DEFAULT: ome', default = 'ome')
+    parser.add_argument('-d', '--mtdb', help = 'MycotoolsDB', default = primaryDB())
     parser.add_argument('-a', '--alien',
         help = 'Directory of HG alignments to quantify Alien Index')
     parser.add_argument('-g', '--gcf', action = 'store_true',
@@ -558,7 +559,7 @@ def cli():
         out_dir = mkOutput(format_path(args.cloci), 'cloci2stats', suffix = None)
         ome_dir = format_path(args.cloci) + 'ome/'
 
-    main(out_dir, ome_dir, mtdb(format_path(args.mtdb)), rank, 
+    main(out_dir, ome_dir, mtdb(format_path(args.mtdb)), rank, format_path(args.mtdb),
          alien = format_path(args.alien), gcf_only = args.gcf, cpus = args.cpus)
   #       gamma = False, ann_dir = format_path(args.annotations), 
    #      pfam = format_path(args.pfam),    
