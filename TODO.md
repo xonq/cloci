@@ -1,9 +1,9 @@
 ## Repository setup
-- [ ] Begin USAGE wiki
-- [ ] Begin INSTALL wiki
+- [x] Begin USAGE wiki
+- [x] Begin INSTALL wiki
 - [ ] Begin Output wiki
 - [x] Build pypi package
-- [ ] Build conda package
+- [x] Build conda package
 - [x] Update intro page
 - [ ] Add issue format
 - [x] Mirror with GitHub
