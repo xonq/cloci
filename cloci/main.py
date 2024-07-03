@@ -699,7 +699,7 @@ def cli():
               evidence of unexpectedly shared microsynteny, thereby
               facilitating evidence-based locus boundary predictions."""
     parser = argparse.ArgumentParser(description = description)
-    i_opt = parser.add_argument_group('Input parameters')
+    i_opt = parser.add_argument_group('Input options')
     i_opt.add_argument('-i', '--input', 
         help = 'Tab delimitted file with columns: genus, species, strain, assembly path, gff path')
     i_opt.add_argument('-d', '--database',
@@ -709,7 +709,7 @@ def cli():
     i_opt.add_argument('--pfam', help = 'Pfam-A.hmm for Pfam annotations')
     i_opt.add_argument('--interpro', help = 'interproscan.sh for IPR annotations')
 
-    mt_opt = parser.add_argument_group('Microsynteny tree parameters')
+    mt_opt = parser.add_argument_group('Microsynteny tree options')
     mt_opt.add_argument('-f', '--focal_genes',
         help = 'File of genes for neighborhood extraction of microsynteny ' \
              + 'tree')
@@ -720,7 +720,7 @@ def cli():
     mt_opt.add_argument('-t', '--tree',
         help = 'Precomputed microsynteny tree path')
 
-    det_opt = parser.add_argument_group('Detection parameters')
+    det_opt = parser.add_argument_group('Detection options')
     det_opt.add_argument('-of', '--orthofinder',
         help = 'Precomputed OrthoFinder output directory')
     det_opt.add_argument('-g', '--homology_groups',
@@ -735,7 +735,7 @@ def cli():
         help = 'Only consider one genome for replicate species in microsynteny distance' \
              + ' calculations', default = False)
 
-    nul_opt = parser.add_argument_group('Null parameters')
+    nul_opt = parser.add_argument_group('Null options')
     nul_opt.add_argument('-nr', '--null_rank', default = 'species',
         help = f'Taxonomic rank for local null models {null_ranks}; DEFAULT: species')
     nul_opt.add_argument('-np', '--null_partitions', 
@@ -745,7 +745,7 @@ def cli():
         help = 'Samples for null distributions; DEFAULT: 10,000')
 
 
-    fam_opt = parser.add_argument_group('Locus aggregation parameters')
+    fam_opt = parser.add_argument_group('Locus aggregation options')
     fam_opt.add_argument('-a', '--aligner', default = 'diamond',
         help = f'Alignment algorithm: {aligners}; DEFAULT: diamond')
     fam_opt.add_argument('-sa', '--sensitive_align',
@@ -775,14 +775,14 @@ def cli():
         help = 'Tune inflation to subset data of clusters represented ' \
              + 'in a tab-delimited ' \
              + 'file "<CLUSTER>\\t<CONSERVED_HGS/GENES>\\t<OMES>\\t<EXCLUDED_OMES>"')
+    fam_opt.add_argument('-hp', '--hgp_percentile', type = int, default = 20,
+        help = 'Null percentile [0 < value < 100] of HG pair distances; DEFAULT: 20')
+    fam_opt.add_argument('-xp', '--hgx_percentile', type = int,
+        help = 'Null percentile [0 < value < 100] of HGx microsynteny distances. ' \
+             + 'DEFAULT: 61', default = 61)
    
 
-    thr_opt = parser.add_argument_group('GCF filtering parameters')
-    thr_opt.add_argument('-hp', '--hgp_percentile', type = int, default = 20,
-        help = 'Null percentile of HG pair distances; DEFAULT: 20')
-    thr_opt.add_argument('-xp', '--hgx_percentile', type = int,
-        help = 'Null percentile [0 < value < 100] of HGx microsynteny distances. ' \
-             + 'Must be less than -fp; DEFAULT: 61', default = 61)
+    thr_opt = parser.add_argument_group('GCF filtering options')
 #    thr_opt.add_argument('-fp', '--gcf_percentile', type = int, default = 0, 
  #       help = 'Pseudonull percentile [0 < value < 100] of GCF microsynteny distances')
     thr_opt.add_argument('-ip', '--id_percent', default = 0, type = float,
@@ -798,9 +798,9 @@ def cli():
     thr_opt.add_argument('-gt', '--gcl_threshold', default = 0, type = float,
         help = "Threshold [0 < value < 1] of gene cluster committment")
     thr_opt.add_argument('-tt', '--md_threshold', default = 0, type = float,
-        help = "Threshold [0 < value < 1] of log-normalized GCF TMDs")
+        help = "Threshold [0 < value < 1] of log-normalized GCF MDs")
 
-    run_opt = parser.add_argument_group('Runtime parameters')
+    run_opt = parser.add_argument_group('Runtime options')
 #    run_opt.add_argument('-s', '--dnds', action = 'store_true', help = 'Run dN/dS calculations')
     run_opt.add_argument('--n50', help = 'Minimum assembly N50')
     run_opt.add_argument('--stop', action = 'store_true', 
