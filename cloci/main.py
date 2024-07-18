@@ -238,8 +238,9 @@ def main(
     near_single_copy_genes = [], tree_path = None, 
     verbose = False, sim = 'overlap', tune_file = None,
     dist_type = 'tmd', uniq_sp = False, partition_rank = None,
-    min_branch_sim= 0, algn_sens = '', min_gene_id = 30,
-    fallback = False, merge_via_sim = False, ipr_path = None, force = False
+    min_branch_sim= 0, algn_sens = '', min_gene_id = 30, calc_apds = False,
+    fallback = False, merge_via_sim = False, ipr_path = None, force = False,
+    min_apds_perc = 0.5
     ):
     """
     The general workflow:
@@ -600,7 +601,7 @@ def main(
     print('\nVI. Quantifying GCL and intra-HLG alignment similarity', flush = True)
     hgx2omes2gcl, hgx2omes2id, hgx2omes2pos, hlgs, hlg_omes = evo_conco.gcl_main( 
                             hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
-                            aligner, db, gene2hg, plusminus, hg2gene, phylo,
+                            aligner, db, gene2hg, hg2gene,
                             old_path = 'mmi.pickle',
                             hlgs = hlgs, hlg_hgxs = hlg_hgxs, hlg2clan = hlg2clan,
                             minid = min_gene_id, fallback = fallback,
@@ -622,6 +623,36 @@ def main(
 
     # this is the output directory for hgx2hlg and evo_conco
     hg_dir = f'{wrk_dir}hg/'
+    if calc_apds:
+        print('\tQuantifying adjusted PDS (aPDS)', flush = True)
+        omes2miss = treecalcs.obtain_missing_descendants(phylo,
+                                   list(hlg_omes.values()),
+                                   omes2miss = {}, cpus = cpus)
+        hlg2miss = {}
+        for hlg, omes in hlg_omes.items():
+            hlg2miss[hlg] = set(i2ome[i] for i in omes2miss[omes])
+        hlg2lossome = evo_conco.apds_main(hgx2loc, hgx_dir, gene2hg, hg2gene,
+                                         min_apds_perc,
+                                         hlgs, hlg_hgxs, hlg_omes, hlg2miss,
+                                         cpus = cpus)
+        hlg2lossi = {hlg: tuple(sorted(ome2i[k] for k in omes)) \
+                     for hlg, omes in hlg2lossome.items()}
+        hlg2spoof_omes = {hlg: tuple(sorted(omes + hlg2lossi[hlg])) \
+                          for hlg, omes in hlg_omes.items() \
+                          if hlg in hlg2lossi}
+        runOmes = list(hlg2spoof_omes.values())
+        omes2apds = treecalcs.patch_main(phylo, runOmes, wrk_dir,
+                                         old_path = 'omes2apds.pickle', cpus = cpus)
+        hlg2apds = {hlg: omes2apds[omes] for hlg, omes in hlg2spoof_omes.items()}
+        with open(wrk_dir + 'apds.pickle', 'wb') as pickout:
+            pickle.dump(hlg2apds, pickout)
+        with open(out_dir + 'hlg2transition.tsv', 'w') as out:
+            out.write('#hlg\tloss_omes\n')
+            for hlg, omes in sorted(hlg2lossome.items(), key = lambda x: x[0]):
+                out.write(f'{hlg}\t{",".join(omes)}\n')
+    else:
+        hlg2apds = {}
+
 
     # deprecated placeholder for dnds methodology
     hgx2dnds = {}
@@ -643,7 +674,7 @@ def main(
          i2ome, out_dir, hlg_hgxs,
          omes2dist, omes2patch, hgx2omes2gcl, hgx2omes2id,
          hgx2omes2pos, gene2hg, plusminus, ome2i,
-         hlg2clan, dist_thresh, gcl_thresh, patch_thresh, id_perc,
+         hlg2clan, hlg2apds, dist_thresh, gcl_thresh, patch_thresh, id_perc,
          pos_perc, csb_thresh, ipr_path = ipr_path, pfam_path = pfam, dnds_dict = {}, 
          cpus = cpus)
 
@@ -810,6 +841,9 @@ def cli():
                         help = 'Ignore missing HG alignments as assumed failures')
     run_opt.add_argument('--fallback', action = 'store_true',
                         help = 'Fallback to diamond from failed alignments')
+    run_opt.add_argument('-A', '--apds', action = 'store_true',
+                        help = 'Calculate aPDS, a reconciliation-free ' \
+                             + 'approximation of horizontal gene flow')
     run_opt.add_argument('-n', '--new', action = 'store_true', 
         help = 'Rerun with new parameters and overwrite incompatible data')
     run_opt.add_argument('--force', action = 'store_true',
@@ -1114,7 +1148,7 @@ def cli():
         dist_type = dist, partition_rank = partition_rank, 
         min_branch_sim = min_topology_sim, algn_sens = algn_sens,
         min_gene_id = args.minimum_gene_id, fallback = args.fallback,
-        merge_via_sim = False, force = args.force #args.topology_merge
+        merge_via_sim = False, calc_apds = args.apds, force = args.force #args.topology_merge
         )
 
     outro(start_time)

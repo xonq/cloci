@@ -48,6 +48,22 @@ def calc_pds(phylo, omes):
         subDist = addPatch(mrca, omes_set)
         return tuple([int(x) for x in omes]), 1 - subDist/totalDist
 
+def id_missing(phylo, omes):
+    """Identify the missing descendants of omes' MRCA"""
+    omes_set = set(omes)
+    try:
+        mrca = phylo.lowest_common_ancestor(omes)
+ #   except ValueError:
+#        print(phylo, omes)
+    except AttributeError: # 1 ome
+        eprint('\t\t' + ','.join([str(x) for x in omes]) \
+             + ' missing tip(s)', flush = True)
+        print(phylo)
+
+    mrca_omes = set(x.name for x in mrca.iter_tips())
+    return tuple(int(x) for x in omes), \
+           tuple(sorted(int(x) for x in mrca_omes.difference(omes_set)))
+
 
 
 def patch_main(
@@ -80,6 +96,24 @@ def patch_main(
             pickle.dump(omes2patch, out)
     
     return omes2patch
+
+def obtain_missing_descendants(phylo, omes, omes2miss = {}, cpus = 1):
+    """Obtain the genomes that are missing from the descendants of a MRCA"""
+    clusOmes = set([
+        tuple([str(x) for x in y]) for y in omes \
+               if y not in omes2miss
+        ])
+    if clusOmes:
+        with mp.get_context('fork').Pool(processes = cpus) as pool:
+            miss_res = pool.starmap(
+                id_missing, tqdm([(phylo, x) for x in clusOmes],
+                                                 total = len(clusOmes))
+                )
+            pool.close()
+            pool.join()
+        omes2miss = {omes: miss for omes, miss in miss_res}
+    return omes2miss
+
 
 def calc_mmd(phylo, omes):
     mrca = phylo.lowest_common_ancestor([str(x) for x in omes])

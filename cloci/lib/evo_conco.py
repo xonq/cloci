@@ -106,6 +106,45 @@ def get_top_hits_wopos(gene, hlg, hgx_genes, ome_set, hits, gene2algn, res, ome)
     return hits, res
 
 
+def parse_algn_hlg_loss(hgx_dir, hg, hgx_genes):
+    """Parse alignment data that contains percent positives"""
+    qlen, hit_len = len(hgx_genes), 0
+    with open(f'{hgx_dir}{hg}.out', 'r') as raw:
+        # open the blast results
+        gene2algn = defaultdict(list)
+        for line in raw:
+            d = line.rstrip().split('\t')
+            q, s, i = d[0], d[1], d[-1]
+            if q in hgx_genes:
+                gene2algn[q].append((s, float(i),))
+                hit_len = len(gene2algn)
+            elif hit_len == qlen:
+                break
+    return gene2algn
+
+
+
+def id_hlg_loss(algn_res, hgx_genes, missing_ome_set, ome_set, ome):
+    """Identify putative HLG transition events by determining if a hit gene
+    from a missing genome is within the top hits of the HLG"""
+    ome_len = len(ome_set) - 1
+    miss_ome_res = {ome: False for ome in list(missing_ome_set)}
+    ome_hits = set()
+    for data in algn_res:
+        sbj_gene = data[0]
+        sbj_ome = sbj_gene[:sbj_gene.find('_')]
+        if sbj_ome in missing_ome_set:
+            miss_ome_res[sbj_ome] = True 
+        elif sbj_gene in hgx_genes and sbj_ome != ome:
+            # break if all the genomes expected are retained
+            ome_hits.add(sbj_ome)
+            if len(ome_hits) == ome_len:
+                return miss_ome_res
+
+    # don't return anything if all the expected genomes aren't retained
+    return None
+
+
 def sim_calc_wpos(res):
     """Calclate the minimum similarity for identity and positives across the genes
     within a shared HG"""
@@ -360,14 +399,13 @@ def hg_parse_and_calc(hg, hg_dict, hgx_dir, ome2i, min_id = 30, pos_data = True)
 
 
 def gcl_mngr(
-    hgs, omes, hgx_dir, hgx2loc,
-    db, gene2hg, clusplusminus, hg2gene, hlgs,
-    hlg_omes, hlg_hgxs, ome2i, min_id, phylo,
+    hgx_dir, hgx2loc,
+    gene2hg, hg2gene, hlgs,
+    hlg_omes, hlg_hgxs, ome2i, min_id,
     d2gcl, d2id_, d2pos, cpus = 1
     ):
     """Manage the calculation of GCL and similarity measurements (MMI and MMP)
     for each HLG"""
-    i2ome = {v: k for k, v in ome2i.items()}
 
     # identify all the HGs that need to be parsed and organize them by their
     # HLG
@@ -684,9 +722,204 @@ def run_blast(hgs, db, hg_dir, hgx_dir, algorithm = 'diamond',
         out.write('\n'.join([str(x) for x in missing_alns]))
 
 
+def hg_parse_and_apds(hg, hg_dict, hgx_dir, hlg2miss):
+    """Manage the parsing and calculation of commitment to the locus and
+    minimum similarity (identity and positives) for a given HG and the HLGs it
+    is a part of"""
+    gene2hlg = {}
+    for hlg, genes in hg_dict.items():
+        # ignore singletons
+        if len(genes) > 1:
+            for gene in genes:
+                gene2hlg[gene] = hlg
+
+    # grab the genes in an hg
+    hg_genes = set(gene2hlg.keys())
+
+    # parse the self-alignment results
+    try:
+        gene2algn = parse_algn_hlg_loss(hgx_dir, hg, hg_genes)
+    except FileNotFoundError:
+        return hg, None, None
+
+    gene2algn = {k: sorted(v, key = lambda x: x[1], reverse = True) \
+                 for k, v in gene2algn.items()}
+    res = defaultdict(lambda: defaultdict(lambda: [0, {}, False]))
+    todel_genes = defaultdict(lambda: defaultdict(list))
+
+    # create a data structure that maintains all of the considered genes of an
+    # HG in a particular HLG
+    hlg2considered = {}
+    hlg2ome2loss = {}
+    for hlg, genes in hg_dict.items():
+        failed_genes = True
+        gene_set = set(genes)
+        omes_set = set(x[:x.find('_')] for x in genes)
+
+        # if there is a failed gene (too low identity to call a homolog, then
+        # continually rerun until those have been exhaustively removed from
+        # consideration
+        ome2loss = None
+        while failed_genes:
+            failed_genes = []
+            # disregard the self from the length
+            hgx_ome_len = len(omes_set) - 1
+            # if there are no other omes, then remove all genes from
+            # consideration
+            if hgx_ome_len == 0:
+                ome = genes[0][:genes[0].find('_')]
+                todel_genes[hlg][ome].extend(genes)
+                ome2loss = None
+                break
+            # for the weighted average, we can start at this step
+            # only consider unique omes because we are only taking the max
+            considered_genes = len(set(x[:x.find('_')] for x in genes))
+            hlg2considered[hlg] = considered_genes
+            for gene in genes:
+                ome = gene[:gene.find('_')] # identify the ome
+                # to identify if the subject is in the family of omes
+                hits = {gene}
+                # while all cluster homologs aren't accounted for and there remain hits
+                if gene not in gene2algn:
+                    continue
+                ome2loss = id_hlg_loss(gene2algn[gene], gene_set,
+                                       hlg2miss[hlg], omes_set, ome)
+
+            # have to rerun the calculation if there are failed genes
+            for failed_gene in failed_genes:
+                gene_set.remove(failed_gene)
+            genes = list(gene_set)
+            omes_set = set(x[:x.find('_')] for x in genes)
+
+        hlg2ome2loss[hlg] = ome2loss
+   
+    return hg, hlg2ome2loss, hlg2considered
+
+
+
+def apds_mngr(
+    hgx_dir, hgx2loc,
+    gene2hg, hg2gene, hlgs,
+    hlg_omes, hlg_hgxs, hlg2miss,
+    min_considered = 0.5, cpus = 1
+    ):
+    """Manage the calculation of aPDS by identifying genomes that are descended
+    from the MRCA of an HLG's genome distribution, but are predicted to have
+    lost the HLG"""
+
+    # identify all the HGs that need to be parsed and organize them by their
+    # HLG
+    clus_hgs = {}
+    for hlg, loci in hlgs.items():
+        hlg_hgx = hlg_hgxs[hlg]
+        omesc = hlg_omes[hlg]
+        clus_hgs[hlg] = [hlg_hgx, defaultdict(list)]
+        hlg_hgx_set = set(hlg_hgx)
+        for loc in loci:
+            for gene in loc:
+                try:
+                    hg = gene2hg[gene]
+                except KeyError:
+                    continue
+                if hg in hlg_hgx_set:
+                    clus_hgs[hlg][1][hg].append(gene)
+#        elif omesc not in d2id_[hlg_hgx]:
+ #           clus_hgs[hlg] = [hlg_hgx, defaultdict(list)]
+  #          hlg_hgx_set = set(hlg_hgx)
+   #         for loc in loci:
+    #            for gene in loc:
+     #               try:
+      #                  hg = gene2hg[gene]
+       #             except KeyError:
+        #                continue
+         #           if hg in hlg_hgx_set:
+          #              clus_hgs[hlg][1][hg].append(gene)
+
+            # {fam: [hgx, {hg: set(seqs)}}
+
+    clus_hgs = {
+        hlg: [d[0], {hg: set(v) for hg, v in d[1].items() if len(set(v)) > 1}] \
+        for hlg, d in clus_hgs.items()
+        } # make sets from it
+    hg2genes = defaultdict(dict)
+    for hlg, hgs in clus_hgs.items():
+        for hg, gene_set in hgs[1].items():
+            hg2genes[hg][hlg] = tuple(sorted(gene_set))
+
+    # parse the alignments and acquire the HG-wise HLG losses
+    print('\tParsing alignments', flush = True)
+#    hg_results = []
+ #   for hg, hg_dict in hg2genes.items():
+  #      hg_results.append(hg_parse_and_apds(hg, hg_dict, hgx_dir, 
+  #                           {hlg: hlg2miss[hlg] for hlg in hg_dict}))
+    with mp.get_context('fork').Pool(processes = cpus) as pool:
+        hg_results = pool.starmap(hg_parse_and_apds,
+                              tqdm(((hg, hg_dict, hgx_dir, 
+                                     {hlg: hlg2miss[hlg] for hlg in hg_dict})
+                               for hg, hg_dict in hg2genes.items()),
+                               total = len(hg2genes)))
+        pool.close()
+        pool.join()
+
+    # prepare for quantifying the overall HLG GCL, MMI, MMP, and eventual CSB
+    # by removing any loci and genomes that do not have sufficient
+    # justification to warrant their retention following minimum similarity
+    # thresholding
+    print('\tQuantifying', flush = True)
+    hlg2hg2ome2loss = defaultdict(lambda: defaultdict(dict))
+    hlg2tot_considered = defaultdict(int)
+    hlgs = {hlg: list(locs) for hlg, locs in hlgs.items()}
+    for hg, hlg2loss, hlg2considered in hg_results:
+        if hlg2loss:
+            # acquire the total genes considered for each HLG
+            for hlg, considered in hlg2considered.items():
+                hlg2tot_considered[hlg] += considered
+            for hlg, ome2loss in hlg2loss.items():
+                if ome2loss:
+                    for ome, loss in ome2loss.items():
+                        hlg2hg2ome2loss[hlg][hg][ome] = loss
+
+    # quantify the overall measurements for each HLG
+    hlg2loss_omes = defaultdict(set)
+    for hlg, hg2ome2loss in tqdm(hlg2hg2ome2loss.items(), 
+                                 total = len(hlg2hg2ome2loss)):
+        tot_considered = hlg2tot_considered[hlg]
+        hgx, omes = hlg_hgxs[hlg], hlg_omes[hlg]
+        # are a sufficient percentage of HGs considered? Should this be instead
+        # based on the number of genes considered?
+        if len(hg2ome2loss) / len(hgx) >= min_considered:
+            for hg, ome2loss in hg2ome2loss.items():
+                for ome, loss in ome2loss.items():
+                    if loss:
+                        hlg2loss_omes[hlg].add(ome)
+
+    return {hlg: tuple(omes) for hlg, omes in hlg2loss_omes.items()}
+
+def apds_main(
+    hgx2loc, hgx_dir, gene2hg, hg2gene, min_considered = 0.5,
+    hlgs = None, hlg_hgxs = None, hlg_omes = None, hlg2miss = None,
+    cpus = 1
+    ):
+    """The main function for preparing calculation of aPDS"""
+
+    # determine if the hgx directory exists, and unzip if necessary
+    if not checkdir(hgx_dir, unzip = True, rm = True):
+        os.mkdir(hgx_dir)
+
+    # calculate the proxies of coordinated gene evolution
+    hlg2loss_omes = apds_mngr(
+        hgx_dir, hgx2loc,
+        gene2hg, hg2gene, hlgs,
+        hlg_omes, hlg_hgxs, hlg2miss,
+        min_considered, cpus = cpus #d2pos, cpus = cpus
+        )
+
+    return hlg2loss_omes
+
+
 def gcl_main(
     hgx2loc, wrk_dir, ome2i, hg_dir, hgx_dir,
-    algorithm, db, gene2hg, plusminus, hg2gene, phylo,
+    algorithm, db, gene2hg, hg2gene,
     old_path = 'gcl.pickle',
     hlgs = None, hlg_hgxs = None,
     hlg_omes = None, hlg2clan = {}, 
@@ -733,9 +966,9 @@ def gcl_main(
 
     # calculate the proxies of coordinated gene evolution
     d2gcl, d2id_, d2pos, hlgs, hlg_omes = gcl_mngr(
-        list(hgs), list(ome2i.keys()), hgx_dir, hgx2loc,
-        db, gene2hg, plusminus, hg2gene, hlgs,
-        hlg_omes, hlg_hgxs, ome2i, minid, phylo,
+        hgx_dir, hgx2loc,
+        gene2hg, hg2gene, hlgs,
+        hlg_omes, hlg_hgxs, ome2i, minid,
         d2gcl, d2id_, d2pos, cpus = cpus #d2pos, cpus = cpus
         )
 #    hgx_dirTar = mp.Process(target=tardir, args=(hgx_dir, True))
