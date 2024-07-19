@@ -2,6 +2,7 @@
 - [x] Begin USAGE wiki
 - [x] Begin INSTALL wiki
 - [ ] Begin Output wiki
+- [ ] Begin tool wiki
 - [x] Build pypi package
 - [x] Build conda package
 - [x] Update intro page
