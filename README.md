@@ -21,6 +21,8 @@ orthogroups to the locus-level. Our approach generalizes gene cluster detection 
 Please see the [wiki](https://github.com/xonq/cloci/wiki/Home) for installation
 and usage instructions.
 
+<br />
+
 # CITING
 Zachary Konkel, Laura Kubatko, Jason C Slot, CLOCI: unveiling cryptic fungal
 gene clusters with generalized detection, *Nucleic Acids Research*, 2024;, gkae625, https://doi.org/10.1093/nar/gkae625
