@@ -708,7 +708,7 @@ def gen_mtdb(predb_path, out_dir, cpus = 1):
             out.write(f'{i}\t{gen}\t{sp}\t{st}\t{fna}\t{gff}\tnew\tfalse\n')
     
     db_path = update_mtdb(out_dir, False, False, False, False, out_dir + 'predb.tsv', 
-                False, False, False, False, False, False, False, False, False, False, cpus,
+                False, False, False, False, False, 'fungi', False, False, False, False, cpus,
                 ncbi_email = 'konkelzach@gmail.com')    
     return db_path
 
