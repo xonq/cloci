@@ -7,10 +7,8 @@ import gzip
 import shutil
 import pickle
 import random
-import logger
+import logging 
 import argparse
-
-# import networkx as nx
 import numpy as np
 from graph_tool import clustering, centrality
 from graph_tool.all import *
