@@ -53,8 +53,6 @@ from mycotools.lib.kontools import (
 from mycotools.lib.biotools import gff2list
 from mycotools.lib.dbtools import mtdb, primaryDB
 from mycotools.update_mtdb import control_flow as update_mtdb
-
-# from mycotools.gff2svg import main as gff2svg
 from mycotools import db2microsyntree
 from cloci.lib import (
     treecalcs,
