@@ -302,7 +302,7 @@ def main(
         try:
             ome_dir = out_dir + 'ome/'
             annotate = False
-            if ipr_path or pfam and annotate: # check if all are annotated
+            if ipr_path or pfam: # check if all are annotated
                 hlg_files_p = collect_files(ome_dir, 'tsv', recursive = True)
                 hlg_files = [x for x in hlg_files_p \
                             if os.path.basename(x) == 'hlg.tsv']
