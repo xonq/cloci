@@ -210,7 +210,7 @@ def calc_dists(phylo, cooccur_dict, cpus = 1, omes2dist = {}, func = calc_tmd,
                uniq_sp = False, i2ome = None):
     # multiprocessing calculating only new distances for omes2dist
     if uniq_sp:
-        with mp.get_context('forkserver').Pool(processes = cpus) as pool:
+        with mp.Pool(processes = cpus) as pool:
             results = pool.starmap(
                 calc_tmd_uniq_omes,
                 [(phylo, get_uniq_spp(uniq_sp, x, i2ome), x) \
@@ -220,7 +220,7 @@ def calc_dists(phylo, cooccur_dict, cpus = 1, omes2dist = {}, func = calc_tmd,
             pool.close()
             pool.join()
     else:
-        with mp.get_context('forkserver').Pool(processes = cpus) as pool:
+        with mp.Pool(processes = cpus) as pool:
             results = pool.starmap(
                 func,
                 [(phylo, x,) for x in list(set(cooccur_dict.values())) \
