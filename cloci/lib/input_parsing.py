@@ -624,6 +624,34 @@ def load_seedScores(file_):#, seed_thresh):
     return out_hgs
 
 
+def root_tree(tree, outgroup=[], midpoint=False):
+    """Root the tree based on outgroup(s)"""
+    if midpoint:
+        # root at the midpoint
+        return tree.root_at_midpoint()
+    elif isinstance(outgroup, str) or (
+        isinstance(outgroup, list) and len(outgroup) == 1
+    ):
+        # root via outgroup tip if there is 1 list member or it is a string
+        if isinstance(outgroup, list):
+            outgroup = outgroup[0]
+        if outgroup:
+            return tree.rooted_with_tip(outgroup).bifurcating()
+        else:
+            return tree
+    elif outgroup:
+        # root by determining the MRCA branch as the MRCA that contains as few tips as possible
+        # while including those delineated in the outgroup list
+        mrca = tree.get_connecting_node(outgroup)
+        left, reft = split_tree(tree, mrca.name)
+        try:
+            return type(tree)(name="root", children=[left, reft])
+        except:
+            raise RootError(
+                f"tree could not be rooted with supplied tips: " + f"{outgroup}"
+            )
+
+
 def compile_tree(i2ome, tree_path, root = []):
 #    with open(tree_path, 'r') as raw:
  #       nwk = raw.read()
@@ -644,22 +672,16 @@ def compile_tree(i2ome, tree_path, root = []):
             n.parent.remove(n)
             phylo.prune()
         
-    if len(root) == 1:
-        phylo = phylo.rooted_with_tip(root[0])
-        phylo.write(tree_path, with_distances = True)
-    elif len(root) > 1:
-        nodes = {k: (v, len(v.get_tip_names())) \
-                 for k, v in phylo.get_nodes_dict().items() \
-                 if set(root).issubset(set(v.get_tip_names()))}
-        mrca_tip_len = min([v[1] for v in list(nodes.values())])
-        mrca_edge = [k for k, v in nodes.items() if v[1] == mrca_tip_len]
+    if isinstance(root, list):
         try:
-            phylo = phylo.rooted_at(mrca_edge[0])
+            phylo = root_tree(phylo, outgroup = root)
         except:
             eprint(f'\nERROR: tree could not be rooted with supplied tips: ' \
                  + f'{root}', flush = True)
             sys.exit(449)
         phylo.write(tree_path, with_distances = True)
+    else:
+        phylo = root_tree(phylo, midpoint = True)
 
     phylo.reassign_names({v: str(i) for i, v in enumerate(i2ome)})
     return phylo
