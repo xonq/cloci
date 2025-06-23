@@ -9,6 +9,7 @@ from cogent3 import PhyloNode
 from itertools import chain
 from collections import Counter, defaultdict
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

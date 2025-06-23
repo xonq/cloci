@@ -14,6 +14,7 @@ from mycotools.lib.kontools import collect_files
 from cloci.lib import treecalcs
 from cloci.lib.input_parsing import compileCDS
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

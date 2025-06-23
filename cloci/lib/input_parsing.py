@@ -16,6 +16,7 @@ from mycotools.acc2fa import dbmain as acc2fa
 from mycotools.lib.biotools import gff2list, dict2fa, fa2dict
 from mycotools.lib.kontools import format_path, collect_files, collect_dirs
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

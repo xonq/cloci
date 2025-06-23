@@ -44,7 +44,6 @@ from mycotools.lib.kontools import (
     format_path,
     collect_files,
     findExecs,
-    eprint,
     tardir,
     write_json,
     mkOutput,
@@ -64,6 +63,7 @@ from cloci.lib import (
     output_data,
 )
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # if numba is available, let's import it

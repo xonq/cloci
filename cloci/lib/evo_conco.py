@@ -14,8 +14,8 @@ from mycotools.lib.kontools import multisub, tardir, collect_files, checkdir
 from cloci.lib.input_parsing import compileCDS2, hg_fa_mngr
 from cloci.lib.treecalcs import calc_tmd
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 
 # NEED todel_hg to remove fully incompatible GCL HGs from HLG_HGXs
 # NEED an option to import OrthoFinder pairwise alignments

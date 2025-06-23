@@ -22,6 +22,7 @@ from cloci.lib import input_parsing
 # NEED to add merge abutting clusters feature
 # NEED annotation for gcfs resume and hlgs independent
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

@@ -17,6 +17,7 @@ from mycotools.lib.biotools import gff2list, dict2fa
 from mycotools.lib.kontools import write_json, read_json, collect_files, checkdir
 from cloci.lib import input_parsing, treecalcs, evo_conco, output_data
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 try:
