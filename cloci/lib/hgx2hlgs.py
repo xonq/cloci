@@ -377,7 +377,7 @@ def hlg_sim_mp_mngr(adj_mat, sim_file, max_complete, loci, hgLoci, index,
     write_proc = mp.Process(target=hlg_sim_write_mngr, args=(Q, sim_file))
     write_proc.start()
 
-    with mp.get_context('forkserver').Pool(processes = cpus - 1) as pool:
+    with mp.Pool(processes = cpus - 1) as pool:
         pool.starmap(calc_sim_by_row, tqdm(cmds, total = len(cmds)))
         pool.close()
         pool.join()
@@ -529,7 +529,7 @@ def rnd2_loc2loc_mngr(hlg_dir, loci, hg_loci,
     missing_hgs = set(blast_hash.keys()).difference(finished_hgs)
     if missing_hgs:
         blast_hash = {k: blast_hash[k] for k in list(missing_hgs)}
-        with mp.get_context('forkserver').Pool(processes = cpus) as pool:
+        with mp.Pool(processes = cpus) as pool:
             pool.starmap(rnd2_gen_blastids_mp, 
                          ((hg, group_dict, hgx_dir, hlg_dir, minid) \
                            for hg, group_dict in blast_hash.items()))
@@ -613,7 +613,7 @@ def rnd1_loc2loc_mngr(
         missing_hgs = set(blast_hash.keys()).difference(finished_hgs)
         if missing_hgs:
             blast_hash = {k: blast_hash[k] for k in list(missing_hgs)}
-            with mp.get_context('forkserver').Pool(processes = cpus) as pool:
+            with mp.Pool(processes = cpus) as pool:
                 pool.starmap(gen_blastids_mp, 
                              ((hg, genes, hgx_dir, hlg_dir, minid) \
                                for hg, genes in blast_hash.items() \
@@ -1285,7 +1285,7 @@ def lg_loc_mngr(db, lgs, gene2hg, max_between = 2, cpus = 1):
             ome = loc[0][:loc[0].find('_')]
             omes2loci[ome].append((loc, lg))
 
-    with mp.get_context('forkserver').Pool(processes = cpus) as pool:
+    with mp.Pool(processes = cpus) as pool:
         lg_loci = pool.starmap(hash_ome_lg_loc,
                                tqdm(((db[ome]['gff3'], omes2loci[ome],
                                       max_between) for ome in db.keys()), 
@@ -1362,7 +1362,7 @@ def refine_group(db, ome2i, group_hg_loci, group_loci,
                     Q.get()
                     print('\t\t\t\tRunning all groups', flush = True)
                     del cmds[0]
-                with mp.get_context('forkserver').Pool(processes = cpus - 1) as pool:
+                with mp.Pool(processes = cpus - 1) as pool:
                     pool.starmap(rnd1_loc2loc_mngr, tqdm(cmds, total = len(cmds), miniters = 1))
                     pool.close()
                     pool.join()
@@ -1792,7 +1792,7 @@ def classify_hlgs(
                     # {ome: {gene: [[set(hgx), clanI]]}}
 
         print('\t\tExtracting clan loci', flush = True)
-        with mp.get_context('forkserver').Pool(processes = cpus) as pool:
+        with mp.Pool(processes = cpus) as pool:
             hash_res = pool.starmap(hash_clan_loci, 
                                     tqdm(((ome, db[ome]['gff3'], clus2extract,
                                           ome2gene2hg[ome], clusplusminus,
