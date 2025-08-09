@@ -129,25 +129,21 @@ def calc_tmd(phylo, omes, error=False):
         if not missing_tips:
             extraneous_tips = set(phylo.get_tip_names()).difference(set(omes))
             if error:
-                print(1)
                 logger.error(
                     f'\t\t{",".join(sorted(extraneous_tips))}' + " extraneous tip(s)"
                 )
                 sys.exit(13)
             else:
-                print(2)
                 logger.warning(
                     f'\t\t{",".join(sorted(extraneous_tips))}' + " extraneous tip(s)"
                 )
         else:
             if error:
-                print(13)
                 logger.error(
                     f'\t\t{",".join(sorted(missing_tips))}' + " missing tip(s)"
                 )
                 sys.exit(13)
             else:
-                print(23)
                 logger.warning(
                     f'\t\t{",".join(sorted(missing_tips))}' + " missing tip(s)"
                 )
@@ -180,11 +176,11 @@ def calc_branch_sim(phylo, omes0, omes1):
     tmd_union = calc_tmd(phylo, list(set(omes0).union(set(omes1))))[0]
     tmd_inter = calc_tmd(phylo, list(set(omes0).intersection(set(omes1))))[0]
 
-    # if no 
-    if tmd_union:
-        return tmd_inter / tmd_union
-    else:
+    # if no union TMD - is this due to a polytomy, or irretrievable MRCA?
+    if tmd_union == 0:
         return 0
+    else:
+        return tmd_inter / tmd_union
 
 
 def get_uniq_spp(db, iomes, i2ome):
