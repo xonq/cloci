@@ -1091,12 +1091,16 @@ def dereplicate_loci(
                         t_g = i2gene[t]
                         t_i, t_o = gene2loc_i[t_g]
                         t_sim = treecalcs.calc_branch_sim(phylo, omes0, t_o)
+                        if t_sim is None:
+                            t_sim = 0
                     else:
                         t_sim = 0
                     if b in i2gene:
                         b_g = i2gene[b]
                         b_i, b_o = gene2loc_i[b_g]
                         b_sim = treecalcs.calc_branch_sim(phylo, omes0, b_o)
+                        if b_sim is None:
+                            b_sim = 0
                     else:
                         b_sim = 0
                     # if there are both directions, award to the most similar
@@ -2024,8 +2028,7 @@ def classify_hlgs(
 
     if not os.path.isfile(groupII):
         logger.info(
-            f"\tIdentifying HGxs with at least {min_hgx_overlap} gene overlap",
-            flush=True,
+            f"\tIdentifying HGxs with at least {min_hgx_overlap} gene overlap"
         )
         tpairDict = defaultdict(list)
         for ome, gene2hgx_ome in tqdm(gene2hgx.items(), total=len(gene2hgx)):
