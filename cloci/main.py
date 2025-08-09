@@ -1,8 +1,8 @@
 #! /usr/bin/env python3
 """
 Co-occurrence Locus and Orthologous Cluster Identifier (CLOCI)
-(C) Zachary Konkel, Jason Slot 2023
-BSD 3-clause License
+(C) Zachary Konkel, Jason Slot 2024
+GNU Affero General Public License version 3
 """
 
 # NEED to make similarity coefficient adjustable for domains and HLGs
@@ -963,8 +963,7 @@ def gen_mtdb(predb_path, out_dir, cpus=1):
         False,
         False,
         False,
-        cpus,
-        ncbi_email="konkelzach@gmail.com",
+        cpus
     )
     return db_path
 
