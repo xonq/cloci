@@ -404,7 +404,7 @@ def gen_hgx_nulls(
         ):
             logger.info("\t\t\tRandomly sampling HGxs")
             hash_null_cmds = [(x, gene2hg, size, plusminus, i) for x, i in gffs.items()]
-            with mp.get_context("fork").Pool(processes=cpus) as pool:
+            with mp.Pool(processes=cpus) as pool:
                 hashRes = pool.starmap(
                     hash_4_nulls_bysize, tqdm(hash_null_cmds, total=len(hash_null_cmds))
                 )

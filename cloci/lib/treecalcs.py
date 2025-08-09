@@ -78,7 +78,7 @@ def patch_main(phylo, omes, wrk_dir, old_path="pds.pickle", cpus=1):
 
     clusOmes = set([tuple([str(x) for x in y]) for y in omes if y not in omes2patch])
     if clusOmes:
-        with mp.get_context("fork").Pool(processes=cpus) as pool:
+        with mp.Pool(processes=cpus) as pool:
             patch_res = pool.starmap(
                 calc_pds, tqdm([(phylo, x) for x in clusOmes], total=len(clusOmes))
             )
@@ -95,7 +95,7 @@ def obtain_missing_descendants(phylo, omes, omes2miss={}, cpus=1):
     """Obtain the genomes that are missing from the descendants of a MRCA"""
     clusOmes = set([tuple([str(x) for x in y]) for y in omes if y not in omes2miss])
     if clusOmes:
-        with mp.get_context("fork").Pool(processes=cpus) as pool:
+        with mp.Pool(processes=cpus) as pool:
             miss_res = pool.starmap(
                 id_missing, tqdm([(phylo, x) for x in clusOmes], total=len(clusOmes))
             )
@@ -209,7 +209,7 @@ def calc_dists(
 ):
     # multiprocessing calculating only new distances for omes2dist
     if uniq_sp:
-        with mp.get_context("forkserver").Pool(processes=cpus) as pool:
+        with mp.Pool(processes=cpus) as pool:
             results = pool.starmap(
                 calc_tmd_uniq_omes,
                 [
@@ -221,7 +221,7 @@ def calc_dists(
             pool.close()
             pool.join()
     else:
-        with mp.get_context("forkserver").Pool(processes=cpus) as pool:
+        with mp.Pool(processes=cpus) as pool:
             results = pool.starmap(
                 func,
                 [

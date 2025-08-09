@@ -149,7 +149,7 @@ def combo_prob_mngr(hgx2omes, omes2hg2genes, omes2genes, window, cooccur_array, 
         )
 
     # run hg-by-hg, then accumulate via hgx at the end
-    with mp.get_context("fork").Pool(processes=cpus) as pool:  # will fail on Windows
+    with mp.Pool(processes=cpus) as pool:  # will fail on Windows
         hypergeoRes = pool.starmap(est_combo_probs, cmds)
         pool.close()
         pool.join()

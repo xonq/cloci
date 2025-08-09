@@ -343,7 +343,7 @@ def rm_subsets(hgx2omes, hgx2loc, cpus=1):
     for hgx_len in tqdm(reversed(range(4, max_len + 1)), total=max_len + 1 - 4):
         i2hgx = list(hgx2omes.keys())
         rm_cmds = [[hgx, hgx2omes] for hgx in i2hgx if len(hgx) == hgx_len]
-        with mp.get_context("fork").Pool(processes=cpus) as pool:
+        with mp.Pool(processes=cpus) as pool:
             todels = pool.starmap(par_rm, rm_cmds)
             pool.close()
             pool.join()
@@ -375,7 +375,7 @@ def id_hgx(db, hgp_dict, gene2hg, ome2i, wrk_dir, cpus, clusplusminus=10):
                 clusplusminus,
             )
         )
-    with mp.get_context("fork").Pool(processes=cpus) as pool:
+    with mp.Pool(processes=cpus) as pool:
         protohgx_res = pool.starmap(
             hash_protohgxs, tqdm(hash_protohgx_cmds, total=len(hash_protohgx_cmds))
         )

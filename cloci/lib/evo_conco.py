@@ -483,7 +483,7 @@ def gcl_mngr(
     # parse the alignments and acquire the preliminary quantitations of
     # similarity and GCL measurements on an HG-by-HG basis
     logger.info("\tParsing alignments")
-    with mp.get_context("fork").Pool(processes=cpus) as pool:
+    with mp.Pool(processes=cpus) as pool:
         hg_results = pool.starmap(
             hg_parse_and_calc,
             tqdm(
@@ -1077,7 +1077,7 @@ def apds_mngr(
     #   for hg, hg_dict in hg2genes.items():
     #      hg_results.append(hg_parse_and_apds(hg, hg_dict, hgx_dir,
     #                           {hlg: hlg2miss[hlg] for hlg in hg_dict}))
-    with mp.get_context("fork").Pool(processes=cpus) as pool:
+    with mp.Pool(processes=cpus) as pool:
         hg_results = pool.starmap(
             hg_parse_and_apds,
             tqdm(

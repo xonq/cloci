@@ -1200,7 +1200,7 @@ def write_ome_output(prefix, hlgs, out_dir, db, cpus, gene2hg):
         gff = db[ome]["gff3"]
         out_file = ome_dir + ome + f"/{prefix}.tsv"
         write_clus_cmds.append([clusters, ome, out_file, gff, gene2hg])
-    with mp.get_context("fork").Pool(processes=cpus) as pool:
+    with mp.Pool(processes=cpus) as pool:
         out_genes = pool.starmap(
             write_clusters, tqdm(write_clus_cmds, total=len(write_clus_cmds))
         )
@@ -1252,7 +1252,7 @@ def annotation_mngr(
     #                                  ome, out_dir + 'ome/', gene2hg,
     #                                prefix])
 
-    with mp.get_context("fork").Pool(processes=cpus) as pool:
+    with mp.Pool(processes=cpus) as pool:
         pool.starmap(
             annotate_clusters,
             tqdm(annotate_clusters_cmds, total=len(annotate_clusters_cmds)),
