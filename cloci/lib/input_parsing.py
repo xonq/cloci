@@ -659,6 +659,25 @@ def load_seedScores(file_):  # , seed_thresh):
     return out_hgs
 
 
+def split_tree(tree, name):
+    """Prepare tree for rooting"""
+    node = tree.get_node_matching_name(name)
+    length = (node.length or 0.0) / 2
+    parent = node.parent
+    # report if the node is at the root
+    if not parent:
+        return None, None
+    parent.children.remove(node)
+    node.parent = None
+    left = node.unrooted_deepcopy()
+    left.name = f"{name}-L"
+    right = parent.unrooted_deepcopy()
+    right.name = f"{name}-R"
+    left.length = length
+    right.length = length
+    return left, right
+
+
 def root_tree(tree, outgroup=[], midpoint=False):
     """Root the tree based on outgroup(s)"""
     if midpoint:
@@ -674,7 +693,11 @@ def root_tree(tree, outgroup=[], midpoint=False):
             return tree.rooted_with_tip(outgroup).bifurcating()
         else:
             return tree
-    elif outgroup:
+    elif len(outgroup > 2):
+        raise RootError(
+                f"can only root using two tips"
+            )
+    else:
         # root by determining the MRCA branch as the MRCA that contains as few tips as possible
         # while including those delineated in the outgroup list
         mrca = tree.get_connecting_node(outgroup)
@@ -692,6 +715,7 @@ def compile_tree(i2ome, tree_path, root=[]):
     #       nwk = raw.read()
 
     phylo = load_tree(tree_path)
+    phylo.name_unnamed_nodes()
     omes = set(i2ome)
     tips = set(phylo.get_tip_names())
     missing = tips.difference(omes)
