@@ -13,6 +13,23 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def get_mrca(phylo, omes_set):
+    """Cogent3 lowest_common_ancestor is unreliable"""
+    all_tips = set(tip for tip in phylo.tips() if tip.name in omes_set)
+    prev = list(all_tips)[0]
+    curr = prev.parent
+
+    tips = set(tip for tip in curr.tips())
+    # iterate up until the MRCA of all tips is found
+    while all_tips.difference(tips):
+        prev = curr
+        curr = prev.parent
+        tips = set(tip for tip in curr.tips())
+
+    return curr
+        
+
+
 def addPatch(phylo, omes_set):
     """recursively add branches with the trait to the presence total"""
     total = 0
@@ -36,9 +53,7 @@ def calc_pds(phylo, omes):
     MRCA of where the trait is present"""
     omes_set = set(omes)
     try:
-        mrca = phylo.lowest_common_ancestor(omes)
-    #   except ValueError:
-    #        logger.info(phylo, omes)
+        mrca = get_mrca(phylo, omes_set)
     except AttributeError:  # 1 ome
         logger.error("\t\t" + ",".join([str(x) for x in omes]) + " missing tip(s)")
 
@@ -48,6 +63,8 @@ def calc_pds(phylo, omes):
     else:
         totalDist = mrca.total_descending_branch_length()
         subDist = addPatch(mrca, omes_set)
+        if totalDist == 0:
+            print(mrca.name, mrca.ascii_art(), omes, mrca_omes)
         return tuple([int(x) for x in omes]), 1 - subDist / totalDist
 
 
@@ -55,7 +72,7 @@ def id_missing(phylo, omes):
     """Identify the missing descendants of omes' MRCA"""
     omes_set = set(omes)
     try:
-        mrca = phylo.lowest_common_ancestor(omes)
+        mrca = get_mrca(phylo, omes_set)
     #   except ValueError:
     #        logger.info(phylo, omes)
     except AttributeError:  # 1 ome
@@ -106,7 +123,7 @@ def obtain_missing_descendants(phylo, omes, omes2miss={}, cpus=1):
 
 
 def calc_mmd(phylo, omes):
-    mrca = phylo.lowest_common_ancestor([str(x) for x in omes])
+    mrca = get_mrca(phylo, set(str(x) for x in omes))
     mmd = mrca.get_max_tip_tip_distance()[0]
     return mmd, tuple([int(x) for x in omes])
 
@@ -118,9 +135,9 @@ def calc_tmd(phylo, omes, error=False):
     omes_set = set(omes)
 
     try:
-        mrca = phylo.lowest_common_ancestor(omes)  # this is the failing step
+        mrca = get_mrca(phylo, omes_set)  # this is the failing step
         mrca_omes = set(x.name for x in mrca.iter_tips())
-        tmd = addPatch(phylo.lowest_common_ancestor(omes), omes_set)
+        tmd = addPatch(mrca, omes_set)
         return tmd, tuple([int(i) for i in omes])
     except ValueError:
         # get the missing tips
@@ -159,9 +176,9 @@ def calc_tmd_uniq_omes(phylo, omes, o_omes):
     omes = [str(x) for x in omes]
     omes_set = set(omes)
     try:
-        mrca = phylo.lowest_common_ancestor(omes)
+        mrca = get_mrca(phylo, omes_set)
         mrca_omes = set(x.name for x in mrca.iter_tips())
-        tmd = addPatch(phylo.lowest_common_ancestor(omes), omes_set)
+        tmd = addPatch(get_mrca(phylo, omes_set))
         return tmd, tuple([int(i) for i in o_omes])
     except ValueError:
         logger.error(
@@ -176,11 +193,7 @@ def calc_branch_sim(phylo, omes0, omes1):
     tmd_union = calc_tmd(phylo, list(set(omes0).union(set(omes1))))[0]
     tmd_inter = calc_tmd(phylo, list(set(omes0).intersection(set(omes1))))[0]
 
-    # if no union TMD - is this due to a polytomy, or irretrievable MRCA?
-    if tmd_union == 0:
-        return 0
-    else:
-        return tmd_inter / tmd_union
+    return tmd_inter / tmd_union
 
 
 def get_uniq_spp(db, iomes, i2ome):
