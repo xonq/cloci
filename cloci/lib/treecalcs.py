@@ -2,22 +2,42 @@ import os
 import re
 import random
 import pickle
+import logging
 import multiprocessing as mp
 from tqdm import tqdm
 from cogent3 import PhyloNode
 from itertools import chain
 from collections import Counter, defaultdict
-from mycotools.lib.kontools import eprint
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def get_mrca(phylo, omes_set):
+    """Cogent3 lowest_common_ancestor is unreliable"""
+    all_tips = set(tip for tip in phylo.tips() if tip.name in omes_set)
+    prev = list(all_tips)[0]
+    curr = prev.parent
+
+    tips = set(tip for tip in curr.tips())
+    # iterate up until the MRCA of all tips is found
+    while all_tips.difference(tips):
+        prev = curr
+        curr = prev.parent
+        tips = set(tip for tip in curr.tips())
+
+    return curr
+        
+
 
 def addPatch(phylo, omes_set):
     """recursively add branches with the trait to the presence total"""
     total = 0
     for sphylo in phylo:
-        subOmes = [str(x)[:str(x).find(':')] for x in sphylo.tips(True)]
+        subOmes = [str(x)[: str(x).find(":")] for x in sphylo.tips(True)]
         if any(
-            x in omes_set \
-            for x in subOmes
-            ): # if some descendents aren't in the set, search this branch
+            x in omes_set for x in subOmes
+        ):  # if some descendents aren't in the set, search this branch
             if all(x in omes_set for x in subOmes):
                 if len(subOmes) > 1:
                     total += sphylo.total_descending_branch_length()
@@ -27,18 +47,15 @@ def addPatch(phylo, omes_set):
                 total += addPatch(sphylo, omes_set)
     return total
 
+
 def calc_pds(phylo, omes):
     """calculate the percent branch length that a trait is missing over the
     MRCA of where the trait is present"""
     omes_set = set(omes)
     try:
-        mrca = phylo.lowest_common_ancestor(omes)
- #   except ValueError:
-#        print(phylo, omes)
-    except AttributeError: # 1 ome
-        eprint('\t\t' + ','.join([str(x) for x in omes]) \
-             + ' missing tip(s)', flush = True)
-        print(phylo)
+        mrca = get_mrca(phylo, omes_set)
+    except AttributeError:  # 1 ome
+        logger.error("\t\t" + ",".join([str(x) for x in omes]) + " missing tip(s)")
 
     mrca_omes = set(x.name for x in mrca.iter_tips())
     if mrca_omes == omes_set:
@@ -46,69 +63,59 @@ def calc_pds(phylo, omes):
     else:
         totalDist = mrca.total_descending_branch_length()
         subDist = addPatch(mrca, omes_set)
-        return tuple([int(x) for x in omes]), 1 - subDist/totalDist
+        if totalDist == 0:
+            print(mrca.name, mrca.ascii_art(), omes, mrca_omes)
+        return tuple([int(x) for x in omes]), 1 - subDist / totalDist
+
 
 def id_missing(phylo, omes):
     """Identify the missing descendants of omes' MRCA"""
     omes_set = set(omes)
     try:
-        mrca = phylo.lowest_common_ancestor(omes)
- #   except ValueError:
-#        print(phylo, omes)
-    except AttributeError: # 1 ome
-        eprint('\t\t' + ','.join([str(x) for x in omes]) \
-             + ' missing tip(s)', flush = True)
-        print(phylo)
+        mrca = get_mrca(phylo, omes_set)
+    #   except ValueError:
+    #        logger.info(phylo, omes)
+    except AttributeError:  # 1 ome
+        logger.error("\t\t" + ",".join([str(x) for x in omes]) + " missing tip(s)")
 
     mrca_omes = set(x.name for x in mrca.iter_tips())
-    return tuple(int(x) for x in omes), \
-           tuple(sorted(int(x) for x in mrca_omes.difference(omes_set)))
+    return tuple(int(x) for x in omes), tuple(
+        sorted(int(x) for x in mrca_omes.difference(omes_set))
+    )
 
 
-
-def patch_main(
-    phylo, omes, wrk_dir,
-    old_path = 'pds.pickle', cpus = 1
-    ):
+def patch_main(phylo, omes, wrk_dir, old_path="pds.pickle", cpus=1):
 
     if os.path.isfile(wrk_dir + old_path):
-        print('\tLoading previous PDS results', flush = True)
-        with open(wrk_dir + old_path, 'rb') as in_pick:
+        logger.info("\tLoading previous PDS results")
+        with open(wrk_dir + old_path, "rb") as in_pick:
             omes2patch = pickle.load(in_pick)
     else:
         omes2patch = {}
 
-    clusOmes = set([
-        tuple([str(x) for x in y]) for y in omes \
-               if y not in omes2patch
-        ])
+    clusOmes = set([tuple([str(x) for x in y]) for y in omes if y not in omes2patch])
     if clusOmes:
-        with mp.get_context('fork').Pool(processes = cpus) as pool:
+        with mp.Pool(processes=cpus) as pool:
             patch_res = pool.starmap(
-                calc_pds, tqdm([(phylo, x) for x in clusOmes],
-                                                 total = len(clusOmes))
-                )
+                calc_pds, tqdm([(phylo, x) for x in clusOmes], total=len(clusOmes))
+            )
             pool.close()
             pool.join()
-        omes2patch = {**omes2patch,
-                      **{ome_tup: pds for ome_tup, pds in patch_res}}
-        with open(wrk_dir + old_path, 'wb') as out:
+        omes2patch = {**omes2patch, **{ome_tup: pds for ome_tup, pds in patch_res}}
+        with open(wrk_dir + old_path, "wb") as out:
             pickle.dump(omes2patch, out)
-    
+
     return omes2patch
 
-def obtain_missing_descendants(phylo, omes, omes2miss = {}, cpus = 1):
+
+def obtain_missing_descendants(phylo, omes, omes2miss={}, cpus=1):
     """Obtain the genomes that are missing from the descendants of a MRCA"""
-    clusOmes = set([
-        tuple([str(x) for x in y]) for y in omes \
-               if y not in omes2miss
-        ])
+    clusOmes = set([tuple([str(x) for x in y]) for y in omes if y not in omes2miss])
     if clusOmes:
-        with mp.get_context('fork').Pool(processes = cpus) as pool:
+        with mp.Pool(processes=cpus) as pool:
             miss_res = pool.starmap(
-                id_missing, tqdm([(phylo, x) for x in clusOmes],
-                                                 total = len(clusOmes))
-                )
+                id_missing, tqdm([(phylo, x) for x in clusOmes], total=len(clusOmes))
+            )
             pool.close()
             pool.join()
         omes2miss = {omes: miss for omes, miss in miss_res}
@@ -116,21 +123,21 @@ def obtain_missing_descendants(phylo, omes, omes2miss = {}, cpus = 1):
 
 
 def calc_mmd(phylo, omes):
-    mrca = phylo.lowest_common_ancestor([str(x) for x in omes])
+    mrca = get_mrca(phylo, set(str(x) for x in omes))
     mmd = mrca.get_max_tip_tip_distance()[0]
     return mmd, tuple([int(x) for x in omes])
 
-def calc_tmd(phylo, omes, error = False):
+
+def calc_tmd(phylo, omes, error=False):
     """calculate descending branch length from cogent3 tree"""
     # need to verify wtf descending branch length v total of supplied nodes is
     omes = [str(x) for x in omes]
     omes_set = set(omes)
 
-    try: 
-        mrca = phylo.lowest_common_ancestor(omes) # this is the failing step
+    try:
+        mrca = get_mrca(phylo, omes_set)  # this is the failing step
         mrca_omes = set(x.name for x in mrca.iter_tips())
-        tmd = addPatch(phylo.lowest_common_ancestor(omes),
-                       omes_set)
+        tmd = addPatch(mrca, omes_set)
         return tmd, tuple([int(i) for i in omes])
     except ValueError:
         # get the missing tips
@@ -139,24 +146,29 @@ def calc_tmd(phylo, omes, error = False):
         if not missing_tips:
             extraneous_tips = set(phylo.get_tip_names()).difference(set(omes))
             if error:
-                eprint(f'\t\tERROR: {",".join(sorted(extraneous_tips))}' \
-                     + ' extraneous tip(s)', flush = True)
+                logger.error(
+                    f'\t\t{",".join(sorted(extraneous_tips))}' + " extraneous tip(s)"
+                )
                 sys.exit(13)
             else:
-                eprint(f'\t\tWARNING: {",".join(sorted(extraneous_tips))}' \
-                     + ' extraneous tip(s)', flush = True)
+                logger.warning(
+                    f'\t\t{",".join(sorted(extraneous_tips))}' + " extraneous tip(s)"
+                )
         else:
             if error:
-                eprint(f'\t\tERROR: {",".join(sorted(missing_tips))}' \
-                     + ' missing tip(s)', flush = True)
+                logger.error(
+                    f'\t\t{",".join(sorted(missing_tips))}' + " missing tip(s)"
+                )
                 sys.exit(13)
             else:
-                eprint(f'\t\tWARNING: {",".join(sorted(missing_tips))}' \
-                     + ' missing tip(s)', flush = True)
+                logger.warning(
+                    f'\t\t{",".join(sorted(missing_tips))}' + " missing tip(s)"
+                )
 
         return 0, tuple([int(i) for i in omes])
     except AttributeError:
-        print(omes, '\n', phylo)
+        logger.info(omes, "\n", phylo)
+
 
 def calc_tmd_uniq_omes(phylo, omes, o_omes):
     """calculate descending branch length from cogent3 tree"""
@@ -164,35 +176,39 @@ def calc_tmd_uniq_omes(phylo, omes, o_omes):
     omes = [str(x) for x in omes]
     omes_set = set(omes)
     try:
-        mrca = phylo.lowest_common_ancestor(omes)
+        mrca = get_mrca(phylo, omes_set)
         mrca_omes = set(x.name for x in mrca.iter_tips())
-        tmd = addPatch(phylo.lowest_common_ancestor(omes),
-                       omes_set)
+        tmd = addPatch(get_mrca(phylo, omes_set))
         return tmd, tuple([int(i) for i in o_omes])
     except ValueError:
-        eprint('\t\t' + ','.join([str(x) for x in omes]) \
-             + ' missing/extraneous tip(s)', flush = True)
+        logger.error(
+            "\t\t" + ",".join([str(x) for x in omes]) + " missing/extraneous tip(s)"
+        )
         return 0, tuple([int(i) for i in o_omes])
     except AttributeError:
-        print(omes, '\n', phylo)
+        logger.info(omes, "\n", phylo)
 
 
 def calc_branch_sim(phylo, omes0, omes1):
     tmd_union = calc_tmd(phylo, list(set(omes0).union(set(omes1))))[0]
     tmd_inter = calc_tmd(phylo, list(set(omes0).intersection(set(omes1))))[0]
-    return tmd_inter/tmd_union
+
+    return tmd_inter / tmd_union
 
 
 def get_uniq_spp(db, iomes, i2ome):
     omes = {i2ome[x]: x for x in iomes}
-    ab_omes = [re.search(r'([^\d+])\d', x)[1] for x in omes]
+    ab_omes = [re.search(r"([^\d+])\d", x)[1] for x in omes]
     reps_set = set(k for k, v in Counter(ab_omes).items() if v > 1)
     # if there are duplicate omes, then check if the species is duplicate
     if reps_set:
         rep_spp = defaultdict(list)
-        [rep_spp[db[x]['taxonomy']['species']].append(x) for x in omes \
-         if re.search(r'([^\d+])\d', x)[1] in reps_set]
-        # need the omes that weren't duplicated, the ones that were but aren't the 
+        [
+            rep_spp[db[x]["taxonomy"]["species"]].append(x)
+            for x in omes
+            if re.search(r"([^\d+])\d", x)[1] in reps_set
+        ]
+        # need the omes that weren't duplicated, the ones that were but aren't the
         # same species, and a random choice of the duplicated ones
         # species and their omes that were duplicated
         dup_spp = {k: v for k, v in rep_spp.items() if len(v) > 1}
@@ -204,38 +220,55 @@ def get_uniq_spp(db, iomes, i2ome):
         return tuple(sorted([omes[i] for i in uniq_omes]))
     else:
         return iomes
-        
 
-def calc_dists(phylo, cooccur_dict, cpus = 1, omes2dist = {}, func = calc_tmd,
-               uniq_sp = False, i2ome = None):
+
+def calc_dists(
+    phylo, cooccur_dict, cpus=1, omes2dist={}, func=calc_tmd, uniq_sp=False, i2ome=None
+):
     # multiprocessing calculating only new distances for omes2dist
     if uniq_sp:
-        with mp.Pool(processes = cpus) as pool:
+        with mp.Pool(processes=cpus) as pool:
             results = pool.starmap(
                 calc_tmd_uniq_omes,
-                [(phylo, get_uniq_spp(uniq_sp, x, i2ome), x) \
-                  for x in list(set(cooccur_dict.values())) \
-                  if x not in omes2dist]
-                )
+                [
+                    (phylo, get_uniq_spp(uniq_sp, x, i2ome), x)
+                    for x in list(set(cooccur_dict.values()))
+                    if x not in omes2dist
+                ],
+            )
             pool.close()
             pool.join()
     else:
-        with mp.Pool(processes = cpus) as pool:
+        with mp.Pool(processes=cpus) as pool:
             results = pool.starmap(
                 func,
-                [(phylo, x,) for x in list(set(cooccur_dict.values())) \
-                if x not in omes2dist]
-                )
+                [
+                    (
+                        phylo,
+                        x,
+                    )
+                    for x in list(set(cooccur_dict.values()))
+                    if x not in omes2dist
+                ],
+            )
             pool.close()
             pool.join()
-        
-    return results 
+
+    return results
 
 
-def update_dists(phylo, cooccur_dict, cpus = 1, omes2dist = {}, func = calc_tmd,
-                 uniq_sp = [], i2ome = None):
+def update_dists(
+    phylo, cooccur_dict, cpus=1, omes2dist={}, func=calc_tmd, uniq_sp=[], i2ome=None
+):
     """update the omes2dist with a new set of distance calulations"""
-    results = calc_dists(phylo, cooccur_dict, cpus, omes2dist = omes2dist, func = func,
-                         uniq_sp = uniq_sp, i2ome = i2ome)
+    results = calc_dists(
+        phylo,
+        cooccur_dict,
+        cpus,
+        omes2dist=omes2dist,
+        func=func,
+        uniq_sp=uniq_sp,
+        i2ome=i2ome,
+    )
     omes2dist = {**omes2dist, **{x[1]: x[0] for x in results}}
     return omes2dist
